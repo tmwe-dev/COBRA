@@ -1,14 +1,16 @@
 {
   "version": 2,
-  "outputDirectory": "public",
-  "functions": {
-    "api/**/*.js": {
-      "memory": 256,
-      "maxDuration": 30
-    }
-  },
-  "rewrites": [
-    { "source": "/api/(.*)", "destination": "/api/$1" },
-    { "source": "/(.*)", "destination": "/index.html" }
+  "buildCommand": "",
+  "outputDirectory": "",
+  "framework": null,
+  "builds": [
+    { "src": "api/**/*.js", "use": "@vercel/node" },
+    { "src": "public/**", "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "src": "/api/(.*)", "dest": "/api/$1" },
+    { "src": "/cobra-extension/(.*)", "dest": "/public/cobra-extension/$1" },
+    { "src": "/(.*\\.(png|ico|svg|js|css|json))", "dest": "/public/$1" },
+    { "src": "/(.*)", "dest": "/public/index.html" }
   ]
 }
