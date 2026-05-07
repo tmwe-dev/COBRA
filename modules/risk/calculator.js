@@ -1,19 +1,51 @@
-// modules/risk/calculator.js — Effective risk computation + payload hash
-// Source: server.js lines 247-308
+// modules/risk/calculator.js — Risk computation (merged: click-intent, js-detector)
+// Source: server.js lines 221-308
 
 const crypto = require('crypto');
 const { maxRisk, RISK_REQUIRES_CONFIRMATION, RISK_DEFAULT_TTL } = require('../config/constants');
 const { getToolRiskSpec } = require('./taxonomy');
 const { classifyUrlRisk } = require('./classifiers');
-const { classifyClickIntent } = require('./click-intent');
-const { detectDangerousJs } = require('./js-detector');
 
+// ── Click intent (was click-intent.js) ──
+const DESTRUCTIVE_BUTTON_PATTERNS = [
+  /\b(paga|pay|checkout|pagamento)\b/i,
+  /\b(conferma acquisto|confirm purchase|conferma pagamento|confirm payment)\b/i,
+  /\b(elimina|delete|remove permanently)\b/i,
+  /\b(acquista ora|buy now|purchase now|completa ordine|place order)\b/i,
+];
+
+function classifyClickIntent(selector, visibleText) {
+  const haystack = `${selector} ${visibleText || ''}`.toLowerCase();
+  if (/button\[type=["']?submit/i.test(selector) || /input\[type=["']?submit/i.test(selector)) {
+    return { level: 'destructive', reason: 'Submit button' };
+  }
+  for (const p of DESTRUCTIVE_BUTTON_PATTERNS) {
+    if (p.test(haystack)) return { level: 'destructive', reason: `Bottone irreversibile: ${p.source}` };
+  }
+  return { level: 'interact' };
+}
+
+// ── JS detector (was js-detector.js) ──
+const ALWAYS_BLOCKED_JS = [
+  /\bfetch\s*\(/, /\bXMLHttpRequest\b/, /\beval\s*\(/, /\bFunction\s*\(/,
+  /\blocalStorage\b/, /\bsessionStorage\b/, /\bindexedDB\b/,
+  /\bdocument\.cookie\b/, /\bnavigator\.clipboard\b/, /\bwindow\.location\s*=/,
+  /\.submit\s*\(/, /\.click\s*\(/, /\.innerHTML\s*=/, /\.outerHTML\s*=/,
+  /\bdocument\.write\b/, /\bimport\s*\(/, /\bnew\s+Worker\b/, /\bpostMessage\b/,
+];
+
+function detectDangerousJs(code) {
+  const found = [];
+  for (const p of ALWAYS_BLOCKED_JS) { if (p.test(code)) found.push(p.source); }
+  return found;
+}
+
+// ── Effective risk ──
 function computeEffectiveRisk(toolName, toolArgs) {
   const spec = getToolRiskSpec(toolName);
   let level = spec.level;
   const reasons = [`tool=${toolName} base=${spec.level}`];
 
-  // URL boost
   if (['navigate', 'read_page', 'scrape_url'].includes(toolName)) {
     const url = toolArgs.url || toolArgs.target;
     if (typeof url === 'string') {
@@ -22,17 +54,11 @@ function computeEffectiveRisk(toolName, toolArgs) {
       reasons.push(`url_risk=${urlRisk.level} (${urlRisk.reasons.join('; ')})`);
     }
   }
-
-  // Click intent boost
   if (toolName === 'click_element') {
-    const sel = toolArgs.selector || '';
-    const vis = toolArgs.text || toolArgs.visible_text;
-    const clickRisk = classifyClickIntent(String(sel), vis);
+    const clickRisk = classifyClickIntent(String(toolArgs.selector || ''), toolArgs.text || toolArgs.visible_text);
     level = maxRisk(level, clickRisk.level);
     if (clickRisk.reason) reasons.push(`click_intent=${clickRisk.level} (${clickRisk.reason})`);
   }
-
-  // Enter = potential submit
   if (toolName === 'press_key') {
     const key = String(toolArgs.key || '').toLowerCase();
     if (key === 'enter' || key === 'return') {
@@ -40,14 +66,9 @@ function computeEffectiveRisk(toolName, toolArgs) {
       reasons.push('Enter su form = potenziale submit');
     }
   }
-
-  // JS pattern check
   if (['mutate_dom_js', 'inspect_dom_js', 'execute_js'].includes(toolName)) {
     const dangerous = detectDangerousJs(String(toolArgs.code || ''));
-    if (dangerous.length > 0) {
-      level = 'destructive';
-      reasons.push(`JS pericolosi: ${dangerous.join(', ')}`);
-    }
+    if (dangerous.length > 0) { level = 'destructive'; reasons.push(`JS pericolosi: ${dangerous.join(', ')}`); }
   }
 
   const levelRequiresConfirm = RISK_REQUIRES_CONFIRMATION[level];
@@ -69,4 +90,4 @@ function computePayloadHash(toolName, toolArgs) {
     .digest('hex');
 }
 
-module.exports = { computeEffectiveRisk, computePayloadHash };
+module.exports = { computeEffectiveRisk, computePayloadHash, classifyClickIntent, detectDangerousJs };

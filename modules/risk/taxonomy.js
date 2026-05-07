@@ -66,6 +66,12 @@ const TOOL_RISK_TAXONOMY = {
   delete_task:     { level:'destructive', confirm:true, batchable:false, ttl:60, truth:'Cancella job.' },
   create_task:     { level:'write_local', confirm:false, batchable:true, truth:'Crea job.' },
   run_task:        { level:'interact', confirm:false, batchable:false, truth:'Esegue job salvato.' },
+  // Alias handlers (registrati come alias in handler index)
+  read_inbox:      { level:'read', confirm:false, batchable:true, truth:'Alias di check_emails.' },
+  send_whatsapp:   { level:'send', confirm:true, batchable:false, ttl:300, truth:'Alias di whatsapp_send.' },
+  send_linkedin:   { level:'send', confirm:true, batchable:false, ttl:300, truth:'Alias di linkedin_send_message.' },
+  web_search:      { level:'read', confirm:false, batchable:true, truth:'Alias di google_search.' },
+  execute_js:      { level:'write_form', confirm:false, batchable:false, truth:'Legacy JS execution alias.' },
 };
 
 function getToolRiskSpec(toolName) {

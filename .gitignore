@@ -1,0 +1,9 @@
+node_modules/
+.env
+data/audit.jsonl
+data/audit.jsonl.*
+data/*.jsonl
+data/supermario_prompts.jsonl
+*.log
+.DS_Store
+package-lock.json

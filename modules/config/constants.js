@@ -22,7 +22,12 @@ const RISK_DEFAULT_TTL = {
   write_kb: 600, send_prepare: 300, send: 600, destructive: 60,
 };
 
+// ── App-level constants ──
+const ALLOWED_ORIGINS = ['http://localhost:', 'http://127.0.0.1:'];
+const MAX_BODY_SIZE = 5 * 1024 * 1024; // 5MB
+
 module.exports = {
   RISK_LEVELS, maxRisk,
   RISK_REQUIRES_CONFIRMATION, RISK_DEFAULT_TTL,
+  ALLOWED_ORIGINS, MAX_BODY_SIZE,
 };

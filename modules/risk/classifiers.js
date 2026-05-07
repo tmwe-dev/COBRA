@@ -1,9 +1,8 @@
-// modules/risk/classifiers.js — URL & click intent classification
-// Source: server.js lines 188-219, 221-290
+// modules/risk/classifiers.js — URL risk classification
+// Source: server.js lines 188-219
 
 const { maxRisk } = require('../config/constants');
 
-// ── URL Risk Classifier ──
 const URL_READ_ONLY_DOMAINS = ['wikipedia.org','duckduckgo.com','google.com/search','bing.com','brave.com','maps.google.com','translate.google.com','iata.org','icao.int','imo.org'];
 const URL_SENSITIVE_DOMAINS = ['paypal.com','stripe.com','bank','login.','auth.','oauth.','admin.'];
 const URL_MUTATING_PARAMS = [/[?&]delete(=|$)/i,/[?&]remove(=|$)/i,/[?&]confirm(=|$)/i,/[?&]approve(=|$)/i,/[?&]pay(=|$)/i,/[?&]submit(=|$)/i,/[?&]execute(=|$)/i,/[?&]action=(delete|remove|destroy|purge|reset|cancel|approve|pay|submit|send)/i,/[?&]token=/i];

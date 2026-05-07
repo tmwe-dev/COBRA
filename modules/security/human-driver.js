@@ -36,7 +36,7 @@ const HumanDriver = {
           return { ...profile, domain, isProtected: true };
         }
       }
-    } catch {}
+    } catch { /* malformed URL — treat as unprotected */ }
     return { ...this.defaultProfile, domain: 'unknown', isProtected: false };
   },
 

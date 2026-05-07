@@ -4,7 +4,7 @@
 function isSSRFSafe(urlString) {
   try {
     const u = new URL(urlString);
-    const hostname = u.hostname.toLowerCase();
+    const hostname = u.hostname.toLowerCase().replace(/^\[|\]$/g, ''); // strip IPv6 brackets
 
     if (['localhost', '127.0.0.1', '::1', '0.0.0.0'].includes(hostname)) return false;
 
