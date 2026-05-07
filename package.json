@@ -1,4 +1,10 @@
 {
+  "name": "cobra-v10",
+  "version": "10.2.0",
+  "private": true,
+  "scripts": {
+    "start": "node server-local.js"
+  },
   "dependencies": {
     "ws": "^8.20.0"
   }
