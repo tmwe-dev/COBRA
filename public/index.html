@@ -2230,7 +2230,9 @@
     let _wsConnecting = false;
     let _wsRetryDelay = 2000;
     const WS_MAX_RETRY_DELAY = 30000;
+    const _isCloud = location.hostname !== 'localhost' && location.hostname !== '127.0.0.1';
     function connectWS() {
+      if (_isCloud) { statusDot.className = 'dot'; statusText.textContent = 'Cloud mode'; return; }
       if (_wsConnecting || (ws && ws.readyState === WebSocket.OPEN)) return;
       _wsConnecting = true;
       if (_wsReconnectTimer) { clearTimeout(_wsReconnectTimer); _wsReconnectTimer = null; }
@@ -2461,8 +2463,8 @@
     async function sendMessage(text) {
       if (!text.trim() || isLoading) return;
 
-      // Force WS reconnect if not connected
-      if (!ws || ws.readyState !== WebSocket.OPEN) {
+      // Force WS reconnect if not connected (local mode only)
+      if (!_isCloud && (!ws || ws.readyState !== WebSocket.OPEN)) {
         _wsRetryDelay = 2000;
         _wsConnecting = false;
         connectWS();
@@ -2536,9 +2538,15 @@
       try {
         const resp = await fetch('/api/status');
         const data = await resp.json();
-        providerBadges.innerHTML = data.keys.map(k => `<span class="badge">${k}</span>`).join('');
-        if (data.keys.length === 0) statusText.textContent = 'No API keys';
-        // Update bridge indicator from status
+        if (data.keys) {
+          providerBadges.innerHTML = data.keys.map(k => `<span class="badge">${k}</span>`).join('');
+          if (data.keys.length === 0) statusText.textContent = 'No API keys';
+        } else if (data.providers) {
+          const keys = Object.entries(data.providers).filter(([,v]) => v).map(([k]) => k);
+          providerBadges.innerHTML = keys.map(k => `<span class="badge">${k}</span>`).join('');
+          if (keys.length === 0 && !_isCloud) statusText.textContent = 'No API keys';
+        }
+        // Update bridge indicator from status (local mode only)
         if (data.bridge) updateBridgeIndicator(data.bridge.connected, data.bridge.capabilities);
       } catch {}
     }
@@ -2719,9 +2727,13 @@
         chatMessages.scrollTop = chatMessages.scrollHeight;
       }
     })();
-    fetch('/api/config/keys').then(r => r.json()).then(data => { if (!data.hasKeys) addBubble('system', 'Nessuna API key configurata. Clicca &#x2699; per inserire le chiavi.'); }).catch(() => {});
-    fetch('/api/token-meter').then(r => r.json()).then(data => updateTokenMeter(data)).catch(() => {});
-    fetch('/api/version').then(r => r.json()).then(data => { document.getElementById('appVersion').textContent = 'v' + data.version; }).catch(() => {});
+    fetch('/api/config/keys').then(r => r.json()).then(data => { if (!data.hasKeys) addBubble('system', _isCloud ? 'Configura le API keys nelle Environment Variables di Vercel.' : 'Nessuna API key configurata. Clicca &#x2699; per inserire le chiavi.'); }).catch(() => {});
+    if (!_isCloud) {
+      fetch('/api/token-meter').then(r => r.json()).then(data => updateTokenMeter(data)).catch(() => {});
+      fetch('/api/version').then(r => r.json()).then(data => { document.getElementById('appVersion').textContent = 'v' + data.version; }).catch(() => {});
+    } else {
+      document.getElementById('appVersion').textContent = 'v10.2 cloud';
+    }
     connectWS();
   </script>
 </body>
