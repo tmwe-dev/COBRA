@@ -91,44 +91,7 @@ const conversationEngine = new ConversationEngine();
 // Placeholder objects
 const TokenMeter = { getStatus: () => ({ totalTokens: 0, level: 'ok' }), reset: () => {} };
 const ResponseRecorder = { recordChat: () => {}, recordTTS: () => {}, getLog: () => [], getStats: () => ({}), exportJSON: () => [], exportCSV: () => '', exportConversation: () => '', loadFromFile: () => {}, _log: [], _filePath: '' };
-const SuperMario = {
-  routeIntent: () => ({ intent: 'chat', scopes: [], operationLevel: 'read' }),
-  clarifyIntentWithLLM: async () => null,
-  decompose: () => null,
-  assemble: async (opts) => {
-    const { estimateTokens } = require('./utils/tokens');
-    const { ALWAYS_LOADED_KB } = require('./prompts/kb-rules');
-    let prompt = COBRA_CORE;
-
-    // F6: XML-delimited context sections for injection defense
-    // KB context (F7: only always_load rules + search results, F9: budget 2000 tokens)
-    const kbParts = [];
-    for (const rule of ALWAYS_LOADED_KB) kbParts.push(`[${rule.title}] ${rule.content}`);
-    let kbText = kbParts.join('\n\n');
-    if (estimateTokens(kbText) > 2000) kbText = kbText.substring(0, 8000);
-    prompt += `\n\n<system_rules>\n${kbText}\n</system_rules>`;
-
-    // Last tool result context (F9: budget 1500 tokens)
-    if (opts.lastToolResult) {
-      let toolCtx = `URL: ${opts.lastToolResult.url || ''}\nTitolo: ${opts.lastToolResult.title || ''}\n${opts.lastToolResult.snippet || ''}`;
-      if (estimateTokens(toolCtx) > 1500) toolCtx = toolCtx.substring(0, 6000);
-      prompt += `\n\n<untrusted_content source="last_page">\n${toolCtx}\n</untrusted_content>`;
-    }
-
-    // Task plan context
-    if (opts.taskPlan) {
-      prompt += `\n\n<task_plan>\n${JSON.stringify(opts.taskPlan)}\n</task_plan>`;
-    }
-
-    return { systemPrompt: prompt, tools: opts.allTools || [], scopes: opts.scopes, preflight: { ok: true }, trace_id: Date.now() };
-  },
-  selectModel: () => ({ tier: 'default', reason: 'default' }),
-  complete: () => ({ warnings: [] }),
-  updateNarrativeSummary: async () => {},
-  getInvocationLog: () => [],
-  logToolExecution: () => {},
-  validateToolCall: () => ({ allowed: true }),
-};
+const SuperMario = require('./supermario');
 
 function emitThinking(text) { wsModule.wsBroadcast({ type: 'thinking', text }); }
 function emitReasoning(text, icon) { wsModule.wsBroadcast({ type: 'ai_reasoning', text, icon }); }
