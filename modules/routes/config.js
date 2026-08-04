@@ -1,5 +1,7 @@
 // modules/routes/config.js — /api/config/keys, /api/config/email
-// Source: server.js lines 8494-8552
+
+const { trovaServerPosta } = require('../utils/mail-autoconfig');
+const { leggiPosta } = require('../utils/imap');
 
 function register(router, ctx) {
   // ── POST /api/config/keys ──
@@ -42,6 +44,77 @@ function register(router, ctx) {
     } catch (e) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'JSON non valido' }));
+    }
+  });
+
+  // ── POST /api/config/email/setup ──
+  // L'utente fornisce solo indirizzo e password: i server vengono trovati da
+  // soli, le credenziali provate subito e salvate solo se funzionano.
+  router.post('/api/config/email/setup', async (body, res) => {
+    const rispondi = (status, payload) => {
+      res.writeHead(status, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(payload));
+    };
+    let email, password;
+    try {
+      const b = JSON.parse(body || '{}');
+      email = (b.email || '').trim();
+      password = b.password || '';
+    } catch { return rispondi(400, { error: 'Richiesta non valida' }); }
+
+    if (!email || !password) {
+      return rispondi(400, { error: 'Servono indirizzo email e password' });
+    }
+
+    try {
+      // 1. Trova i server
+      const scoperta = await trovaServerPosta(email);
+      ctx.log(`[Email] Rilevamento per ${ctx.sanitizeForLog(email)}: ${scoperta.imapHost} (${scoperta.fonte})`);
+
+      // 2. Prova davvero le credenziali prima di salvarle
+      let verifica;
+      try {
+        verifica = await leggiPosta(
+          { host: scoperta.imapHost, port: scoperta.imapPort, user: email, pass: password },
+          { limit: 1, onlyUnread: false, timeoutMs: 12000 }
+        );
+      } catch (e) {
+        const msg = String(e.message || '');
+        const credenzialiRifiutate = /AUTHENTICATIONFAILED|Invalid credentials|LOGIN failed|autentic/i.test(msg);
+        return rispondi(200, {
+          ok: false,
+          server: { imapHost: scoperta.imapHost, imapPort: scoperta.imapPort, fonte: scoperta.fonte, provider: scoperta.provider },
+          error: credenzialiRifiutate
+            ? 'Il server ha rifiutato le credenziali.'
+            : `Connessione non riuscita: ${msg}`,
+          suggerimento: scoperta.richiedePasswordApp
+            ? `${scoperta.provider} non accetta la password normale dell'account: serve una "password per le app" generata dalle impostazioni di sicurezza.`
+            : scoperta.daConfermare
+              ? 'I server non sono stati rilevati con certezza: verifica i parametri IMAP col tuo fornitore.'
+              : 'Controlla che indirizzo e password siano corretti.',
+          richiedePasswordApp: !!scoperta.richiedePasswordApp,
+        });
+      }
+
+      // 3. Salva solo dopo che la connessione è riuscita
+      ctx.session.emailConfig = {
+        ...ctx.session.emailConfig,
+        imapHost: scoperta.imapHost, imapPort: scoperta.imapPort,
+        imapUser: email, imapPass: password,
+        host: scoperta.smtpHost, port: scoperta.smtpPort,
+        user: email, pass: password, from: email,
+      };
+      ctx.log(`[Email] Casella configurata e verificata: ${ctx.sanitizeForLog(email)} su ${scoperta.imapHost}`);
+      return rispondi(200, {
+        ok: true,
+        provider: scoperta.provider,
+        fonte: scoperta.fonte,
+        server: { imapHost: scoperta.imapHost, imapPort: scoperta.imapPort, smtpHost: scoperta.smtpHost, smtpPort: scoperta.smtpPort },
+        casella: { totale: verifica.totale },
+      });
+    } catch (e) {
+      ctx.log(`[Email] Configurazione fallita: ${e.message}`);
+      return rispondi(500, { error: `Configurazione fallita: ${e.message}` });
     }
   });
 

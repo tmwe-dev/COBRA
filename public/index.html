@@ -248,6 +248,9 @@
       border: 1px solid var(--glass-border); border-radius: 16px;
       padding: 28px; width: 440px; max-width: 90vw;
       box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+      /* Su schermi bassi il contenuto deve poter scorrere, altrimenti i campi
+         in fondo restano fuori dallo schermo e irraggiungibili */
+      max-height: 88vh; overflow-y: auto;
     }
     .config-modal h3 { margin-bottom: 18px; font-size: 16px; font-weight: 600; color: var(--lilac); }
     .config-modal label { display: block; font-size: 11px; color: var(--text2); margin: 12px 0 4px; font-weight: 500; }
@@ -1157,6 +1160,21 @@
       <div class="btn-row">
         <button class="btn-cancel" onclick="toggleConfig()">Chiudi</button>
         <button class="btn-save" onclick="saveConfig()">Salva</button>
+      </div>
+
+      <div style="margin-top:22px;padding-top:18px;border-top:1px solid var(--glass-border)">
+        <h3 style="margin-bottom:6px">&#x1F4EC; Casella di posta</h3>
+        <div style="font-size:11px;color:var(--text2);margin-bottom:10px;line-height:1.5">
+          Inserisci indirizzo e password: i server vengono trovati da soli.
+        </div>
+        <label>Indirizzo email</label>
+        <input type="text" id="cfgMailUser" placeholder="nome@azienda.it" autocomplete="username">
+        <label>Password</label>
+        <input type="password" id="cfgMailPass" placeholder="password della casella" autocomplete="current-password">
+        <div class="status-msg" id="cfgMailStatus" style="line-height:1.5"></div>
+        <div class="btn-row">
+          <button class="btn-save" id="btnMailSetup" onclick="setupMail()">Collega casella</button>
+        </div>
       </div>
     </div>
   </div>
@@ -2099,6 +2117,61 @@
 
     // ── Config ──
     function toggleConfig() { document.getElementById('configOverlay').classList.toggle('open'); }
+
+    // ── Collegamento della casella di posta ──
+    // La password viene inviata solo al server locale, non viene mai mostrata
+    // né salvata nel browser.
+    async function setupMail() {
+      const email = document.getElementById('cfgMailUser').value.trim();
+      const password = document.getElementById('cfgMailPass').value;
+      const stato = document.getElementById('cfgMailStatus');
+      const bottone = document.getElementById('btnMailSetup');
+
+      if (!email || !password) {
+        stato.style.color = 'var(--red)';
+        stato.textContent = 'Servono indirizzo e password.';
+        return;
+      }
+
+      bottone.disabled = true;
+      const testoOriginale = bottone.textContent;
+      bottone.textContent = 'Collego...';
+      stato.style.color = 'var(--text2)';
+      stato.textContent = 'Cerco i server e verifico le credenziali...';
+
+      try {
+        const resp = await fetch('/api/config/email/setup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+        const d = await resp.json();
+
+        if (d.ok) {
+          stato.style.color = 'var(--green)';
+          stato.innerHTML = '&#x2705; Casella collegata su <b>' + d.server.imapHost + '</b>'
+            + (d.provider ? ' (' + d.provider + ')' : '')
+            + '<br><span style="color:var(--text2)">Server trovati tramite: ' + d.fonte + '</span>';
+          document.getElementById('cfgMailPass').value = '';
+          addLogEntry('Casella di posta collegata: ' + d.server.imapHost, '\u{1F4EC}', 'tool');
+        } else {
+          stato.style.color = 'var(--red)';
+          let html = '&#x274C; ' + (d.error || 'Collegamento non riuscito');
+          if (d.suggerimento) html += '<br><span style="color:var(--text2)">' + d.suggerimento + '</span>';
+          if (d.richiedePasswordApp) {
+            html += '<br><a href="https://myaccount.google.com/apppasswords" target="_blank" '
+                 + 'style="color:var(--lilac)">Genera una password per le app &#x2197;</a>';
+          }
+          stato.innerHTML = html;
+        }
+      } catch (e) {
+        stato.style.color = 'var(--red)';
+        stato.textContent = 'Errore: ' + e.message;
+      } finally {
+        bottone.disabled = false;
+        bottone.textContent = testoOriginale;
+      }
+    }
 
     async function saveConfig() {
       const body = {};

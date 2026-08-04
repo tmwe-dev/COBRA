@@ -100,7 +100,7 @@ Per ispezionare o correggere: `GET /api/learning/facts`, `POST /api/learning/for
 ./run-tests.sh
 ```
 
-706 asserzioni in 10 suite. Oltre alla regressione classica, tre suite coprono
+749 asserzioni in 11 suite. Oltre alla regressione classica, tre suite coprono
 le classi di difetto che in passato sono sfuggite alla lettura del codice:
 
 | Suite | Cosa protegge |
@@ -112,24 +112,35 @@ le classi di difetto che in passato sono sfuggite alla lettura del codice:
 ## Posta elettronica
 
 La lettura funziona senza installare nulla: il client IMAP è scritto sul modulo
-`tls` incluso in Node. Va configurata la casella una volta:
+`tls` incluso in Node.
 
-```bash
-curl -X POST http://127.0.0.1:3000/api/config/email \
-  -H 'Content-Type: application/json' \
-  -d '{"imapHost":"imap.tuoprovider.it","imapUser":"tu@tuodominio.it","imapPass":"..."}'
-```
+**Per collegare la casella** basta l'ingranaggio in alto nell'interfaccia:
+si inseriscono indirizzo e password, e i parametri del server vengono trovati
+da soli. Le credenziali vengono provate subito e salvate solo se funzionano,
+così l'errore si vede all'istante e non alla prima richiesta.
 
-Poi basta chiedere a COBRA "controlla la posta" o "leggi le ultime 5 email".
+I server vengono cercati in quattro modi, dal più affidabile al più generico:
+
+1. elenco dei provider più diffusi, italiani inclusi (immediato, senza rete);
+2. autoconfig pubblicato dal dominio stesso;
+3. database pubblico di Mozilla, lo stesso che usa Thunderbird;
+4. record DNS SRV, poi tentativi sui nomi convenzionali verificati con una
+   connessione reale.
+
+Se nessun metodo dà certezza, viene proposto il valore più probabile dicendo
+esplicitamente che va confermato, invece di far fallire il collegamento in
+silenzio.
+
+Gmail, Outlook, Yahoo e iCloud non accettano la password normale dell'account:
+serve una "password per le app". COBRA lo riconosce dal dominio e mostra il
+link giusto per generarla.
+
+Fatto questo, basta chiedere "controlla la posta" o "leggi le ultime 5 email".
 Restituisce mittente, oggetto, data e un'anteprima del testo, gestendo gli
 oggetti codificati (`=?UTF-8?B?...?=`) e i corpi in HTML o base64.
 
-Se sono già configurati i dati SMTP, l'host IMAP viene dedotto sostituendo
-`smtp.` con `imap.`; se il provider usa un indirizzo diverso, va indicato
-esplicitamente con `imapHost`.
-
-Per **inviare** serve invece una dipendenza: `npm install nodemailer` e la
-configurazione SMTP (`host`, `user`, `pass`) sullo stesso endpoint.
+Per **inviare** serve invece una dipendenza: `npm install nodemailer`. La
+configurazione SMTP viene compilata insieme a quella IMAP.
 
 ## Note operative
 
