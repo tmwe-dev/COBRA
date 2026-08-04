@@ -226,7 +226,25 @@ async function getWorkTab() {
     }
   } catch { /* impossibile elencare le schede */ }
 
-  // 3. Solo come ultima risorsa se ne crea una, in secondo piano
+  // 3. Si crea una finestra dedicata, in secondo piano.
+  //    Serve una finestra propria: per fotografare una pagina Chrome richiede
+  //    che sia la scheda attiva della sua finestra. Da sola in una finestra
+  //    separata lo è sempre, senza mai interferire con quella dell'utente.
+  try {
+    const win = await chrome.windows.create({
+      url: 'about:blank', focused: false, type: 'normal', width: 1280, height: 900,
+    });
+    const tab = win.tabs && win.tabs[0];
+    if (tab) {
+      await ricordaWorkTab(tab.id);
+      console.log('[COBRA Bridge] Creata finestra di lavoro dedicata:', tab.id);
+      return tab;
+    }
+  } catch (e) {
+    console.log('[COBRA Bridge] Finestra dedicata non creata:', e.message);
+  }
+
+  // 4. Se la finestra non si può creare, si ripiega su una scheda normale
   const newTab = await chrome.tabs.create({ url: 'about:blank', active: false });
   await ricordaWorkTab(newTab.id);
   console.log('[COBRA Bridge] Creata scheda di lavoro:', newTab.id);
@@ -621,21 +639,27 @@ async function executeCommand(command, args) {
       // ════════════════════════════════════════
 
       case 'screenshot': {
-        // Cattura dalla finestra del work tab SENZA rubare focus all'utente
+        // Chrome fotografa solo la scheda ATTIVA di una finestra. La scheda di
+        // lavoro sta in una finestra propria, quindi renderla attiva lì non
+        // disturba l'utente: la sua finestra non viene mai toccata.
         let windowId = null;
-        if (_workTabId) {
+        const idScheda = await recuperaWorkTab();
+        if (idScheda) {
           try {
-            const wTab = await chrome.tabs.get(_workTabId);
+            const wTab = await chrome.tabs.get(idScheda);
             windowId = wTab.windowId;
-            // Assicura che il work tab sia attivo nella SUA finestra
-            // ma NON portare la finestra in primo piano (no focused: true)
-            await chrome.tabs.update(_workTabId, { active: true });
-            // NON fare chrome.windows.update(focused: true) — ruba focus utente
-          } catch {}
-          await new Promise(r => setTimeout(r, 200));
+            if (!wTab.active) await chrome.tabs.update(idScheda, { active: true });
+            // La finestra non va mai portata in primo piano: ruberebbe il fuoco
+            await new Promise(r => setTimeout(r, 200));
+          } catch { windowId = null; }
         }
-        const dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: 'jpeg', quality: args.quality || 70 });
-        return { ok: true, screenshot: dataUrl.split(',')[1] };
+        try {
+          const dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: 'jpeg', quality: args.quality || 70 });
+          if (!dataUrl) return { ok: false, error: 'Nessuna immagine catturata' };
+          return { ok: true, screenshot: dataUrl.split(',')[1] };
+        } catch (e) {
+          return { ok: false, error: `Cattura non riuscita: ${e.message}` };
+        }
       }
 
       // ════════════════════════════════════════

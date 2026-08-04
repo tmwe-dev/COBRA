@@ -53,6 +53,35 @@ section('Nessuna scheda portata in primo piano');
 }
 
 // ─────────────────────────────────────────
+section('L anteprima delle pagine continua a funzionare');
+// ─────────────────────────────────────────
+{
+  const shot = ext.slice(ext.indexOf("case 'screenshot':"), ext.indexOf("case 'screenshot':") + 1600);
+  ok('lo screenshot recupera la scheda persistita', /recuperaWorkTab\(\)/.test(shot),
+     'con la variabile azzerata fotograferebbe la scheda sbagliata');
+  ok('rende attiva la scheda nella SUA finestra', /tabs\.update\(idScheda, \{ active: true \}\)/.test(shot),
+     'Chrome fotografa solo la scheda attiva di una finestra');
+  ok('passa il windowId alla cattura', /captureVisibleTab\(windowId/.test(shot));
+  ok('non ruba il fuoco alla finestra dell utente',
+     !/windows\.update\([^)]*focused:\s*true/.test(shot));
+  ok('segnala i fallimenti invece di restituire un vuoto',
+     /return \{ ok: false, error:/.test(shot));
+}
+{
+  // La scheda di lavoro deve stare in una finestra propria, altrimenti
+  // renderla attiva per la foto cambierebbe la vista dell'utente
+  ok('la scheda di lavoro nasce in una finestra dedicata',
+     /windows\.create\(\{[\s\S]{0,120}focused: false/.test(ext),
+     'senza finestra propria, fotografare significa cambiare scheda all utente');
+}
+{
+  const bc = fs.readFileSync('modules/tools/handlers/browser-control.js', 'utf8');
+  const s = bc.slice(bc.indexOf('async function screenshot'), bc.indexOf('async function screenshot') + 1600);
+  ok('il server registra il motivo se l anteprima non arriva',
+     /\[Screenshot\]/.test(s), 'il fallimento spariva senza lasciare traccia');
+}
+
+// ─────────────────────────────────────────
 section('La webapp non apre schede da sola');
 // ─────────────────────────────────────────
 ok('open_url non chiama piu window.open',

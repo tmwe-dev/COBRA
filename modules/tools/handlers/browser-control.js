@@ -8,7 +8,20 @@ async function screenshot(args, ctx) {
   if (ctx.isBridgeReady()) { try { await ctx.dismissModalsBridge(); } catch (_) { /* best-effort */ } }
   else { const ap = ctx.getState('activePage'); if (ap) { try { await ctx.dismissModals(ap); } catch (_) { /* best-effort */ } } }
   if (ctx.isBridgeReady()) {
-    try { const ss = await ctx.bridgeCommand('screenshot', { quality: 70 }); if (ss.ok && ss.screenshot) { ctx.session.lastScreenshotData = ss.screenshot; ctx.session.lastBroadcastUrl = ctx.session.lastPage?.url || ''; ctx.wsBroadcast({ type: 'screenshot', data: ss.screenshot, url: ctx.session.lastPage?.url || '', title: ctx.session.lastPage?.title || '' }); return JSON.stringify({ ok: true, screenshot: 'bridge screenshot broadcast', via: 'bridge' }); } } catch (_) { /* best-effort */ }
+    try {
+      const ss = await ctx.bridgeCommand('screenshot', { quality: 70 });
+      if (ss.ok && ss.screenshot) {
+        ctx.session.lastScreenshotData = ss.screenshot;
+        ctx.session.lastBroadcastUrl = ctx.session.lastPage?.url || '';
+        ctx.wsBroadcast({ type: 'screenshot', data: ss.screenshot, url: ctx.session.lastPage?.url || '', title: ctx.session.lastPage?.title || '' });
+        return JSON.stringify({ ok: true, screenshot: 'inviato al monitor', via: 'bridge' });
+      }
+      // Il motivo del fallimento va registrato, altrimenti l'anteprima sparisce
+      // dal monitor senza che nessuno sappia perché
+      ctx.log(`[Screenshot] Estensione: ${ss?.error || 'nessuna immagine restituita'}`);
+    } catch (e) {
+      ctx.log(`[Screenshot] Comando bridge fallito: ${e.message}`);
+    }
   }
   const ap = ctx.getState('activePage');
   if (ap) { const ss = await ctx.takeActiveScreenshot(ctx.session.lastPage?.url, ctx.session.lastPage?.title); return JSON.stringify({ ok: true, screenshot: ss ? 'broadcast al monitor' : 'fallito' }); }
