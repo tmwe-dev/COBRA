@@ -43,26 +43,40 @@ async function callAI(systemPrompt, messages, tools, ctx) {
   const providerCtx = { executeTool, digestToolResult, wsBroadcast, session, CobraSupervisor, TokenMeter, estimateTokens, COBRA_DEFAULTS };
 
   for (const p of providers) {
-    try {
-      log(`Trying ${p.name} (${p.model})...`);
-      if (emitThinking) emitThinking(`Connessione a ${p.name}...`);
-      let result;
-      if (p.name === 'openai' || p.name === 'groq') result = await callOpenAI(p.name, p.key, p.model, systemPrompt, messages, tools, providerCtx);
-      else if (p.name === 'anthropic') result = await callAnthropic(p.key, p.model, systemPrompt, messages, tools, providerCtx);
-      else if (p.name === 'gemini') result = await callGemini(p.key, p.model, systemPrompt, messages, tools, providerCtx);
-      const text = typeof result === 'object' ? result.text : result;
-      const toolsUsed = typeof result === 'object' ? (result.toolsUsed || []) : [];
-      if (text) {
-        log(`${p.name} OK (${toolsUsed.length} tool calls)`);
-        // P0.2: Audit AI call
-        const usage = typeof result === 'object' ? result.usage : null;
-        auditAICall(p.name, p.model, usage?.prompt_tokens || 0, usage?.completion_tokens || 0, session?.id);
-        return { content: text, provider: p.name, model: p.model, toolsUsed };
+    // Retry with backoff for rate limiting (429) and server errors (5xx)
+    const maxRetries = 2;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        if (attempt > 0) {
+          const backoffMs = Math.min(1000 * Math.pow(2, attempt - 1), 8000);
+          log(`${p.name} retry ${attempt}/${maxRetries} after ${backoffMs}ms`);
+          if (emitThinking) emitThinking(`Riprovo ${p.name} (${attempt}/${maxRetries})...`);
+          await new Promise(r => setTimeout(r, backoffMs));
+        } else {
+          log(`Trying ${p.name} (${p.model})...`);
+          if (emitThinking) emitThinking(`Connessione a ${p.name}...`);
+        }
+        let result;
+        if (p.name === 'openai' || p.name === 'groq') result = await callOpenAI(p.name, p.key, p.model, systemPrompt, messages, tools, providerCtx);
+        else if (p.name === 'anthropic') result = await callAnthropic(p.key, p.model, systemPrompt, messages, tools, providerCtx);
+        else if (p.name === 'gemini') result = await callGemini(p.key, p.model, systemPrompt, messages, tools, providerCtx);
+        const text = typeof result === 'object' ? result.text : result;
+        const toolsUsed = typeof result === 'object' ? (result.toolsUsed || []) : [];
+        if (text) {
+          log(`${p.name} OK (${toolsUsed.length} tool calls)`);
+          const usage = typeof result === 'object' ? result.usage : null;
+          auditAICall(p.name, p.model, usage?.prompt_tokens || 0, usage?.completion_tokens || 0, session?.id);
+          return { content: text, provider: p.name, model: p.model, toolsUsed, promptTokens: usage?.prompt_tokens, completionTokens: usage?.completion_tokens };
+        }
+        lastError = `${p.name}: risposta vuota`;
+        break; // Empty response = no retry, try next provider
+      } catch (e) {
+        lastError = `${p.name}: ${e.message}`;
+        log(`${p.name} failed (attempt ${attempt}): ${e.message}`);
+        // Retry only on rate limit (429) or server error (5xx)
+        const isRetryable = /429|rate.?limit|5\d\d|timeout|ECONNRESET|ETIMEDOUT/i.test(e.message);
+        if (!isRetryable || attempt >= maxRetries) break;
       }
-      lastError = `${p.name}: risposta vuota`;
-    } catch (e) {
-      lastError = `${p.name}: ${e.message}`;
-      log(`${p.name} failed: ${e.message}`);
     }
   }
 

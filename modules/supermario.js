@@ -137,9 +137,10 @@ function routeIntent(message) {
   if (/\b(spedizione|express|cargo|air freight|courier|dhl|fedex|ups|awb|tracking|dogana)\b/i.test(msg)) scopes.add('logistics');
 
   if (scopes.size === 0) {
-    if (msg.endsWith('?') && msg.length < 40) return setIntent('chat', ['chat']);
+    // Nessun scope riconosciuto → chat (non search+browse cieco)
+    // Eccezione: messaggi lunghi con verbi d'azione → search come fallback ragionevole
+    if (msg.length < 60 || msg.endsWith('?')) return setIntent('chat', ['chat']);
     scopes.add('search');
-    scopes.add('browse');
   }
 
   // Operation level
@@ -364,16 +365,31 @@ function buildPlanPrompt(plan) {
     return `  ${s.step}. ${s.action}${deps}${status}`;
   }).join('\n');
   return `# PIANO DI ESECUZIONE (${plan.steps.length} step)
-Questa richiesta è stata scomposta in step sequenziali. Esegui ogni step nell'ordine, usando il risultato dello step precedente come input per il successivo.
+Questa richiesta è stata scomposta in step sequenziali.
 
 ${stepDescs}
 
-REGOLE PIANO:
-- Esegui gli step in ordine. Non saltare step.
-- Dopo ogni tool call, valuta se il risultato è sufficiente per procedere allo step successivo.
-- Se uno step fallisce, riporta l'errore e chiedi all'utente come procedere.
-- Al termine di tutti gli step, fornisci un riassunto consolidato dei risultati.
-- Se puoi parallelizzare step indipendenti (dependsOn vuoto), fallo.`;
+PROTOCOLLO ESECUZIONE PIANO:
+1. PRIMA di ogni tool call, dichiara: "[STEP N] Eseguo: <azione>"
+2. DOPO ogni tool call con risultato, dichiara: "[STEP N COMPLETATO] Risultato: <sintesi 1 riga>"
+3. Se uno step FALLISCE: "[STEP N FALLITO] Motivo: <errore>. Passo allo step successivo / Mi fermo."
+4. NON saltare step. Se uno step dipende dal precedente (dependsOn), usa il risultato.
+5. Al termine: "[PIANO COMPLETATO] Riassunto: <risultati consolidati di tutti gli step>"
+6. Se puoi parallelizzare step indipendenti (dependsOn vuoto), fallo.
+7. Se dopo 2 tentativi uno step fallisce, segna come fallito e prosegui se possibile.`;
+}
+
+// Step tracker: aggiorna stato piano basandosi sul testo AI
+function updatePlanFromResponse(plan, responseText) {
+  if (!plan || !responseText) return plan;
+  for (const step of plan.steps) {
+    const completedRe = new RegExp(`\\[STEP\\s*${step.step}\\s*COMPLETATO\\]`, 'i');
+    const failedRe = new RegExp(`\\[STEP\\s*${step.step}\\s*FALLITO\\]`, 'i');
+    if (completedRe.test(responseText)) step.status = 'completed';
+    else if (failedRe.test(responseText)) step.status = 'failed';
+  }
+  if (/\[PIANO COMPLETATO\]/i.test(responseText)) plan.completed = true;
+  return plan;
 }
 
 function savePlanTemplate(plan) {
@@ -391,13 +407,16 @@ function savePlanTemplate(plan) {
 // ══════════════════════════════════════════════════════════════
 // 8. SELECT MODEL — sceglie tier lite/standard/power
 // ══════════════════════════════════════════════════════════════
-function selectModel(scopes, taskPlan, userMessage) {
+function selectModel(scopes, taskPlan, userMessage, session) {
   const msg = (userMessage || '').toLowerCase();
   if (scopes.length === 1 && scopes[0] === 'chat') return { tier: 'lite', reason: 'chat puro' };
   if (msg.length < 15 && !scopes.some(s => ['search','browse','data','communicate','sales'].includes(s))) return { tier: 'lite', reason: 'messaggio breve' };
   if (taskPlan && taskPlan.steps.length >= 3) return { tier: 'power', reason: `piano ${taskPlan.steps.length} step` };
   if (/\b(confronta|paragona|analizza|analisi|strategia|valuta|pro e contro|differenz|report|documento|riassunto dettagliato|business plan|proposta)\b/.test(msg)) return { tier: 'power', reason: 'ragionamento complesso' };
   if (scopes.length >= 3) return { tier: 'power', reason: `${scopes.length} scope attivi` };
+  // Context-awareness: pagina complessa aperta → almeno standard
+  const pageLen = session?.lastPage?.markdown?.length || 0;
+  if (pageLen > 2000 && scopes.some(s => ['browse','data','interact'].includes(s))) return { tier: 'standard', reason: `pagina complessa (${Math.round(pageLen/1000)}k chars)` };
   if (scopes.includes('communicate') && msg.length > 100) return { tier: 'standard', reason: 'comunicazione elaborata' };
   return { tier: 'standard', reason: 'default operativo' };
 }
@@ -553,15 +572,26 @@ async function assemble({ intent, scopes, operationLevel, userMessage, conversat
     }
   }
 
-  // KB contestuali da Supabase (scope-aware)
+  // KB contestuali da Supabase (scope-aware + reranking)
   try {
     if (SUPABASE_URL && SUPABASE_ANON_KEY) {
-      const tagsFilter = [...contextTags].map(t => `tags.cs.{${t}}`).join(',');
-      const resp = await fetchKB(`cobra_kb_rules?active=eq.true&or=(${tagsFilter})&limit=10`, { signal: AbortSignal.timeout(3000) });
+      // Limita a max 5 tag per evitare query troppo pesanti
+      const topTags = [...contextTags].slice(0, 8);
+      const tagsFilter = topTags.map(t => `tags.cs.{${t}}`).join(',');
+      const resp = await fetchKB(`cobra_kb_rules?active=eq.true&or=(${tagsFilter})&limit=15`, { signal: AbortSignal.timeout(3000) });
       if (resp.ok) {
         const rows = await resp.json();
         const nonIdentity = rows.filter(e => e.rule_type !== 'identity');
-        for (const e of nonIdentity) kbParts.push(`[${e.title}] ${e.content.substring(0, 1200)}`);
+        // Reranking: ordina per rilevanza al messaggio utente
+        const msgWords = (userMessage || '').toLowerCase().split(/\s+/).filter(w => w.length > 2);
+        const ranked = nonIdentity.map(e => {
+          const text = `${e.title} ${e.content} ${(e.tags || []).join(' ')}`.toLowerCase();
+          const tagOverlap = (e.tags || []).filter(t => contextTags.has(t)).length;
+          const wordOverlap = msgWords.filter(w => text.includes(w)).length;
+          return { ...e, _relevance: (e.priority || 0) + tagOverlap * 3 + wordOverlap * 2 };
+        }).sort((a, b) => b._relevance - a._relevance);
+        // Prendi max 8 più rilevanti
+        for (const e of ranked.slice(0, 8)) kbParts.push(`[${e.title}] ${e.content.substring(0, 1200)}`);
       }
     }
   } catch { /* silent */ }
@@ -624,7 +654,7 @@ function complete(assemblyResult, response, model, promptTokens, completionToken
 module.exports = {
   routeIntent, clarifyIntentWithLLM, selectTools, resolveAgent,
   buildMemoryBlock, updateNarrativeSummary,
-  decompose, buildPlanPrompt, savePlanTemplate,
+  decompose, buildPlanPrompt, savePlanTemplate, updatePlanFromResponse,
   selectModel, getModelForProvider, MODEL_TIERS,
   preflightAudit, validateToolCall,
   assemble, complete,

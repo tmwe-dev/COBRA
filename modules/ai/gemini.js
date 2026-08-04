@@ -18,7 +18,7 @@ async function callGemini(key, model, systemPrompt, messages, tools, ctx) {
   while (round < (tools ? COBRA_DEFAULTS.MAX_TOOL_ROUNDS : 1)) {
     if (session.chatAborted) return { text: 'Operazione interrotta dall\'utente.', toolsUsed: _toolsUsed };
     round++;
-    const body = { system_instruction: { parts: [{ text: systemPrompt }] }, contents, generationConfig: { maxOutputTokens: 3000, temperature: 0.7 } };
+    const body = { system_instruction: { parts: [{ text: systemPrompt }] }, contents, generationConfig: { maxOutputTokens: 16000, temperature: 0.5 } };
     if (geminiTools) body.tools = geminiTools;
     const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error?.message || `HTTP ${res.status}`); }
@@ -60,7 +60,8 @@ async function callGemini(key, model, systemPrompt, messages, tools, ctx) {
       contents.push({ role: 'user', parts: responseParts });
       continue;
     }
-    return { text: textParts.map(p => p.text).join('\n') || '', toolsUsed: _toolsUsed };
+    const _usage = data.usageMetadata ? { prompt_tokens: data.usageMetadata.promptTokenCount, completion_tokens: data.usageMetadata.candidatesTokenCount } : undefined;
+    return { text: textParts.map(p => p.text).join('\n') || '', toolsUsed: _toolsUsed, usage: _usage };
   }
   return { text: '', toolsUsed: _toolsUsed };
 }

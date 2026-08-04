@@ -27,6 +27,26 @@ function validateToolArgs(name, args) {
   return args;
 }
 
+// Adaptive retry map: tool → alternative tools da provare
+const TOOL_ALTERNATIVES = {
+  navigate: ['google_search', 'scrape_url'],
+  scrape_url: ['read_page', 'extract_data'],
+  read_page: ['screenshot', 'get_page_snapshot'],
+  screenshot: ['read_page', 'get_page_snapshot'],
+  click_element: ['fill_form', 'type_human'],
+  fill_form: ['type_human', 'click_element'],
+  google_search: ['navigate'],
+  extract_data: ['read_table', 'scrape_url'],
+  read_table: ['extract_data', 'read_page'],
+  get_page_elements: ['get_page_snapshot', 'read_page'],
+  inspect_dom_js: ['get_page_snapshot', 'read_page'],
+  linkedin_search: ['google_search'],
+};
+
+function _getAlternativeTools(toolName) {
+  return TOOL_ALTERNATIVES[toolName] || [];
+}
+
 // Handler registry — populated by registerHandlers()
 const _handlers = {};
 
@@ -94,7 +114,10 @@ async function executeTool(name, args, ctx) {
     _toolResult = await handler(args, ctx);
     return _toolResult;
   } catch (e) {
-    _toolResult = JSON.stringify({ error: `${name}: ${e.message}` });
+    // Adaptive retry: suggerisci alternative in base al tool fallito
+    const alternatives = _getAlternativeTools(name);
+    const altText = alternatives.length > 0 ? ` Alternative: prova ${alternatives.join(' o ')}.` : '';
+    _toolResult = JSON.stringify({ error: `${name}: ${e.message}${altText}` });
     return _toolResult;
   } finally {
     const _toolLatency = Date.now() - _toolExecStart;

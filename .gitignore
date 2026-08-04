@@ -7,3 +7,12 @@ data/supermario_prompts.jsonl
 *.log
 .DS_Store
 package-lock.json
+.vercel
+
+# Dati di esecuzione: contengono conversazioni, memorie e dati aziendali reali.
+# Non devono finire nel repository.
+data/*.json
+data/*.json.corrotto.*
+data/audit/
+data/files/
+data/cobra.pid

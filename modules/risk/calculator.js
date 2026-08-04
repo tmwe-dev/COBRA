@@ -72,7 +72,27 @@ function computeEffectiveRisk(toolName, toolArgs) {
   }
 
   const levelRequiresConfirm = RISK_REQUIRES_CONFIRMATION[level];
-  const requiresConfirm = spec.confirm === false ? false : spec.confirm === true ? true : levelRequiresConfirm;
+
+  // Il rischio è "escalato" se l'analisi (URL, intento del click, JS) lo ha
+  // portato sopra il livello base del tool.
+  const escalated = level !== spec.level;
+
+  // Semantica di spec.confirm:
+  //   true      → conferma sempre richiesta
+  //   false     → il tool di per sé non la richiede, MA se il rischio è escalato
+  //               la conferma torna obbligatoria. Senza questa clausola un
+  //               navigate verso una pagina di pagamento, o un click su "Paga ora",
+  //               verrebbero eseguiti senza chiedere nulla.
+  //   undefined → decide il livello di rischio
+  let requiresConfirm;
+  if (spec.confirm === true) requiresConfirm = true;
+  else if (spec.confirm === false) requiresConfirm = escalated && levelRequiresConfirm;
+  else requiresConfirm = levelRequiresConfirm;
+
+  if (spec.confirm === false && requiresConfirm) {
+    reasons.push(`conferma riattivata: rischio escalato ${spec.level} → ${level}`);
+  }
+
   const ttl = spec.ttl || RISK_DEFAULT_TTL[level];
   return { level, requires_confirmation: requiresConfirm, ttl, reasons };
 }

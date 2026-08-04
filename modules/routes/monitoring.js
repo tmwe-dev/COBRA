@@ -71,6 +71,40 @@ function register(router, ctx) {
     res.end(JSON.stringify({ pending_actions: allActions.sort((a, b) => new Date(b.created) - new Date(a.created)).slice(0, 100), invocations: invLog.slice(-50) }));
   });
 
+  // ── Memoria appresa (fatti durevoli sull'utente) ──
+  router.get('/api/learning/facts', (b, res) => {
+    const store = ctx.learningStore;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    if (!store) { res.end(JSON.stringify({ facts: [], stats: { total: 0 } })); return; }
+    res.end(JSON.stringify({
+      facts: [...store.facts].sort((a, b) => b.confidence - a.confidence),
+      stats: store.getStats(),
+    }));
+  });
+
+  router.post('/api/learning/forget', (body, res) => {
+    const store = ctx.learningStore;
+    let removed = 0, errore = null;
+    try {
+      const { fact, all } = JSON.parse(body || '{}');
+      if (!store) errore = 'memoria non disponibile';
+      else if (all === true) { removed = store.facts.length; store.facts = []; store.save(); }
+      else if (fact) removed = store.forget(fact);
+      else errore = 'serve "fact" oppure "all": true';
+    } catch (e) { errore = e.message; }
+    res.writeHead(errore ? 400 : 200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(errore ? { error: errore } : { ok: true, removed }));
+  });
+
+  // Verifica che il registro di audit non sia stato alterato
+  router.get('/api/monitoring/audit-integrity', (b, res) => {
+    let result;
+    try { result = ctx.verifyAuditChain(); }
+    catch (e) { result = { valid: false, reason: `verifica fallita: ${e.message}` }; }
+    res.writeHead(result.valid ? 200 : 409, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(result));
+  });
+
   // ── Prompt Audit ──
   router.get('/api/monitoring/prompts', (b, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>COBRA Web App v8.1</title>
+  <title>COBRA v11</title>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
@@ -1015,7 +1015,7 @@
     <div class="topbar">
       <div class="logo">
         <img src="/cobra-logo.png" alt="">COBRA
-        <span class="version" id="appVersion">v7.9</span>
+        <span class="version" id="appVersion">v11.0</span>
       </div>
       <div class="status">
         <div class="dot" id="statusDot"></div>
@@ -1069,7 +1069,7 @@
     <!-- Chat Panel (left) -->
     <div class="chat-panel">
       <div class="chat-messages" id="chatMessages">
-        <div class="bubble system">COBRA Web App v7.9 — pronto per testare</div>
+        <div class="bubble system">COBRA v11 — pronto</div>
       </div>
 
       <div class="quick-actions">
@@ -1676,8 +1676,8 @@
           <button onclick="rejectPending('${id}')" style="flex:1;padding:10px;background:linear-gradient(135deg,#ef4444,#dc2626);color:#fff;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-size:13px">❌ Rifiuta</button>
         </div>
       `;
-      chatArea.appendChild(widget);
-      chatArea.scrollTop = chatArea.scrollHeight;
+      chatMessages.appendChild(widget);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
       addLogEntry(`PENDING: ${msg.tool} (${msg.risk})`, '⏳', 'warn');
     }
 
@@ -2357,7 +2357,7 @@
             break;
           case 'human_takeover_timeout':
             hideHumanTakeover();
-            addMessage('system', '⏰ Timeout: COBRA ha ripreso il controllo automaticamente.');
+            addBubble('system', '⏰ Timeout: COBRA ha ripreso il controllo automaticamente.');
             break;
           case 'bridge_status':
             updateBridgeIndicator(msg.connected, msg.capabilities);

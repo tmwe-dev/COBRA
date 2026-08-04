@@ -70,8 +70,8 @@ const TOOL_RISK_TAXONOMY = {
   read_inbox:      { level:'read', confirm:false, batchable:true, truth:'Alias di check_emails.' },
   send_whatsapp:   { level:'send', confirm:true, batchable:false, ttl:300, truth:'Alias di whatsapp_send.' },
   send_linkedin:   { level:'send', confirm:true, batchable:false, ttl:300, truth:'Alias di linkedin_send_message.' },
-  web_search:      { level:'read', confirm:false, batchable:true, truth:'Alias di google_search.' },
-  execute_js:      { level:'write_form', confirm:false, batchable:false, truth:'Legacy JS execution alias.' },
+  // web_search ed execute_js sono già definiti sopra (righe 11 e 50).
+  // Ridefinirli qui li sovrascriveva silenziosamente e rischiava divergenze.
 };
 
 function getToolRiskSpec(toolName) {

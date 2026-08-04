@@ -20,7 +20,8 @@ async function bridgeCommand(command, args = {}) {
     }, 15000);
 
     _pendingBridgeRequests.set(id, { resolve, reject, timeout });
-    _bridgeSocket.send(JSON.stringify({ id, type: 'command', command, args }));
+    // Protocollo atteso dall'estensione (cobra-extension/background.js): bridge_command
+    _bridgeSocket.send(JSON.stringify({ type: 'bridge_command', id, command, args }));
   });
 }
 

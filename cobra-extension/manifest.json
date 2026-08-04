@@ -9,7 +9,8 @@
     "tabs",
     "webNavigation",
     "notifications",
-    "cookies"
+    "cookies",
+    "alarms"
   ],
   "optional_permissions": [
     "downloads",
@@ -35,5 +36,12 @@
     "16": "icons/cobra-16.png",
     "48": "icons/cobra-48.png",
     "128": "icons/cobra-128.png"
-  }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
 }

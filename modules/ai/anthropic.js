@@ -57,7 +57,7 @@ async function callAnthropic(key, model, systemPrompt, messages, tools, ctx) {
       apiMessages.push({ role: 'user', content: toolResults });
       continue;
     }
-    return { text: textBlocks.map(b => b.text).join('\n') || '', toolsUsed: _toolsUsed };
+    return { text: textBlocks.map(b => b.text).join('\n') || '', toolsUsed: _toolsUsed, usage: data.usage ? { prompt_tokens: data.usage.input_tokens, completion_tokens: data.usage.output_tokens } : undefined };
   }
   return { text: '', toolsUsed: _toolsUsed };
 }

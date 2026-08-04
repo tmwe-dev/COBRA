@@ -14,7 +14,8 @@ const { isDomainWhitelisted } = require('./config/whitelist');
 // ── 2. Security ──
 const { isAuthenticatedRequest, COBRA_API_TOKEN } = require('./security/auth');
 const { sanitizeForLog } = require('./security/sanitize');
-const HumanDriver = require('./security/human-driver');
+const { verifyAuditChain, flushAuditSync } = require('./security/audit-log');
+const { HumanDriver } = require('./security/human-driver');
 
 // ── 3. Risk ──
 const { TOOL_RISK_TAXONOMY, getToolRiskSpec } = require('./risk/taxonomy');
@@ -34,13 +35,23 @@ const { loadAPIKeys, loadOperatorConfig } = require('./kb/api-keys');
 // ── 6. Memory ──
 const ChatMemory = require('./memory/chat-memory');
 const ConversationEngine = require('./memory/conversation');
+const { LearningStore } = require('./memory/learning');
 
 // ── 7. AI ──
 const { callAI } = require('./ai/router');
 
 // ── 8. Browser ──
-const { launchBrowser, getActivePage } = require('./browser/browser');
-const { smartScrape } = require('./browser/scrape');
+const { getOrCreateBrowser, getState, setState } = require('./browser/browser');
+const { smartScrape, scrapeUrl } = require('./browser/scrape');
+const { dismissModals, dismissModalsBridge } = require('./browser/modals');
+const { getActivePage, detectCaptcha } = require('./browser/pages');
+const { getFeedbackStats } = require('./risk/pending-actions');
+
+// ── Dipendenze opzionali (degradano graziosamente se non installate) ──
+let puppeteer = null;
+try { puppeteer = require('puppeteer'); } catch { /* Puppeteer non installato — si usa il bridge */ }
+let nodemailer = null;
+try { nodemailer = require('nodemailer'); } catch { /* nodemailer non installato — send_email disabilitato */ }
 
 // ── 9. Bridge ──
 const { bridgeCommand, bridgeNavigate } = require('./bridge/connection');
@@ -51,11 +62,13 @@ const { executeTool, registerHandlers } = require('./tools/executor');
 const allHandlers = require('./tools/handlers');
 
 // ── 11. Supervisor ──
-const CobraSupervisor = require('./supervisor/cobra');
+const { CobraSupervisor } = require('./supervisor/cobra');
 
 // ── 12. Utils ──
 const { estimateTokens } = require('./utils/tokens');
 const { detectRepetition } = require('./utils/repetition');
+const { digestToolResult } = require('./utils/context');
+const { writeJsonAtomicSync, readJsonSafeSync } = require('./utils/atomic-file');
 
 // ── 13. WebSocket ──
 const wsModule = require('./ws/server');
@@ -75,6 +88,11 @@ if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 const serverLogs = [];
 function log(msg) { const ts = new Date().toISOString(); const entry = `[${ts}] ${msg}`; console.log(entry); serverLogs.push(entry); if (serverLogs.length > 500) serverLogs.shift(); }
 
+// ── Paywall domains persistent set ──
+const _paywallFile = path.join(dataDir, 'paywall_domains.json');
+const _paywallDomains = new Set(readJsonSafeSync(_paywallFile, []) || []);
+function _savePaywallDomains() { writeJsonAtomicSync(_paywallFile, [..._paywallDomains], { pretty: false }); }
+
 const session = {
   id: Date.now().toString(36),
   lastPage: null, kbSnippets: [], emailConfig: {},
@@ -84,13 +102,105 @@ const session = {
 };
 const toolHistory = [];
 const aiKeys = {};
-const memories = [];
-const tasks = [];
+// ── Auto-load API keys from .env ──
+if (process.env.OPENAI_API_KEY) aiKeys.openaiKey = process.env.OPENAI_API_KEY;
+if (process.env.ANTHROPIC_API_KEY) aiKeys.anthropicKey = process.env.ANTHROPIC_API_KEY;
+if (process.env.GEMINI_API_KEY) aiKeys.geminiKey = process.env.GEMINI_API_KEY;
+if (process.env.GROQ_API_KEY) aiKeys.groqKey = process.env.GROQ_API_KEY;
+if (process.env.ELEVENLABS_API_KEY) aiKeys.elevenlabsKey = process.env.ELEVENLABS_API_KEY;
+if (process.env.OPENAI_MODEL) aiKeys.openaiModel = process.env.OPENAI_MODEL;
+if (process.env.ANTHROPIC_MODEL) aiKeys.anthropicModel = process.env.ANTHROPIC_MODEL;
+if (process.env.GEMINI_MODEL) aiKeys.geminiModel = process.env.GEMINI_MODEL;
+// ── Memory persistence ──
+const _memoriesFile = path.join(dataDir, 'memories.json');
+const memories = readJsonSafeSync(_memoriesFile, []) || [];
+function _saveMemories() { writeJsonAtomicSync(_memoriesFile, memories); }
 const conversationEngine = new ConversationEngine();
+// Fatti durevoli appresi dalle conversazioni (persistono tra le sessioni)
+const learningStore = new LearningStore(dataDir);
 
-// Placeholder objects
-const TokenMeter = { getStatus: () => ({ totalTokens: 0, level: 'ok' }), reset: () => {} };
-const ResponseRecorder = { recordChat: () => {}, recordTTS: () => {}, getLog: () => [], getStats: () => ({}), exportJSON: () => [], exportCSV: () => '', exportConversation: () => '', loadFromFile: () => {}, _log: [], _filePath: '' };
+// ── Task persistence ──
+const _tasksFile = path.join(dataDir, 'tasks.json');
+const tasks = readJsonSafeSync(_tasksFile, []) || [];
+function _saveTasks() { writeJsonAtomicSync(_tasksFile, tasks); }
+// Patch task mutations to auto-save
+const _origPush = tasks.push.bind(tasks);
+tasks.push = function(...args) { const r = _origPush(...args); _saveTasks(); return r; };
+const _origSplice = tasks.splice.bind(tasks);
+tasks.splice = function(...args) { const r = _origSplice(...args); _saveTasks(); return r; };
+
+// ── TokenMeter — real implementation with budget cap ──
+const _tokenMeterState = { totalPrompt: 0, totalCompletion: 0, calls: 0, dailyCap: 2000000, dayStart: Date.now() };
+const TokenMeter = {
+  track({ promptTokens, completionTokens }) {
+    _tokenMeterState.totalPrompt += promptTokens || 0;
+    _tokenMeterState.totalCompletion += completionTokens || 0;
+    _tokenMeterState.calls++;
+    // Reset daily
+    if (Date.now() - _tokenMeterState.dayStart > 86400000) {
+      _tokenMeterState.totalPrompt = promptTokens || 0;
+      _tokenMeterState.totalCompletion = completionTokens || 0;
+      _tokenMeterState.calls = 1;
+      _tokenMeterState.dayStart = Date.now();
+    }
+  },
+  getStatus() {
+    const total = _tokenMeterState.totalPrompt + _tokenMeterState.totalCompletion;
+    const pct = Math.round((total / _tokenMeterState.dailyCap) * 100);
+    return { totalTokens: total, promptTokens: _tokenMeterState.totalPrompt, completionTokens: _tokenMeterState.totalCompletion, calls: _tokenMeterState.calls, level: pct > 90 ? 'critical' : pct > 70 ? 'warning' : 'ok', percentUsed: pct };
+  },
+  checkBudget() {
+    const total = _tokenMeterState.totalPrompt + _tokenMeterState.totalCompletion;
+    return { allowed: total < _tokenMeterState.dailyCap, consumed: total, cap: _tokenMeterState.dailyCap };
+  },
+  reset() { _tokenMeterState.totalPrompt = 0; _tokenMeterState.totalCompletion = 0; _tokenMeterState.calls = 0; _tokenMeterState.dayStart = Date.now(); },
+};
+
+// ── ResponseRecorder — real implementation with file persistence ──
+const _responseLog = [];
+const _responseFile = path.join(dataDir, 'response_log.jsonl');
+const ResponseRecorder = {
+  recordChat(entry) {
+    const record = { ...entry, timestamp: new Date().toISOString() };
+    _responseLog.push(record);
+    if (_responseLog.length > 200) _responseLog.shift();
+    try { fs.appendFileSync(_responseFile, JSON.stringify(record) + '\n'); } catch {}
+  },
+  recordTTS() {},
+  getLog() { return _responseLog; },
+  getStats() {
+    const providers = {};
+    for (const r of _responseLog) { providers[r.provider] = (providers[r.provider] || 0) + 1; }
+    return { total: _responseLog.length, providers, avgDuration: _responseLog.length > 0 ? Math.round(_responseLog.reduce((s, r) => s + (r.durationMs || 0), 0) / _responseLog.length) : 0 };
+  },
+  exportJSON() { return _responseLog; },
+  exportCSV() {
+    const cols = ['timestamp', 'intent', 'provider', 'model', 'durationMs', 'kbEntries', 'toolsUsed', 'userMessage', 'response'];
+    const esc = (v) => {
+      if (v === undefined || v === null) return '';
+      const s = Array.isArray(v) ? v.map(t => t.name || t).join(' ') : String(v);
+      return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const rows = [cols.join(',')];
+    for (const r of _responseLog) rows.push(cols.map(c => esc(r[c])).join(','));
+    return rows.join('\n');
+  },
+  exportConversation() {
+    if (_responseLog.length === 0) return 'Nessuna conversazione registrata.';
+    const out = ['COBRA — Esportazione conversazioni', `Generato: ${new Date().toLocaleString('it-IT')}`, `Scambi: ${_responseLog.length}`, ''.padEnd(60, '=' ), ''];
+    for (const r of _responseLog) {
+      const ts = r.timestamp ? new Date(r.timestamp).toLocaleString('it-IT') : '';
+      out.push(`[${ts}]  intent=${r.intent || '-'}  provider=${r.provider || '-'}`);
+      out.push(`UTENTE: ${r.userMessage || ''}`);
+      out.push(`COBRA:  ${r.response || ''}`);
+      const tools = (r.toolsUsed || []).map(t => t.name || t);
+      if (tools.length) out.push(`TOOL:   ${tools.join(', ')}`);
+      out.push(''.padEnd(60, '-'));
+    }
+    return out.join('\n');
+  },
+  _log: _responseLog,
+};
 const SuperMario = require('./supermario');
 
 function emitThinking(text) { wsModule.wsBroadcast({ type: 'thinking', text }); }
@@ -105,6 +215,102 @@ function auditPrompt(message, routing, marioResult) {
 // ── Register tool handlers ──
 registerHandlers(allHandlers);
 
+// ── Bridge command via WS server infrastructure ──
+let _bridgeCmdId = 0;
+function _bridgeCmd(command, args = {}) {
+  if (!wsModule.isBridgeReady()) throw new Error('Bridge not ready');
+  const client = wsModule.getBridgeClient();
+  const pending = wsModule.getBridgePending();
+  return new Promise((resolve, reject) => {
+    const id = ++_bridgeCmdId;
+    const timeout = setTimeout(() => {
+      pending.delete(id);
+      reject(new Error(`Bridge command timeout: ${command}`));
+    }, 15000);
+    pending.set(id, (result) => {
+      clearTimeout(timeout);
+      resolve(result);
+    });
+    // Protocollo atteso dall'estensione (cobra-extension/background.js:122)
+    client.send(JSON.stringify({ type: 'bridge_command', id, command, args }));
+  });
+}
+
+async function _bridgeNav(url) {
+  const navResult = await _bridgeCmd('navigate', { url });
+  if (!navResult.ok) return navResult;
+  await new Promise(r => setTimeout(r, 2000));
+  let cookieResult = await _bridgeCmd('dismiss_cookies').catch(() => ({ action: 'error' }));
+  if (cookieResult?.action === 'no_banner') {
+    await new Promise(r => setTimeout(r, 2000));
+    cookieResult = await _bridgeCmd('dismiss_cookies').catch(() => ({}));
+  }
+  if (cookieResult?.action && cookieResult.action !== 'no_banner' && cookieResult.action !== 'error') {
+    log(`[Cookie] Bridge dismiss: ${cookieResult.action}`);
+    await new Promise(r => setTimeout(r, 500));
+  }
+  const overlayResult = await _bridgeCmd('dismiss_overlay').catch(() => ({}));
+  if (overlayResult?.action && overlayResult.action !== 'no_overlay') {
+    log(`[Overlay] Bridge dismiss: ${overlayResult.action}`);
+    await new Promise(r => setTimeout(r, 1000));
+    await _bridgeCmd('dismiss_overlay').catch(() => {});
+  }
+  const ssResult = await _bridgeCmd('screenshot', { quality: 70 }).catch(() => ({}));
+  if (ssResult?.ok && ssResult?.screenshot) {
+    wsModule.wsBroadcast({ type: 'screenshot', data: ssResult.screenshot, url, title: '' });
+  }
+  const contentResult = await _bridgeCmd('get_page_content').catch(() => ({}));
+  return { ok: true, url, screenshot: ssResult?.screenshot, content: contentResult };
+}
+
+// ── Extension relay (LinkedIn / WhatsApp via webapp postMessage) ──
+const _extPending = new Map();
+let _extReqId = 0;
+function _extRelay(channel, action, args = {}, timeoutMs = 25000) {
+  if (wsModule.getWsClients().size === 0) {
+    return Promise.resolve({ success: false, error: 'Nessuna webapp connessa: impossibile raggiungere le estensioni.', errorCode: 'NO_WEBAPP' });
+  }
+  return new Promise((resolve) => {
+    const requestId = `ext_${++_extReqId}_${Date.now().toString(36)}`;
+    const timer = setTimeout(() => {
+      _extPending.delete(requestId);
+      resolve({ success: false, error: `Timeout estensione ${channel}.${action}`, errorCode: 'TIMEOUT' });
+    }, timeoutMs);
+    _extPending.set(requestId, (response) => {
+      clearTimeout(timer);
+      resolve(response || { success: false, error: 'Risposta vuota dall\'estensione' });
+    });
+    wsModule.wsBroadcast({ type: 'ext_command', requestId, channel, action, args });
+    log(`[ExtRelay] → ${channel}.${action} (${requestId})`);
+  });
+}
+
+// ── Bridge helper: click e fill form ──
+async function _bridgeClick(selector) {
+  return _bridgeCmd('click', { selector });
+}
+async function _bridgeFillForm(fields) {
+  return _bridgeCmd('fill_form', { fields });
+}
+
+// ── Seed KB con le regole always-loaded ──
+async function _seedKB() {
+  let saved = 0, errors = [];
+  for (const entry of ALWAYS_LOADED_KB) {
+    try {
+      const r = await saveToKB(
+        entry.domain || 'general',
+        entry.type || 'rule',
+        entry.title || entry.id || 'regola',
+        entry.content || '',
+        entry.tags || []
+      );
+      if (r) saved++;
+    } catch (e) { errors.push(e.message); }
+  }
+  return { ok: errors.length === 0, saved, total: ALWAYS_LOADED_KB.length, errors };
+}
+
 // ══════════════════════════════════════════════════════════════
 // DI Context
 // ══════════════════════════════════════════════════════════════
@@ -115,20 +321,83 @@ const ctx = {
   APP_VERSION: config.APP_VERSION || '11.0', APP_BUILD: config.APP_BUILD || 'modular',
   COBRA_TOOLS, _pendingActions,
   log, emitThinking, emitReasoning, auditPrompt,
-  sanitizeForLog, isDomainWhitelisted, isAuthenticatedRequest,
+  sanitizeForLog, isDomainWhitelisted,
+  isAuthenticatedRequest: (req) => isAuthenticatedRequest(req, ALLOWED_ORIGINS),
   classifyUrlRisk, classifyClickIntent, detectDangerousJs, computeEffectiveRisk,
   getActivePendingActions, approvePendingAction, rejectPendingAction, guardToolCall,
   searchKB, saveToKB, updateKB, deleteKB,
   detectRepetition,
+  // Bridge — wired to WS server infrastructure
+  bridgeCommand: _bridgeCmd,
+  bridgeNavigate: _bridgeNav,
   isBridgeReady: wsModule.isBridgeReady,
   getBridgeCapabilities: wsModule.getBridgeCapabilities,
   getWsClientCount: () => wsModule.getWsClients().size,
   wsBroadcast: wsModule.wsBroadcast,
   broadcastFile: wsModule.broadcastFile,
-  executeTool, callAI,
-  conversationEngine, SuperMario, CobraSupervisor,
-  HumanDriver, TokenMeter, ResponseRecorder,
+  // Browser — Puppeteer fallback + paywall
+  getOrCreateBrowser, getState, setState, smartScrape, scrapeUrl,
+  dismissModals, dismissModalsBridge, detectCaptcha,
+  puppeteer, nodemailer,
+  paywallDomains: _paywallDomains,
+  savePaywallDomains: _savePaywallDomains,
+  getActivePage: (url) => getActivePage(url, ctx),
+  // Cattura uno screenshot della pagina attiva. Prova prima il bridge (unica via
+  // se Puppeteer non è installato), poi la pagina Puppeteer attiva.
+  takeActiveScreenshot: async (url, title) => {
+    if (wsModule.isBridgeReady()) {
+      try {
+        const ss = await _bridgeCmd('screenshot', { quality: 70 });
+        if (ss?.ok && ss.screenshot) {
+          session.lastScreenshotData = ss.screenshot;
+          wsModule.wsBroadcast({ type: 'screenshot', data: ss.screenshot, url, title });
+          return ss.screenshot;
+        }
+      } catch (e) { log(`[Screenshot] Bridge fallito: ${e.message}`); }
+    }
+    if (puppeteer) {
+      try {
+        const page = getState('activePage');
+        if (page) {
+          const buf = await page.screenshot({ type: 'jpeg', quality: 70, encoding: 'base64' });
+          session.lastScreenshotData = buf;
+          wsModule.wsBroadcast({ type: 'screenshot', data: buf, url, title });
+          return buf;
+        }
+      } catch (e) { log(`[Screenshot] Puppeteer fallito: ${e.message}`); }
+    }
+    return null;
+  },
+  emitSiteVisit: (url, title, status) => {
+    wsModule.wsBroadcast({ type: 'page_loaded', url, title, status });
+  },
+  // Extension relay + bridge helper + KB seed
+  extRelay: _extRelay,
+  bridgeClick: _bridgeClick,
+  bridgeFillForm: _bridgeFillForm,
+  seedKB: _seedKB,
+  getFeedbackStats,
+  verifyAuditChain,
+  // AI + Tools — executeTool wrapped with ctx self-reference
+  executeTool: null, // set below after ctx is created
+  callAI, digestToolResult,
+  conversationEngine, learningStore, SuperMario, CobraSupervisor,
+  HumanDriver, TokenMeter, ResponseRecorder, estimateTokens,
+  // Persistence helpers for tool handlers
+  persistTasks: _saveTasks,
+  persistMemories: _saveMemories,
+  // Extension relay result — risolve la promise di _extRelay
+  handleExtResult(msg) {
+    const cb = _extPending.get(msg.requestId);
+    if (!cb) { log(`[ExtRelay] Risultato orfano per ${msg.requestId}`); return; }
+    _extPending.delete(msg.requestId);
+    log(`[ExtRelay] ← ${msg.channel} (${msg.requestId})`);
+    cb(msg.response);
+  },
+  handleDelegateFromExtension: async (ws, msg) => { log(`[Bridge] Delegate task: ${msg.task}`); },
 };
+// ── Critical: wrap executeTool with ctx self-reference ──
+ctx.executeTool = (name, args) => executeTool(name, args, ctx);
 
 // ══════════════════════════════════════════════════════════════
 // Boot
@@ -137,7 +406,9 @@ const handleRequest = setupRoutes(ctx);
 const server = http.createServer(handleRequest);
 wsModule.setupWebSocket(server, ctx);
 
-server.listen(PORT, '127.0.0.1', async () => {
+// Avvia il listen solo se eseguito direttamente (importabile per i test)
+const _isMain = require.main === module;
+if (_isMain) server.listen(PORT, '127.0.0.1', async () => {
   console.log(`\n  COBRA v11 — http://127.0.0.1:${PORT} (localhost only)`);
   console.log(`  Tools: ${COBRA_TOOLS.length} | Handlers: ${Object.keys(allHandlers).length}\n`);
   await loadAPIKeys();
@@ -146,5 +417,37 @@ server.listen(PORT, '127.0.0.1', async () => {
   log(`Server ready.`);
 });
 
-process.on('SIGINT', () => { console.log('\nBye!'); process.exit(0); });
+// ── Process-level error handling (production hardening) ──
+process.on('uncaughtException', (err) => {
+  log(`[FATAL] Uncaught exception: ${err.message}\n${err.stack}`);
+  try { fs.appendFileSync(path.join(dataDir, 'crash.log'), `[${new Date().toISOString()}] UNCAUGHT: ${err.message}\n${err.stack}\n\n`); } catch {}
+  // Non uccidere il processo per errori non critici
+  if (err.message.includes('EADDRINUSE') || err.message.includes('out of memory')) {
+    console.error('[FATAL] Errore non recuperabile, shutdown.');
+    process.exit(1);
+  }
+  // Per tutti gli altri: log e continua
+  console.error('[WARN] Server sopravvissuto a uncaught exception — vedi crash.log');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  log(`[WARN] Unhandled rejection: ${msg}`);
+  try { fs.appendFileSync(path.join(dataDir, 'crash.log'), `[${new Date().toISOString()}] REJECTION: ${msg}\n\n`); } catch {}
+});
+
+process.on('SIGINT', () => {
+  log('Shutdown requested');
+  // Salva stato prima di uscire
+  try { conversationEngine.saveNow(); _saveTasks(); _saveMemories(); _savePaywallDomains(); flushAuditSync(); } catch {}
+  console.log('\nBye!');
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  log('SIGTERM received');
+  try { conversationEngine.saveNow(); _saveTasks(); _saveMemories(); _savePaywallDomains(); flushAuditSync(); } catch {}
+  process.exit(0);
+});
+
 module.exports = { server, ctx };

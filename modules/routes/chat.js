@@ -4,9 +4,31 @@
 function register(router, ctx) {
   // ── /api/chat — main chat endpoint ──
   router.post('/api/chat', async (body, res) => {
+    // Rete di sicurezza: qualunque sia il percorso di uscita, il client riceve
+    // sempre una risposta entro il limite. Una richiesta appesa è indistinguibile
+    // da un blocco totale dal punto di vista dell'utente.
+    const MAX_TURN_MS = 180000;
+    let _risposto = false;
+    const _invia = (status, payload) => {
+      if (_risposto) return;
+      _risposto = true;
+      clearTimeout(_watchdog);
+      try {
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(payload));
+      } catch (e) { ctx.log(`[Chat] invio risposta fallito: ${e.message}`); }
+    };
+    const _watchdog = setTimeout(() => {
+      ctx.log(`[Chat] TIMEOUT DI TURNO (${MAX_TURN_MS}ms) — risposta di emergenza`);
+      try { ctx.CobraSupervisor.failRequest('timeout di turno'); } catch { /* best-effort */ }
+      ctx.wsBroadcast({ type: 'thinking', text: '' });
+      _invia(504, { content: 'La richiesta ha superato il tempo massimo ed è stata interrotta. Riprova, magari con una richiesta più circoscritta.', provider: 'timeout' });
+    }, MAX_TURN_MS);
+    if (_watchdog.unref) _watchdog.unref();
+
     try {
       const { message, voiceMode } = JSON.parse(body);
-      if (!message) { res.writeHead(400); res.end(JSON.stringify({ error: 'No message' })); return; }
+      if (!message) { _invia(400, { error: 'Nessun messaggio' }); return; }
       ctx.session.chatAborted = false;
       console.log('[TURN]', { sessionId: ctx.session.id, msg: message.substring(0, 60) });
 
@@ -15,8 +37,7 @@ function register(router, ctx) {
         ctx.log('[HumanTakeover] Operator resumed via chat message');
         ctx.session.humanTakeover = false;
         if (ctx.session.humanTakeoverResolve) { ctx.session.humanTakeoverResolve(); ctx.session.humanTakeoverResolve = null; }
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ ok: true, message: 'Controllo restituito a COBRA.' }));
+        _invia(200, { ok: true, message: 'Controllo restituito a COBRA.' });
         ctx.wsBroadcast({ type: 'human_takeover_ended', ts: Date.now() });
         ctx.wsBroadcast({ type: 'ai_response', text: 'Perfetto, riprendo il controllo. Analizzo lo stato attuale della pagina...' });
         return;
@@ -92,8 +113,14 @@ function register(router, ctx) {
         const start = Date.now();
         while (!ctx.isBridgeReady() && (Date.now() - start) < 15000) await new Promise(r => setTimeout(r, 250));
         if (!ctx.isBridgeReady()) {
-          ctx.wsBroadcast({ type: 'ai_response', text: '⚠️ Estensione Chrome non connessa. Verifica installazione e riprova.' });
+          // Va SEMPRE inviata una risposta HTTP: senza, il client resta appeso
+          // fino al proprio timeout e l'utente non vede alcun errore.
+          const avviso = 'Estensione Chrome non connessa: non posso usare il browser. Verifica che sia installata e attiva, poi riprova.';
+          ctx.log('[Chat] Bridge non disponibile dopo 15s — richiesta conclusa con avviso');
+          ctx.wsBroadcast({ type: 'ai_response', text: '⚠️ ' + avviso });
+          ctx.wsBroadcast({ type: 'thinking', text: '' });
           ctx.CobraSupervisor.completeRequest();
+          _invia(200, { content: avviso, provider: 'none', intent, bridgeMissing: true });
           return;
         }
       }
@@ -114,6 +141,17 @@ function register(router, ctx) {
       const useTools = marioResult.tools.length > 0 ? marioResult.tools : undefined;
       ctx.log(`[SuperMario] Assembled: ${marioResult.tools.length} tools, prompt=${systemPrompt.length} chars`);
 
+      // Richiamo dei fatti appresi nelle sessioni precedenti, pertinenti a questo messaggio
+      if (ctx.learningStore) {
+        try {
+          const recall = ctx.learningStore.buildRecallBlock(message);
+          if (recall) {
+            systemPrompt += '\n\n' + recall;
+            ctx.log(`[Apprendimento] richiamati fatti pertinenti (${ctx.learningStore.facts.length} in archivio)`);
+          }
+        } catch (e) { ctx.log(`[Apprendimento] richiamo fallito: ${e.message}`); }
+      }
+
       // Prompt audit
       ctx.auditPrompt(message, routing, marioResult, taskPlan, ctx.session.kbSnippets);
       if (taskPlan) systemPrompt += '\n\n' + ctx.SuperMario.buildPlanPrompt(taskPlan);
@@ -124,14 +162,19 @@ function register(router, ctx) {
       if (repetitionWarning) { systemPrompt += '\n\n' + repetitionWarning; ctx.log('Repetition detected'); }
 
       // 8. AI call
-      const modelSelection = ctx.SuperMario.selectModel(marioResult.scopes, taskPlan, message);
+      const modelSelection = ctx.SuperMario.selectModel(marioResult.scopes, taskPlan, message, ctx.session);
       ctx.emitReasoning(`Modello: ${modelSelection.tier}`, '🧠');
       const _chatStart = Date.now();
-      const result = await ctx.callAI(systemPrompt, msgs, useTools, modelSelection.tier);
+      const result = await ctx.callAI(systemPrompt, msgs, useTools, { ...ctx, modelTier: modelSelection.tier });
 
       // 9. Store + post-processing
       ctx.conversationEngine.addMessage(conv.id, 'assistant', result.content);
       ctx.SuperMario.updateNarrativeSummary(conversationHistory, ctx.aiKeys).catch(() => {});
+      // Apprendimento in sottofondo: non deve ritardare la risposta all'utente
+      if (ctx.learningStore) {
+        const storico = [...conversationHistory, { role: 'user', content: message }];
+        ctx.learningStore.extractFromConversation(storico, ctx.aiKeys, ctx.log).catch(() => {});
+      }
       if (taskPlan) ctx.SuperMario.savePlanTemplate(taskPlan);
 
       // 10. Post-flight
@@ -144,15 +187,13 @@ function register(router, ctx) {
       ctx.ResponseRecorder.recordChat({ userMessage: message, intent, systemPromptLength: systemPrompt.length, provider: result.provider, model: result.model || '', response: result.content, toolsUsed: result.toolsUsed || [], durationMs: Date.now() - _chatStart, kbEntries: (ctx.session.kbSnippets || []).length, repetitionDetected: !!repetitionWarning, marioScope: marioResult.scope, marioTraceId: marioResult.trace_id, taskPlanSteps: taskPlan ? taskPlan.steps.length : 0 });
 
       const meterStatus = ctx.TokenMeter.getStatus();
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ content: result.content, provider: result.provider, intent, tokens: meterStatus.totalTokens, tokenLevel: meterStatus.level }));
+      _invia(200, { content: result.content, provider: result.provider, intent, tokens: meterStatus.totalTokens, tokenLevel: meterStatus.level });
       ctx.wsBroadcast({ type: 'thinking', text: '' });
       ctx.wsBroadcast({ type: 'page_loaded', url: '', title: '' });
     } catch (e) {
       ctx.log('Chat error: ' + e.message);
       ctx.CobraSupervisor.failRequest(e.message);
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ content: 'Errore server: ' + e.message, provider: 'none' }));
+      _invia(500, { content: 'Errore server: ' + e.message, provider: 'none' });
       ctx.wsBroadcast({ type: 'thinking', text: '' });
       ctx.wsBroadcast({ type: 'page_loaded', url: '', title: '' });
     }

@@ -4,6 +4,7 @@
 const path = require('path');
 const fs = require('fs');
 const ChatMemory = require('./chat-memory');
+const { writeJsonAtomicSync, readJsonSafeSync } = require('../utils/atomic-file');
 
 class ConversationEngine {
   constructor() {
@@ -13,13 +14,29 @@ class ConversationEngine {
     this.summaryThreshold = 10;
     this._summarizingConversations = new Set();
     this.chatMemories = new Map();
-    this._dataFile = path.join(__dirname, 'data', 'conversations.json');
+    // data/ nella radice del progetto, insieme a memorie, task e audit.
+    // __dirname è modules/memory, quindi servono due livelli su.
+    this._dataFile = path.join(__dirname, '..', '..', 'data', 'conversations.json');
+    // Percorso storico errato (modules/data/): da migrare una tantum
+    this._legacyFile = path.join(__dirname, '..', 'data', 'conversations.json');
+  }
+
+  /** Sposta il file dalla vecchia posizione se la nuova non esiste ancora. */
+  _migrateLegacy() {
+    try {
+      if (fs.existsSync(this._dataFile) || !fs.existsSync(this._legacyFile)) return;
+      fs.mkdirSync(path.dirname(this._dataFile), { recursive: true });
+      fs.copyFileSync(this._legacyFile, this._dataFile);
+      fs.renameSync(this._legacyFile, this._legacyFile + '.migrato');
+      console.log('[Persistenza] conversations.json migrato in data/');
+    } catch { /* migrazione best-effort: in caso di errore si riparte dal file nuovo */ }
   }
 
   async load() {
     try {
-      if (!fs.existsSync(this._dataFile)) return;
-      const data = JSON.parse(fs.readFileSync(this._dataFile, 'utf8'));
+      this._migrateLegacy();
+      const data = readJsonSafeSync(this._dataFile, null);
+      if (!data) return;
       this.conversations.clear();
       for (const [id, conv] of Object.entries(data.conversations || {})) this.conversations.set(id, conv);
       this.activeConversationId = data.activeConversationId || null;
@@ -32,18 +49,25 @@ class ConversationEngine {
     } catch { /* conversations file missing or corrupt — start fresh */ }
   }
 
+  /** Scrittura immediata e atomica (usata allo shutdown e dal debounce). */
+  saveNow() {
+    if (this.saveTimeout) { clearTimeout(this.saveTimeout); this.saveTimeout = null; }
+    const obj = {};
+    for (const [id, conv] of this.conversations.entries()) obj[id] = conv;
+    return writeJsonAtomicSync(this._dataFile, {
+      conversations: obj,
+      activeConversationId: this.activeConversationId,
+    });
+  }
+
   save() {
     if (this.saveTimeout) clearTimeout(this.saveTimeout);
+    // Debounce ridotto: con la scrittura atomica il costo è contenuto e si
+    // riduce la finestra in cui un crash perderebbe l'ultimo messaggio.
     this.saveTimeout = setTimeout(() => {
-      try {
-        const dir = path.dirname(this._dataFile);
-        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-        const obj = {};
-        for (const [id, conv] of this.conversations.entries()) obj[id] = conv;
-        fs.writeFileSync(this._dataFile, JSON.stringify({ conversations: obj, activeConversationId: this.activeConversationId }, null, 2));
-      } catch { /* save failure — non-blocking, will retry on next change */ }
       this.saveTimeout = null;
-    }, 800);
+      this.saveNow();
+    }, 250);
   }
 
   createConversation(title, metadata = {}) {

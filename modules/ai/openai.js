@@ -57,7 +57,7 @@ async function callOpenAI(provider, key, model, systemPrompt, messages, tools, c
       }
       continue;
     }
-    return { text: choice.message?.content || '', toolsUsed: _toolsUsed };
+    return { text: choice.message?.content || '', toolsUsed: _toolsUsed, usage: data.usage };
   }
   return { text: 'Operazione completata.', toolsUsed: _toolsUsed };
 }

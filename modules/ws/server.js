@@ -30,6 +30,13 @@ function setupWebSocket(httpServer, ctx) {
         // WebApp client identification
         if (msg.type === 'webapp_hello') { ws._isWebApp = true; return; }
 
+        // Battito dell'estensione: tiene sveglio il service worker, nessuna azione
+        if (msg.type === 'keepalive') {
+          ws.isAlive = true;
+          try { ws.send(JSON.stringify({ type: 'keepalive_ack', ts: Date.now() })); } catch { /* best-effort */ }
+          return;
+        }
+
         // Auth gate — webapp messages pass without bridge auth
         const WEBAPP_ALLOWED = ['ext_result', 'human_takeover_resume', 'navigate'];
         const isBridgeMsg = !ws._isWebApp && !WEBAPP_ALLOWED.includes(msg.type);
@@ -95,14 +102,33 @@ function setupWebSocket(httpServer, ctx) {
     ws.on('error', () => { wsClients.delete(ws); });
   });
 
-  // Heartbeat every 30s
+  // Heartbeat every 15s (più aggressivo per detect disconnessioni rapide)
   setInterval(() => {
     for (const ws of wsClients) {
-      if (!ws.isAlive) { ws.terminate(); wsClients.delete(ws); continue; }
+      if (!ws.isAlive) {
+        wsClients.delete(ws);
+        if (ws === _bridgeClient) {
+          _bridgeClient = null;
+          ctx.log('[Bridge] Heartbeat timeout — bridge disconnected');
+          wsBroadcast({ type: 'bridge_status', connected: false, reason: 'heartbeat_timeout' });
+        }
+        ws.terminate();
+        continue;
+      }
       ws.isAlive = false;
       try { ws.ping(); } catch { wsClients.delete(ws); }
     }
-  }, 30000);
+  }, 15000);
+
+  // Battito applicativo ogni 20 secondi.
+  // L'estensione è un service worker Manifest V3: Chrome lo sospende dopo circa
+  // 30 secondi di inattività, e alla sospensione il bridge cade. I ping del
+  // protocollo WebSocket non risvegliano il worker perché non arrivano al
+  // codice JavaScript; un messaggio applicativo sì. Con 20s si resta sotto la
+  // soglia con margine e la connessione non si interrompe più.
+  setInterval(() => {
+    wsBroadcast({ type: 'server_heartbeat', ts: Date.now(), bridge: isBridgeReady(), clients: wsClients.size });
+  }, 20000);
 
   return wss;
 }

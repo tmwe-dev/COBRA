@@ -2,7 +2,7 @@
 // Source: server.js lines 5406-6146
 
 const { COBRA_DEFAULTS } = require('../../config');
-const { isSSRFSafe } = require('../../security/ssrf');
+const { assertSSRFSafe } = require('../../security/ssrf');
 const { sanitizeScrapedContent } = require('../../security/injection');
 
 async function readPage(args, ctx) {
@@ -42,7 +42,11 @@ async function readPage(args, ctx) {
 
 async function scrapeUrl(args, ctx) {
   const url = args.url;
-  if (!isSSRFSafe(url)) return JSON.stringify({ error: 'URL bloccato: IP locale/privato non consentito.' });
+  const ssrf = await assertSSRFSafe(url);
+  if (!ssrf.safe) {
+    ctx.log(`[Security/SSRF] scrape_url BLOCCATO ${url}: ${ssrf.reason}`);
+    return JSON.stringify({ error: `URL bloccato: ${ssrf.reason}` });
+  }
   const hd = await ctx.HumanDriver.checkAndDelay(url);
   if (!hd.allowed) return JSON.stringify({ error: hd.reason, rateLimited: true });
   ctx.emitThinking(`Scraping ${url}...`);
@@ -58,6 +62,11 @@ async function scrapeUrl(args, ctx) {
 
 async function crawlWebsite(args, ctx) {
   const startUrl = args.url, maxPages = Math.min(args.maxPages || 10, 20);
+  const startCheck = await assertSSRFSafe(startUrl);
+  if (!startCheck.safe) {
+    ctx.log(`[Security/SSRF] crawl_website BLOCCATO ${startUrl}: ${startCheck.reason}`);
+    return JSON.stringify({ error: `URL bloccato: ${startCheck.reason}` });
+  }
   ctx.emitThinking(`Crawling ${startUrl} (max ${maxPages})...`);
   const visited = new Set(), results = [], queue = [startUrl];
   const baseDomain = new URL(startUrl).hostname;
@@ -65,7 +74,20 @@ async function crawlWebsite(args, ctx) {
     const url = queue.shift();
     if (visited.has(url)) continue; visited.add(url);
     try {
-      const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, redirect: 'follow', signal: AbortSignal.timeout(10000) });
+      // Ogni URL della coda proviene dall'HTML scaricato: va verificato singolarmente
+      const check = await assertSSRFSafe(url);
+      if (!check.safe) { ctx.log(`[Security/SSRF] crawl salta ${url}: ${check.reason}`); continue; }
+      const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, redirect: 'manual', signal: AbortSignal.timeout(10000) });
+      // Un redirect può puntare alla rete interna: si segue solo dopo verifica
+      if (resp.status >= 300 && resp.status < 400) {
+        const loc = resp.headers.get('location');
+        if (!loc) continue;
+        const target = new URL(loc, url).href;
+        const rc = await assertSSRFSafe(target);
+        if (!rc.safe) { ctx.log(`[Security/SSRF] crawl blocca redirect ${url} -> ${target}: ${rc.reason}`); continue; }
+        if (!visited.has(target)) queue.push(target);
+        continue;
+      }
       const html = await resp.text();
       const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
       const text = html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 2000);

@@ -2219,6 +2219,36 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   }
 });
 
+// ── Mantenimento della connessione ──
+// In Manifest V3 il service worker viene sospeso dopo circa 30 secondi di
+// inattività, e con esso cade il bridge. Due contromisure:
+//   1) un allarme periodico che risveglia il worker e ricollega se serve;
+//   2) un messaggio applicativo verso il server, che tiene vivo lo scambio.
+const KEEPALIVE_ALARM = 'cobra-keepalive';
+
+function ensureConnection() {
+  try {
+    if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+      connect();
+      return;
+    }
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'keepalive', ts: Date.now() }));
+    }
+  } catch {
+    try { connect(); } catch { /* si riprova al prossimo allarme */ }
+  }
+}
+
+if (chrome.alarms) {
+  chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: 0.5 });
+  chrome.alarms.onAlarm.addListener((a) => {
+    if (a.name === KEEPALIVE_ALARM) ensureConnection();
+  });
+}
+// Secondo livello: finché il worker è sveglio, controlla più spesso
+setInterval(ensureConnection, 20000);
+
 // ── Boot ──
 connect();
 chrome.runtime.onStartup.addListener(connect);

@@ -2,7 +2,7 @@
 // Source: server.js lines 5041-5203
 
 const { COBRA_DEFAULTS } = require('../../config');
-const { isSSRFSafe } = require('../../security/ssrf');
+const { assertSSRFSafe } = require('../../security/ssrf');
 
 async function handle(args, ctx) {
   const url = args.url;
@@ -29,7 +29,13 @@ async function handle(args, ctx) {
   } catch (_) { /* best-effort */ }
 
   // SSRF guard
-  if (!isSSRFSafe(url)) return JSON.stringify({ error: 'URL bloccato: IP locale/privato non consentito.' });
+  // Verifica completa con risoluzione DNS: intercetta anche i domini pubblici
+  // che puntano alla rete interna (DNS rebinding)
+  const ssrf = await assertSSRFSafe(url);
+  if (!ssrf.safe) {
+    ctx.log(`[Security/SSRF] navigate BLOCCATO ${url}: ${ssrf.reason}`);
+    return JSON.stringify({ error: `URL bloccato: ${ssrf.reason}` });
+  }
   if (/^mailto:/i.test(url)) return JSON.stringify({ error: 'Non navigare mailto: — usa send_email.' });
 
   // Human Driver delay
@@ -55,9 +61,19 @@ async function handle(args, ctx) {
         await new Promise(r => setTimeout(r, 1500));
         try { await ctx.dismissModalsBridge(); } catch (_) { /* best-effort */ }
         setTimeout(async () => { try { await ctx.dismissModalsBridge(); } catch (_) { /* best-effort */ } }, 2000);
+        // L'estensione restituisce { ok, title, url, markdown, text, stats }
+        // Allarme se il contratto cambia: senza 'markdown' il contenuto sarebbe vuoto
+        if (bridgeNav.content && bridgeNav.content.markdown === undefined) {
+          ctx.log(`[navigate] ATTENZIONE: risposta bridge senza campo 'markdown' — chiavi=[${Object.keys(bridgeNav.content).join(',')}]`);
+        }
         const title = bridgeNav.content?.title || '';
-        let content = (bridgeNav.content?.content || '').substring(0, 12000);
-        try { const fresh = await ctx.bridgeCommand('read_page', {}); if (fresh.ok && fresh.content) content = (fresh.content || '').substring(0, 12000); } catch (_) { /* best-effort */ }
+        let content = (bridgeNav.content?.markdown || bridgeNav.content?.text || '').substring(0, 12000);
+        // Rilettura fresca dopo la chiusura di cookie banner e overlay
+        try {
+          const fresh = await ctx.bridgeCommand('get_page_content', {});
+          const freshText = fresh?.markdown || fresh?.text || '';
+          if (fresh?.ok && freshText.length > content.length) content = freshText.substring(0, 12000);
+        } catch (_) { /* best-effort: resta il contenuto ottenuto da bridgeNavigate */ }
         ctx.session.lastPage = { url: bridgeNav.url || url, title, markdown: content, links: [], html: '' };
         ctx.emitSiteVisit(ctx.session.lastPage.url, title || url, 'active');
         ctx.wsBroadcast({ type: 'page_loaded', url: ctx.session.lastPage.url, title });
@@ -70,7 +86,11 @@ async function handle(args, ctx) {
         if (content.length < 500) result.hint = 'CONTENUTO SCARSO: pagina dinamica? Usa screenshot() poi read_page().';
         return JSON.stringify(result);
       }
-    } catch (_) { /* best-effort */ }
+      ctx.log(`[navigate] Bridge ha risposto senza ok: ${JSON.stringify(bridgeNav).substring(0, 200)}`);
+    } catch (e) {
+      // Non silenziare: senza Puppeteer il bridge è l'unica via per screenshot e DOM
+      ctx.log(`[navigate] BRIDGE FALLITO (${url}): ${e.message} — passo al fallback fetch (niente screenshot)`);
+    }
   }
 
   // ── PUPPETEER PATH ──

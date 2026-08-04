@@ -3,6 +3,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const { assertSSRFSafe } = require('../../security/ssrf');
 
 async function saveToKb(args, ctx) {
   ctx.emitThinking('Salvo nel KB...');
@@ -98,7 +99,19 @@ async function batchScrape(args, ctx) {
   ctx.emitThinking('Batch scraping...');
   let urls; try { urls = JSON.parse(args.urls); } catch { return JSON.stringify({ error: 'JSON array non valido' }); }
   const results = await Promise.allSettled(urls.slice(0, 10).map(async url => {
-    const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, redirect: 'follow', signal: AbortSignal.timeout(10000) });
+    const check = await assertSSRFSafe(url);
+    if (!check.safe) throw new Error(`URL bloccato: ${check.reason}`);
+    const resp = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' }, redirect: 'manual', signal: AbortSignal.timeout(10000) });
+    if (resp.status >= 300 && resp.status < 400) {
+      const loc = resp.headers.get('location');
+      if (!loc) throw new Error('Redirect senza destinazione');
+      const target = new URL(loc, url).href;
+      const rc = await assertSSRFSafe(target);
+      if (!rc.safe) throw new Error(`Redirect bloccato: ${rc.reason}`);
+      const r2 = await fetch(target, { headers: { 'User-Agent': 'Mozilla/5.0' }, redirect: 'manual', signal: AbortSignal.timeout(10000) });
+      const h2 = await r2.text();
+      return { url: target, text: h2.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 3000) };
+    }
     const html = await resp.text();
     return { url, text: html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 3000) };
   }));

@@ -53,9 +53,10 @@ function setupRoutes(ctx) {
   require('./misc').register(router, ctx);
 
   return function handleRequest(req, res) {
+    try {
     // CORS
     const reqOrigin = req.headers.origin || '';
-    const allowedOrigin = ctx.ALLOWED_ORIGINS.find(o => reqOrigin.startsWith(o)) || ctx.ALLOWED_ORIGINS[0];
+    const allowedOrigin = (ctx.ALLOWED_ORIGINS || []).find(o => reqOrigin.startsWith(o)) || (ctx.ALLOWED_ORIGINS || [])[0] || '*';
     res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Cobra-Token');
@@ -74,11 +75,21 @@ function setupRoutes(ctx) {
     // Route matching
     const handler = router.match(req.method, pathname);
     if (handler) {
-      // POST: collect body
+      // POST: collect body with error handling
       if (req.method === 'POST') {
         let body = '', size = 0;
         req.on('data', chunk => { size += chunk.length; if (size > MAX_BODY_SIZE) { req.destroy(); return; } body += chunk; });
-        req.on('end', () => handler(body, res, pathname));
+        req.on('end', () => {
+          try { handler(body, res, pathname); }
+          catch (e) {
+            ctx.log(`[Route] Handler error: ${e.message}`);
+            if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: e.message })); }
+          }
+        });
+        req.on('error', (e) => {
+          ctx.log(`[Route] Request error: ${e.message}`);
+          if (!res.headersSent) { res.writeHead(400); res.end('Bad request'); }
+        });
       } else {
         handler('', res, pathname);
       }
@@ -109,6 +120,11 @@ function setupRoutes(ctx) {
       });
       res.end(content);
     } catch { res.writeHead(404); res.end('Not found'); }
+    } catch (e) {
+      // Top-level catch: server non crasha MAI per una richiesta HTTP
+      try { ctx.log(`[Route] FATAL request error: ${e.message}`); } catch {}
+      if (!res.headersSent) { try { res.writeHead(500); res.end('Internal server error'); } catch {} }
+    }
   };
 }
 
