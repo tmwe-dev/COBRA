@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "COBRA Bridge",
-  "version": "2.3.1",
-  "description": "Browser Action Engine — automazione browser per COBRA Web App (security hardened).",
+  "version": "2.4.0",
+  "description": "Motore di automazione browser per COBRA: una sola scheda di lavoro, connessione stabile, nessuna finestra aperta d'autorità.",
   "permissions": [
     "activeTab",
     "scripting",
