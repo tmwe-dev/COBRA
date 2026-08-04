@@ -1,11 +1,22 @@
 {
-  "name": "cobra-v10",
-  "version": "10.2.0",
+  "name": "cobra",
+  "version": "11.0.0",
+  "description": "Segretaria virtuale AI per TMWE: automazione browser, ricerca, memoria durevole e controlli di sicurezza.",
   "private": true,
+  "main": "modules/server-slim.js",
   "scripts": {
-    "start": "node server-local.js"
+    "start": "node modules/server-slim.js",
+    "test": "./run-tests.sh",
+    "legacy": "node server-local.js"
+  },
+  "engines": {
+    "node": ">=18"
   },
   "dependencies": {
     "ws": "^8.20.0"
+  },
+  "optionalDependencies": {
+    "nodemailer": "^6.9.0",
+    "puppeteer": "^23.0.0"
   }
 }
