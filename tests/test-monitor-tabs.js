@@ -1,0 +1,107 @@
+#!/usr/bin/env node
+// tests/test-monitor-tabs.js — La navigazione non deve aprire schede nuove e le
+// pagine lette devono restare consultabili dal monitor.
+
+const path = require('path');
+const fs = require('fs');
+process.chdir(path.resolve(__dirname, '..'));
+
+let PASS = 0, FAIL = 0;
+function ok(name, cond, detail = '') {
+  if (cond) { PASS++; console.log(`  \x1b[32mv\x1b[0m ${name}`); }
+  else { FAIL++; console.log(`  \x1b[31mx\x1b[0m ${name}${detail ? ' — ' + detail : ''}`); }
+}
+function section(t) { console.log(`\n\x1b[1m-- ${t} --\x1b[0m`); }
+
+const ext = fs.readFileSync('cobra-extension/background.js', 'utf8');
+const front = fs.readFileSync('public/index.html', 'utf8');
+const manifest = JSON.parse(fs.readFileSync('cobra-extension/manifest.json', 'utf8'));
+
+console.log('\n=== SCHEDE E ARCHIVIO DELLE PAGINE ===');
+
+// ─────────────────────────────────────────
+section('La scheda di lavoro sopravvive alla sospensione');
+// ─────────────────────────────────────────
+ok('l identificativo viene persistito', /chrome\.storage\.(session|local)\.set\(\{\s*cobraWorkTabId/.test(ext),
+   'senza persistenza il service worker dimentica la scheda e ne apre una nuova');
+ok('viene riletto al risveglio', /recuperaWorkTab/.test(ext) && /storage\.session\.get\('cobraWorkTabId'\)/.test(ext));
+ok('getWorkTab usa il valore persistito', /async function getWorkTab[\s\S]{0,900}recuperaWorkTab\(\)/.test(ext));
+ok('getActiveTab usa il valore persistito', /async function getActiveTab[\s\S]{0,400}recuperaWorkTab\(\)/.test(ext));
+ok('alla chiusura della scheda il valore viene cancellato',
+   /onRemoved[\s\S]{0,400}storage\.session\.remove\('cobraWorkTabId'\)/.test(ext));
+ok('il permesso storage e dichiarato',
+   (manifest.permissions || []).includes('storage') || /chrome\.storage/.test(ext) === false,
+   `permessi: ${(manifest.permissions || []).join(', ')}`);
+
+// ─────────────────────────────────────────
+section('Nessuna scheda portata in primo piano');
+// ─────────────────────────────────────────
+{
+  const navBlocco = ext.slice(ext.indexOf("case 'navigate':"), ext.indexOf("case 'navigate':") + 4000);
+  ok('navigate aggiorna la scheda in secondo piano',
+     /tabs\.update\([^)]*active:\s*false/.test(navBlocco),
+     'con active:true la scheda ruba il fuoco ad ogni pagina');
+  ok('navigate non forza active:true',
+     !/tabs\.update\(tab\.id,\s*\{\s*url:\s*args\.url,\s*active:\s*true/.test(navBlocco));
+}
+{
+  // Le creazioni di scheda ammesse: la scheda di lavoro (una sola) e il tool esplicito
+  const creazioni = [...ext.matchAll(/chrome\.tabs\.create\(/g)];
+  ok('al massimo due punti creano schede', creazioni.length <= 2, `trovati ${creazioni.length}`);
+  ok('la scheda di lavoro nasce in secondo piano',
+     /tabs\.create\(\{\s*url:\s*'about:blank',\s*active:\s*false\s*\}\)/.test(ext));
+}
+
+// ─────────────────────────────────────────
+section('La webapp non apre schede da sola');
+// ─────────────────────────────────────────
+ok('open_url non chiama piu window.open',
+   !/case 'open_url':[\s\S]{0,300}window\.open/.test(front),
+   'la webapp apriva una scheda senza chiedere');
+ok('open_url propone un collegamento cliccabile',
+   /case 'open_url':[\s\S]{0,600}addBubble/.test(front));
+ok('window.open resta solo per gli export',
+   (front.match(/window\.open\(/g) || []).length <= 1,
+   `occorrenze: ${(front.match(/window\.open\(/g) || []).length}`);
+
+// ─────────────────────────────────────────
+section('Archivio delle pagine nel monitor');
+// ─────────────────────────────────────────
+ok('esiste l elenco delle pagine lette', /const paginheLette = \[\]/.test(front));
+ok('c e un limite alla memoria', /MAX_PAGINE/.test(front));
+ok('rileggere la stessa pagina non la duplica',
+   /findIndex\(p => p\.url === url\)/.test(front));
+ok('esiste la barra di navigazione', /id="monPages"/.test(front));
+ok('le pagine sono cliccabili', /chip\.onclick = \(\) => mostraPagina\(i\)/.test(front));
+ok('ogni pagina ha il collegamento per aprirla nel browser',
+   /apri nel browser/.test(front));
+ok('lo stile della barra e definito', /\.mon-page-chip/.test(front));
+ok('la barra compare solo con piu di una pagina',
+   /paginheLette\.length <= 1[\s\S]{0,120}remove\('visible'\)/.test(front));
+
+// ─────────────────────────────────────────
+section('Coerenza del codice');
+// ─────────────────────────────────────────
+{
+  // Il valore in memoria e quello salvato non devono divergere. Sono ammessi
+  // solo: azzeramento, ripristino dal valore persistito, e l'assegnazione
+  // interna alla funzione che salva.
+  const ammesse = /^(null|salvato|tabId)\b/;
+  const assegnazioni = [...ext.matchAll(/_workTabId = ([^;]+);/g)]
+    .map(m => m[1].trim())
+    .filter(v => !ammesse.test(v));
+  ok('nessuna assegnazione che salti la persistenza',
+     assegnazioni.length === 0, assegnazioni.join(' | '));
+
+  // La funzione che salva deve fare entrambe le cose
+  const fn = ext.slice(ext.indexOf('async function ricordaWorkTab'));
+  const corpo = fn.slice(0, fn.indexOf('\n}') + 2);
+  ok('ricordaWorkTab aggiorna la memoria', /_workTabId = tabId/.test(corpo));
+  ok('ricordaWorkTab salva su storage', /storage\.session\.set/.test(corpo));
+}
+
+console.log('');
+console.log(FAIL === 0
+  ? `\x1b[32mRISULTATO: ${PASS} PASS, 0 FAIL\x1b[0m`
+  : `\x1b[31mRISULTATO: ${PASS} PASS, ${FAIL} FAIL\x1b[0m`);
+process.exit(FAIL > 0 ? 1 : 0);

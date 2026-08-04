@@ -149,13 +149,15 @@ function updateBadge(text, color) {
 //  Helpers base
 // ══════════════════════════════════════════
 async function getActiveTab() {
-  // Se abbiamo un work tab, usiamo quello (non il tab COBRA)
-  if (_workTabId) {
+  // Anche qui si legge l'identificativo persistito: dopo un risveglio del
+  // service worker la variabile in memoria è vuota, ma la scheda esiste ancora.
+  const salvato = await recuperaWorkTab();
+  if (salvato) {
     try {
-      const tab = await chrome.tabs.get(_workTabId);
-      if (tab) return tab;
+      const tab = await chrome.tabs.get(salvato);
+      if (tab) { _workTabId = salvato; return tab; }
     } catch {
-      // Tab chiuso o non esiste più
+      // Scheda chiusa: si dimentica
       _workTabId = null;
     }
   }
@@ -170,47 +172,64 @@ async function getActiveTab() {
 }
 
 // Ottieni o crea un work tab separato da COBRA
+// L'identificativo della scheda di lavoro va conservato fuori dalle variabili
+// del service worker: Chrome lo sospende dopo pochi secondi di inattività e al
+// risveglio le variabili sono azzerate. Senza persistenza COBRA dimenticava la
+// propria scheda e ne apriva una nuova ad ogni risveglio.
+async function ricordaWorkTab(tabId) {
+  _workTabId = tabId;
+  try { await chrome.storage.session.set({ cobraWorkTabId: tabId }); }
+  catch { try { await chrome.storage.local.set({ cobraWorkTabId: tabId }); } catch { /* senza persistenza si degrada */ } }
+}
+
+async function recuperaWorkTab() {
+  if (_workTabId) return _workTabId;
+  try {
+    const s = await chrome.storage.session.get('cobraWorkTabId');
+    if (s?.cobraWorkTabId) return s.cobraWorkTabId;
+  } catch { /* storage.session non disponibile */ }
+  try {
+    const l = await chrome.storage.local.get('cobraWorkTabId');
+    if (l?.cobraWorkTabId) return l.cobraWorkTabId;
+  } catch { /* nessuna persistenza */ }
+  return null;
+}
+
 async function getWorkTab() {
-  // ALWAYS re-detect COBRA tab across ALL windows (not just current)
+  // Individua la scheda di COBRA, che non va mai usata come scheda di lavoro
   try {
     const allTabs = await chrome.tabs.query({});
     for (const t of allTabs) {
-      if (t.url?.includes('localhost:3000')) {
-        _cobraTabId = t.id;
-        break;
-      }
+      if (t.url?.includes('localhost:3000')) { _cobraTabId = t.id; break; }
     }
-  } catch {}
+  } catch { /* impossibile elencare le schede */ }
 
-  // Se abbiamo già un work tab valido E non è il COBRA tab, usalo
-  if (_workTabId && _workTabId !== _cobraTabId) {
+  // 1. La scheda già in uso, anche dopo un risveglio del service worker
+  const salvato = await recuperaWorkTab();
+  if (salvato && salvato !== _cobraTabId) {
     try {
-      const tab = await chrome.tabs.get(_workTabId);
-      if (tab) return tab;
-    } catch {
-      // Tab chiuso — cleanup riferimento
-      _workTabId = null;
-    }
+      const tab = await chrome.tabs.get(salvato);
+      if (tab) { _workTabId = salvato; return tab; }
+    } catch { _workTabId = null; }
   }
 
-  // Prima di creare un tab nuovo, cerca un tab about:blank orfano COBRA-creato
-  // e riusalo invece di crearne un altro
+  // 2. Una scheda vuota già aperta, invece di crearne un'altra
   try {
     const allTabs = await chrome.tabs.query({});
     for (const t of allTabs) {
       if (t.id === _cobraTabId) continue;
       if (t.url === 'about:blank' || t.url === 'chrome://newtab/') {
-        _workTabId = t.id;
-        console.log('[COBRA Bridge] Reusing orphan blank tab:', t.id);
+        await ricordaWorkTab(t.id);
+        console.log('[COBRA Bridge] Riuso scheda vuota:', t.id);
         return t;
       }
     }
-  } catch {}
+  } catch { /* impossibile elencare le schede */ }
 
-  // Nessun tab riusabile → crea dedicato
+  // 3. Solo come ultima risorsa se ne crea una, in secondo piano
   const newTab = await chrome.tabs.create({ url: 'about:blank', active: false });
-  _workTabId = newTab.id;
-  console.log('[COBRA Bridge] Created dedicated work tab:', newTab.id);
+  await ricordaWorkTab(newTab.id);
+  console.log('[COBRA Bridge] Creata scheda di lavoro:', newTab.id);
   return newTab;
 }
 
@@ -512,8 +531,10 @@ async function executeCommand(command, args) {
           }
         }
 
-        await chrome.tabs.update(tab.id, { url: args.url, active: true });
-        _workTabId = tab.id;
+        // La scheda resta in secondo piano: l'utente segue tutto dal monitor di
+        // COBRA e non si vede rubare il fuoco ad ogni pagina aperta.
+        await chrome.tabs.update(tab.id, { url: args.url, active: false });
+        await ricordaWorkTab(tab.id);
         await waitForTabLoad(tab.id);
 
         // Auto-dismiss browser permission prompts (geolocation, notifications, etc.)
@@ -2203,8 +2224,12 @@ const MOUSE_CODE = realisticMouseCode();
 // ── Tab lifecycle: pulisci work tab se chiuso ──
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (tabId === _workTabId) {
-    console.log('[COBRA Bridge] Work tab closed, resetting');
+    console.log('[COBRA Bridge] Scheda di lavoro chiusa');
     _workTabId = null;
+    // Va cancellato anche il valore persistito, altrimenti al prossimo
+    // risveglio si cercherebbe una scheda che non esiste più
+    try { chrome.storage.session.remove('cobraWorkTabId'); } catch { /* non disponibile */ }
+    try { chrome.storage.local.remove('cobraWorkTabId'); } catch { /* non disponibile */ }
   }
   if (tabId === _cobraTabId) {
     console.log('[COBRA Bridge] COBRA tab closed');

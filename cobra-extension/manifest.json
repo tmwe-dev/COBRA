@@ -10,7 +10,8 @@
     "webNavigation",
     "notifications",
     "cookies",
-    "alarms"
+    "alarms",
+    "storage"
   ],
   "optional_permissions": [
     "downloads",

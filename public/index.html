@@ -888,6 +888,16 @@
 
     /* Metadata */
     .mon-content .mon-meta { font-size: 11px; color: var(--text3); margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--glass-border); }
+    /* Archivio delle pagine lette: restano consultabili senza riaprire i siti */
+    .mon-pages { display: none; gap: 6px; flex-wrap: wrap; padding: 8px 10px;
+      border-bottom: 1px solid var(--glass-border); background: rgba(0,0,0,0.15); }
+    .mon-pages.visible { display: flex; }
+    .mon-page-chip { font-size: 11px; padding: 4px 10px; border-radius: 12px; cursor: pointer;
+      background: var(--glass); border: 1px solid var(--glass-border); color: var(--text2);
+      max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      transition: all 0.15s; }
+    .mon-page-chip:hover { border-color: var(--lilac); color: var(--text); }
+    .mon-page-chip.active { background: rgba(167,139,250,0.18); border-color: var(--lilac); color: var(--text); }
 
     /* Spacers */
     .mon-content .cobra-spacer { height: 6px; display: block; }
@@ -1119,6 +1129,7 @@
           </div>
         </div>
         <div class="mon-view hidden" id="viewContent">
+          <div class="mon-pages" id="monPages"></div>
           <div class="mon-content" id="monContent"><p style="color:var(--text3)">Nessun contenuto ancora.</p></div>
         </div>
         <div class="mon-view hidden" id="viewFile">
@@ -2000,18 +2011,69 @@
       }
     }
 
+    // ── Archivio delle pagine lette ──
+    // Ogni pagina che COBRA legge resta consultabile dal monitor, senza doverla
+    // riaprire in una scheda del browser.
+    const paginheLette = [];
+    const MAX_PAGINE = 12;
+
+    function renderContenutoPagina(p) {
+      const dominio = (p.url || '').replace(/^https?:\/\/(www\.)?/, '').split('/')[0];
+      const meta = p.url
+        ? `<div class="mon-meta">Fonte: ${escapeHtml(dominio)}${p.title ? ' &mdash; ' + escapeHtml(p.title) : ''}
+             &nbsp;·&nbsp; <a href="${escapeHtml(p.url)}" target="_blank" style="color:var(--lilac)">apri nel browser &#x2197;</a></div>`
+        : '';
+      monContent.innerHTML = meta + renderMarkdown(p.markdown);
+      monContent.scrollTop = 0;
+      updateMonFooter(p.url, p.title);
+      monUrl.textContent = p.url || '';
+    }
+
+    function mostraPagina(indice) {
+      const p = paginheLette[indice];
+      if (!p) return;
+      renderContenutoPagina(p);
+      document.querySelectorAll('.mon-page-chip').forEach((c, i) => {
+        c.classList.toggle('active', i === indice);
+      });
+      // Passa alla vista contenuto se non ci si è già
+      const tabC = document.getElementById('tabContent');
+      if (tabC && !tabC.classList.contains('active')) tabC.click();
+    }
+
+    function aggiornaElencoPagine(indiceAttivo) {
+      const barra = document.getElementById('monPages');
+      if (!barra) return;
+      if (paginheLette.length <= 1) { barra.classList.remove('visible'); barra.innerHTML = ''; return; }
+      barra.classList.add('visible');
+      barra.innerHTML = '';
+      paginheLette.forEach((p, i) => {
+        const chip = document.createElement('div');
+        chip.className = 'mon-page-chip' + (i === indiceAttivo ? ' active' : '');
+        const dominio = (p.url || '').replace(/^https?:\/\/(www\.)?/, '').split('/')[0];
+        chip.textContent = p.title || dominio || 'pagina';
+        chip.title = (p.title ? p.title + '\n' : '') + (p.url || '');
+        chip.onclick = () => mostraPagina(i);
+        barra.appendChild(chip);
+      });
+    }
+
     function showMonitorContent(markdown, url, title) {
       if (!markdown) return;
-      // Store content silently — don't switch tab (user can click "Contenuto" to see it)
-      let metaHtml = '';
-      if (url) {
-        const domain = url.replace(/^https?:\/\/(www\.)?/, '').split('/')[0];
-        metaHtml = `<div class="mon-meta">Fonte: ${escapeHtml(domain)} ${title ? ' &mdash; ' + escapeHtml(title) : ''}</div>`;
+      // Se la stessa pagina viene riletta si aggiorna, non si duplica
+      const esistente = paginheLette.findIndex(p => p.url === url);
+      if (esistente >= 0) {
+        paginheLette[esistente] = { url, title, markdown };
+      } else {
+        paginheLette.push({ url, title, markdown });
+        if (paginheLette.length > MAX_PAGINE) paginheLette.shift();
       }
-      monContent.innerHTML = metaHtml + renderMarkdown(markdown);
-      updateMonFooter(url, title);
-      monUrl.textContent = url || '';
-      // Flash the Contenuto tab to hint new content is available
+      const indice = esistente >= 0 ? esistente : paginheLette.length - 1;
+
+      renderContenutoPagina(paginheLette[indice]);
+      aggiornaElencoPagine(indice);
+
+      // Segnala che c'è contenuto nuovo senza cambiare vista d'autorità
       const tabC = document.getElementById('tabContent');
       tabC.style.color = 'var(--green)';
       setTimeout(() => { tabC.style.color = ''; }, 3000);
@@ -2387,7 +2449,16 @@
             setMonitorIdle();
             break;
           case 'open_url':
-            if (msg.url) window.open(msg.url, msg.target || '_blank');
+            // Non si aprono schede d'autorità: si propone il collegamento e
+            // decide l'utente. Serve solo per WhatsApp e LinkedIn, che
+            // richiedono una sessione già attiva nel browser.
+            if (msg.url) {
+              const etichetta = msg.target === 'whatsapp' ? 'Apri WhatsApp Web'
+                : msg.target === 'linkedin' ? 'Apri LinkedIn' : 'Apri il collegamento';
+              addBubble('system',
+                `${msg.instructions || 'COBRA ha preparato questo collegamento.'}\n\n[${etichetta}](${msg.url})`);
+              addLogEntry('Collegamento pronto: ' + etichetta, '&#x1f517;', 'tool');
+            }
             break;
           case 'monitor_content':
             showMonitorContent(msg.markdown, msg.url, msg.title);
