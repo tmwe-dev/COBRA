@@ -17,11 +17,18 @@ async function screenshot(args, ctx) {
 
 async function scrollPage(args, ctx) {
   if (ctx.isBridgeReady()) {
-    await ctx.bridgeCommand('scroll', { direction: args.direction || 'down', amount: args.amount || 500 });
+    // L'esito del comando va controllato: dichiarare successo senza verificarlo
+    // nascondeva i fallimenti dell'estensione e l'AI proseguiva convinta di
+    // aver scrollato una pagina che non si era mossa.
+    const esito = await ctx.bridgeCommand('scroll', { direction: args.direction || 'down', amount: args.amount || 500 });
+    if (esito && esito.ok === false) {
+      ctx.log(`[Scroll] Estensione: ${esito.error || 'errore non specificato'}`);
+      return JSON.stringify({ error: `Scroll non riuscito: ${esito.error || 'errore nell\'estensione'}` });
+    }
     await new Promise(r => setTimeout(r, 500));
-    const ss = await ctx.bridgeCommand('screenshot', { quality: 70 });
+    const ss = await ctx.bridgeCommand('screenshot', { quality: 70 }).catch(() => ({}));
     if (ss.ok && ss.screenshot) ctx.wsBroadcast({ type: 'screenshot', data: ss.screenshot, url: ctx.session.lastPage?.url || '' });
-    return JSON.stringify({ ok: true, scrolled: args.direction || 'down', amount: args.amount || 500, via: 'bridge' });
+    return JSON.stringify({ ok: true, scrolled: esito?.scrolled || args.direction || 'down', amount: esito?.amount || args.amount || 500, via: 'bridge' });
   }
   const ap = ctx.getState('activePage');
   if (ap) {

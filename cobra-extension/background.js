@@ -242,18 +242,43 @@ function waitForTabLoad(tabId, timeout = 15000) {
   });
 }
 
+// Chrome serializza la funzione e la esegue nel contesto della pagina: le
+// variabili del service worker (RESOLVE_CODE, MOUSE_CODE) NON sopravvivono
+// all'iniezione. Molti comandi le usano, quindi vanno ricreate nello scope
+// della pagina prima di invocare la funzione.
+function eseguiNellaPagina(sorgente, resolveCode, mouseCode, argomenti) {
+  globalThis.RESOLVE_CODE = resolveCode;
+  globalThis.MOUSE_CODE = mouseCode;
+  const fn = (0, eval)('(' + sorgente + ')');
+  return fn(...argomenti);
+}
+
 async function run(tabId, func, args = []) {
-  const results = await chrome.scripting.executeScript({ target: { tabId }, func, args, world: 'MAIN' });
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: eseguiNellaPagina,
+    args: [func.toString(), RESOLVE_CODE, MOUSE_CODE, args],
+    world: 'MAIN',
+  });
   return results[0]?.result ?? { ok: false, error: 'No result' };
 }
 
 async function runIsolated(tabId, func, args = []) {
-  const results = await chrome.scripting.executeScript({ target: { tabId }, func, args });
+  const results = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: eseguiNellaPagina,
+    args: [func.toString(), RESOLVE_CODE, MOUSE_CODE, args],
+  });
   return results[0]?.result ?? { ok: false, error: 'No result' };
 }
 
 async function runInFrame(tabId, frameId, func, args = []) {
-  const results = await chrome.scripting.executeScript({ target: { tabId, frameIds: [frameId] }, func, args, world: 'MAIN' });
+  const results = await chrome.scripting.executeScript({
+    target: { tabId, frameIds: [frameId] },
+    func: eseguiNellaPagina,
+    args: [func.toString(), RESOLVE_CODE, MOUSE_CODE, args],
+    world: 'MAIN',
+  });
   return results[0]?.result ?? { ok: false, error: 'No result' };
 }
 
