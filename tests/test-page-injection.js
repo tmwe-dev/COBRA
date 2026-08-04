@@ -71,8 +71,18 @@ ok('run passa il codice degli helper come argomento',
   const usi = (ext.match(/func: eseguiNellaPagina/g) || []).length;
   ok('tutte e tre le varianti di iniezione usano il ponte', usi === 3, `trovate ${usi}`);
 }
-ok('le costanti sono dichiarate prima dell avvio',
-   ext.indexOf('const RESOLVE_CODE') < ext.indexOf('\nconnect();'));
+{
+  // Le costanti devono esistere prima che parta il collegamento, altrimenti
+  // il primo comando le troverebbe non inizializzate
+  const posCostanti = ext.indexOf('const RESOLVE_CODE');
+  const posAvvio = ext.indexOf('// ── Avvio ──');
+  ok('le costanti sono dichiarate prima dell avvio',
+     posCostanti > -1 && posAvvio > -1 && posCostanti < posAvvio,
+     `costanti a ${posCostanti}, avvio a ${posAvvio}`);
+  ok('l avvio non blocca la registrazione del service worker',
+     /setTimeout\(\(\) => \{ try \{ connect\(\)/.test(ext),
+     'connect() eseguito durante la registrazione puo far apparire un errore');
+}
 
 // ─────────────────────────────────────────
 section('Simulazione: la closure sopravvive?');

@@ -2299,7 +2299,11 @@ if (chrome.alarms) {
 // Secondo livello: finché il worker è sveglio, controlla più spesso
 setInterval(ensureConnection, 20000);
 
-// ── Boot ──
-connect();
-chrome.runtime.onStartup.addListener(connect);
-chrome.runtime.onInstalled.addListener(connect);
+// ── Avvio ──
+// La connessione non parte durante la registrazione del service worker: se il
+// server COBRA non è ancora attivo, un errore in quel momento verrebbe mostrato
+// da Chrome come errore dell'estensione. Rimandandola di un istante, la
+// registrazione si conclude sempre e il collegamento si stabilisce quando può.
+setTimeout(() => { try { connect(); } catch (e) { console.log('[COBRA Bridge] avvio rimandato:', e.message); } }, 100);
+chrome.runtime.onStartup.addListener(() => { try { connect(); } catch { /* si riprova col timer */ } });
+chrome.runtime.onInstalled.addListener(() => { try { connect(); } catch { /* si riprova col timer */ } });

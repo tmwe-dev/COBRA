@@ -14,10 +14,7 @@
     "storage"
   ],
   "optional_permissions": [
-    "downloads",
-    "debugger",
-    "clipboardRead",
-    "clipboardWrite"
+    "downloads"
   ],
   "host_permissions": [
     "<all_urls>"
