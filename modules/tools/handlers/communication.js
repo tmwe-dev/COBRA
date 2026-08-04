@@ -1,6 +1,7 @@
 // modules/tools/handlers/communication.js — email, whatsapp, linkedin, prepare, human_takeover, extension relay
 // Source: server.js lines 6876-7187
 const { sanitizeOutboundMessage } = require('../../security/output-sanitizer');
+const { leggiPosta } = require('../../utils/imap');
 
 // ── Prepare tools (in-memory drafts) ──
 async function prepareEmailDraft(args) {
@@ -50,7 +51,41 @@ async function sendEmail(args, ctx) {
   } catch (e) { return JSON.stringify({ error: `Invio email fallito: ${e.message}` }); }
 }
 
-async function checkEmails() { return JSON.stringify({ info: 'Lettura inbox: usa navigate su webmail per ora. IMAP in sviluppo.' }); }
+async function checkEmails(args, ctx) {
+  const cfg = ctx.session.emailConfig || {};
+  // La lettura usa IMAP; se non è configurato si prova a dedurlo dai dati SMTP
+  const host = cfg.imapHost || (cfg.host ? cfg.host.replace(/^smtp\./i, 'imap.') : null);
+  const user = cfg.imapUser || cfg.user;
+  const pass = cfg.imapPass || cfg.pass;
+
+  if (!host || !user || !pass) {
+    return JSON.stringify({
+      error: 'Casella di posta non configurata.',
+      comeRisolvere: 'Imposta imapHost, imapUser e imapPass con POST /api/config/email.',
+    });
+  }
+
+  ctx.emitReasoning('Controllo la casella di posta...', '📬');
+  try {
+    const esito = await leggiPosta(
+      { host, port: cfg.imapPort || 993, user, pass },
+      { limit: args.limit || 10, onlyUnread: args.onlyUnread !== false }
+    );
+    ctx.log(`[Email] Lette ${esito.messaggi.length} email da ${ctx.sanitizeForLog(host)}`);
+    if (esito.messaggi.length === 0) {
+      return JSON.stringify({ ok: true, messaggi: [], info: 'Nessuna email non letta.' });
+    }
+    return JSON.stringify({
+      ok: true,
+      totaleInCasella: esito.totale,
+      nonLette: esito.nonLette,
+      messaggi: esito.messaggi,
+    });
+  } catch (e) {
+    ctx.log(`[Email] Lettura fallita: ${e.message}`);
+    return JSON.stringify({ error: `Lettura posta fallita: ${e.message}` });
+  }
+}
 
 // ── WhatsApp ──
 async function openWhatsapp(args, ctx) {

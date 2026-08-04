@@ -48,7 +48,10 @@ function register(router, ctx) {
   // ── GET /api/config/email ──
   router.get('/api/config/email', (body, res) => {
     const safe = { ...ctx.session.emailConfig };
-    if (safe.pass) safe.pass = '***';
+    // Nessuna password deve uscire da questo endpoint, né SMTP né IMAP
+    for (const chiave of Object.keys(safe)) {
+      if (/pass|password|secret/i.test(chiave) && safe[chiave]) safe[chiave] = '***';
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(safe));
   });

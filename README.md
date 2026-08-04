@@ -100,7 +100,7 @@ Per ispezionare o correggere: `GET /api/learning/facts`, `POST /api/learning/for
 ./run-tests.sh
 ```
 
-674 asserzioni in 9 suite. Oltre alla regressione classica, tre suite coprono
+706 asserzioni in 10 suite. Oltre alla regressione classica, tre suite coprono
 le classi di difetto che in passato sono sfuggite alla lettura del codice:
 
 | Suite | Cosa protegge |
@@ -109,11 +109,31 @@ le classi di difetto che in passato sono sfuggite alla lettura del codice:
 | `check-bridge-protocol.js` | Il contratto fra server ed estensione, nomi dei campi inclusi |
 | `test-ssrf.js` | I vettori di bypass noti, DNS rebinding compreso |
 
+## Posta elettronica
+
+La lettura funziona senza installare nulla: il client IMAP è scritto sul modulo
+`tls` incluso in Node. Va configurata la casella una volta:
+
+```bash
+curl -X POST http://127.0.0.1:3000/api/config/email \
+  -H 'Content-Type: application/json' \
+  -d '{"imapHost":"imap.tuoprovider.it","imapUser":"tu@tuodominio.it","imapPass":"..."}'
+```
+
+Poi basta chiedere a COBRA "controlla la posta" o "leggi le ultime 5 email".
+Restituisce mittente, oggetto, data e un'anteprima del testo, gestendo gli
+oggetti codificati (`=?UTF-8?B?...?=`) e i corpi in HTML o base64.
+
+Se sono già configurati i dati SMTP, l'host IMAP viene dedotto sostituendo
+`smtp.` con `imap.`; se il provider usa un indirizzo diverso, va indicato
+esplicitamente con `imapHost`.
+
+Per **inviare** serve invece una dipendenza: `npm install nodemailer` e la
+configurazione SMTP (`host`, `user`, `pass`) sullo stesso endpoint.
+
 ## Note operative
 
 - **Puppeteer non è richiesto**: l'automazione passa dall'estensione Chrome.
   Se installato viene usato come alternativa.
-- **`check_emails` non è implementato**: la lettura IMAP è ancora da scrivere.
-  L'invio richiede `npm install nodemailer`.
 - I file in `data/` contengono conversazioni e dati reali e sono esclusi dal
   repository.
