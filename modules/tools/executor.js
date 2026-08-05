@@ -143,6 +143,15 @@ async function executeTool(name, args, ctx) {
     try { ctx.SuperMario.logToolExecution(name, args, (_toolResult || '').substring(0, 500), guard.effective_risk, guard.kind, _toolLatency); } catch (_) { /* best-effort */ }
     // P0.2: Persistent audit log
     auditToolCall(name, args, guard.effective_risk, guard.kind, _toolResult, ctx.session?.id);
+    // Memoria di sessione (L1): la cronologia di lavoro si costruisce da sé,
+    // così COBRA sa cosa ha già fatto senza doverselo ricordare.
+    try {
+      if (ctx.learningStore) {
+        let esito = {};
+        try { esito = JSON.parse(_toolResult || '{}'); } catch { esito = {}; }
+        ctx.learningStore.registraAzione(name, args, esito);
+      }
+    } catch (_) { /* la memoria non deve mai bloccare uno strumento */ }
   }
 }
 

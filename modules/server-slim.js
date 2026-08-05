@@ -116,8 +116,21 @@ const _memoriesFile = path.join(dataDir, 'memories.json');
 const memories = readJsonSafeSync(_memoriesFile, []) || [];
 function _saveMemories() { writeJsonAtomicSync(_memoriesFile, memories); }
 const conversationEngine = new ConversationEngine();
-// Fatti durevoli appresi dalle conversazioni (persistono tra le sessioni)
+// Memoria a tre livelli: azioni di sessione, fatti operativi, fatti permanenti
 const learningStore = new LearningStore(dataDir);
+// Manutenzione periodica: promuove ciò che si conferma, fa decadere ciò che
+// non serve più. Senza, la memoria diventa un archivio piatto dove tutto pesa
+// uguale e il contesto si riempie di dettagli irrilevanti.
+const _manutenzioneMemoria = setInterval(() => {
+  try {
+    const esiti = learningStore.promuoviEDecadi();
+    learningStore.potaAzioni();
+    if (esiti.promossiA2 || esiti.promossiA3 || esiti.dimenticati) {
+      log(`[Memoria] ${esiti.promossiA2} promossi a L2, ${esiti.promossiA3} a L3, ${esiti.dimenticati} dimenticati`);
+    }
+  } catch (e) { log(`[Memoria] Manutenzione fallita: ${e.message}`); }
+}, 15 * 60 * 1000);
+if (_manutenzioneMemoria.unref) _manutenzioneMemoria.unref();
 
 // ── Task persistence ──
 const _tasksFile = path.join(dataDir, 'tasks.json');

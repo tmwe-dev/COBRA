@@ -77,15 +77,157 @@ function similarity(a, b) {
 // Sopra questa soglia due formulazioni descrivono lo stesso fatto
 const SIMILARITY_THRESHOLD = 0.7;
 
+// ── Livelli di memoria ────────────────────────────────────────
+// L1 SESSIONE   — cosa è successo: ricerche fatte, pagine viste, file creati.
+//                 Volume alto, vita breve, serve a non ripetere il lavoro.
+// L2 OPERATIVA  — cosa è vero adesso: clienti, pratiche in corso, preferenze.
+//                 È il livello che si impara dalle conversazioni.
+// L3 PERMANENTE — cosa è vero e basta: chi è l'utente, che azienda, che ruolo.
+//                 Cambia raramente e non va mai dimenticato.
+const LIVELLI = {
+  1: { nome: 'SESSIONE', massimo: 200, oreDiVita: 24 },
+  2: { nome: 'OPERATIVA', massimo: 300, oreDiVita: 24 * 90 },
+  3: { nome: 'PERMANENTE', massimo: 150, oreDiVita: null },
+};
+
+// Le categorie che descrivono l'identità sono permanenti per natura
+const CATEGORIE_PERMANENTI = new Set(['identita', 'azienda']);
+
 class LearningStore {
   constructor(dataDir) {
     this._file = path.join(dataDir, 'learned_facts.json');
+    this._fileAzioni = path.join(dataDir, 'memoria_sessione.json');
     this.facts = readJsonSafeSync(this._file, []) || [];
+    // L1: registro di ciò che COBRA ha fatto, alimentato dagli strumenti
+    this.azioni = readJsonSafeSync(this._fileAzioni, []) || [];
     this._turnsSinceExtraction = 0;
     this._extracting = false;
+    this.potaAzioni();
   }
 
   save() { return writeJsonAtomicSync(this._file, this.facts); }
+  salvaAzioni() { return writeJsonAtomicSync(this._fileAzioni, this.azioni); }
+
+  /** Livello di un fatto: quello assegnato dalla promozione, o quello di partenza. */
+  static livelloDi(categoria, fatto) {
+    if (fatto && fatto.livello) return fatto.livello;
+    return CATEGORIE_PERMANENTI.has(String(categoria || '').toLowerCase()) ? 3 : 2;
+  }
+
+  /**
+   * Promozione e decadimento.
+   *
+   * Un fatto confermato più volte diventa più affidabile e sale di livello;
+   * uno che non viene mai richiamato perde confidenza e alla fine si dimentica.
+   * È il meccanismo che distingue una memoria da un archivio: senza, tutto pesa
+   * uguale e il contesto si riempie di dettagli irrilevanti.
+   *
+   * Soglie prese dal sistema già in esercizio su WCA Navigator.
+   */
+  promuoviEDecadi(adesso = Date.now()) {
+    const esiti = { promossiA2: 0, promossiA3: 0, decaduti: 0, dimenticati: 0 };
+
+    for (const f of this.facts) {
+      if (!f.livello) f.livello = LearningStore.livelloDi(f.category);
+      const richiami = f.richiami || 0;
+
+      // L2 → L3: molto confermato e molto affidabile
+      if (f.livello === 2 && richiami >= 8 && f.confidence >= 0.70) {
+        f.livello = 3; f.promossoIl = new Date(adesso).toISOString();
+        esiti.promossiA3++;
+        continue;
+      }
+      // L1 → L2: confermato qualche volta e sufficientemente affidabile
+      if (f.livello === 1 && richiami >= 3 && f.confidence >= 0.40) {
+        f.livello = 2; f.promossoIl = new Date(adesso).toISOString();
+        esiti.promossiA2++;
+        continue;
+      }
+
+      // Decadimento: solo per ciò che non è permanente
+      if (f.livello === 3) continue;
+      const giorniFermo = (adesso - new Date(f.updatedAt || f.createdAt).getTime()) / 86400000;
+      if (giorniFermo > 14) {
+        const prima = f.confidence;
+        f.confidence = Math.max(0, Number((f.confidence - 0.05 * Math.floor(giorniFermo / 14)).toFixed(3)));
+        if (f.confidence < prima) esiti.decaduti++;
+      }
+    }
+
+    // Sotto una soglia minima il fatto non è più affidabile: si dimentica
+    const prima = this.facts.length;
+    this.facts = this.facts.filter(f => f.livello === 3 || f.confidence >= 0.2);
+    esiti.dimenticati = prima - this.facts.length;
+
+    // Tetto per livello, per non far crescere il contesto senza limite
+    for (const livello of [1, 2, 3]) {
+      const delLivello = this.facts.filter(f => (f.livello || 2) === livello);
+      const massimo = LIVELLI[livello].massimo;
+      if (delLivello.length > massimo) {
+        const daTogliere = delLivello
+          .sort((a, b) => (a.confidence - b.confidence) || (new Date(a.updatedAt) - new Date(b.updatedAt)))
+          .slice(0, delLivello.length - massimo);
+        const scarti = new Set(daTogliere.map(f => f.key));
+        this.facts = this.facts.filter(f => !scarti.has(f.key));
+      }
+    }
+
+    if (esiti.promossiA2 || esiti.promossiA3 || esiti.decaduti || esiti.dimenticati) this.save();
+    return esiti;
+  }
+
+  /**
+   * L1 — Registra un'azione compiuta. Chiamato dagli strumenti, non dall'AI:
+   * così la cronologia di lavoro si costruisce da sola e COBRA sa cosa ha già
+   * fatto senza doverselo ricordare.
+   */
+  registraAzione(strumento, argomenti = {}, esito = {}) {
+    const descrizioni = {
+      google_search: (a) => `Cercato: "${a.query || ''}"`,
+      web_search: (a) => `Cercato: "${a.query || ''}"`,
+      navigate: (a) => `Aperto: ${a.url || ''}`,
+      scrape_url: (a) => `Letto: ${a.url || ''}`,
+      read_page: () => 'Letta la pagina corrente',
+      send_email: (a) => `Email inviata a ${a.to || ''}`,
+      create_file: (a) => `File creato: ${a.filename || ''}`,
+      save_to_kb: (a) => `Salvato in knowledge base: "${a.name || ''}"`,
+      check_emails: () => 'Controllata la posta',
+      click_element: (a) => `Cliccato: ${a.text || a.selector || ''}`,
+    };
+    const descrivi = descrizioni[strumento];
+    if (!descrivi) return null;
+
+    const testo = descrivi(argomenti || {});
+    if (!testo || containsSecret(testo)) return null;
+
+    const riuscita = esito?.ok !== false && !esito?.error;
+    const voce = {
+      testo, strumento, riuscita,
+      quando: new Date().toISOString(),
+    };
+    // Non si registra due volte la stessa azione consecutiva
+    const ultima = this.azioni[this.azioni.length - 1];
+    if (ultima && ultima.testo === testo) return null;
+
+    this.azioni.push(voce);
+    if (this.azioni.length > LIVELLI[1].massimo) this.azioni.shift();
+    this.salvaAzioni();
+    return voce;
+  }
+
+  /** Rimuove dalla memoria di sessione ciò che è più vecchio della sua vita utile. */
+  potaAzioni(adesso = Date.now()) {
+    const limite = LIVELLI[1].oreDiVita * 3600 * 1000;
+    const prima = this.azioni.length;
+    this.azioni = this.azioni.filter(a => (adesso - new Date(a.quando).getTime()) < limite);
+    if (this.azioni.length !== prima) this.salvaAzioni();
+    return prima - this.azioni.length;
+  }
+
+  /** Le ultime azioni, per far sapere a COBRA cosa ha già fatto. */
+  azioniRecenti(quante = 12) {
+    return this.azioni.slice(-quante);
+  }
 
   /**
    * Inserisce un fatto, oppure rafforza quello equivalente già presente.
@@ -158,15 +300,47 @@ class LearningStore {
       return { f, score: score * (0.5 + f.confidence) };
     }).filter(x => x.score > 0);
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, limit).map(x => x.f);
+    const scelti = scored.slice(0, limit).map(x => x.f);
+    // Ogni richiamo è una prova che il fatto serve: è il segnale su cui si
+    // basa la promozione di livello.
+    for (const f of scelti) {
+      f.richiami = (f.richiami || 0) + 1;
+      f.ultimoRichiamo = new Date().toISOString();
+    }
+    if (scelti.length > 0) this.save();
+    return scelti;
   }
 
-  /** Blocco testuale da inserire nel system prompt. */
+  /**
+   * Blocco testuale per il prompt, organizzato per livello.
+   * Separare i livelli non è formalismo: dice al modello quanto fidarsi di
+   * ciascun dato e cosa può essere cambiato nel frattempo.
+   */
   buildRecallBlock(query, limit = 6) {
+    const sezioni = [];
+
+    // L3 e L2: i fatti pertinenti alla richiesta
     const hits = this.recall(query, limit);
-    if (hits.length === 0) return '';
-    const lines = hits.map(f => `- ${f.text}`).join('\n');
-    return `## COSA SO GIA DELL'UTENTE\n${lines}\n(Se un dato risulta superato, aggiorna con save_memory invece di ripetere quello vecchio.)`;
+    const permanenti = hits.filter(f => LearningStore.livelloDi(f.category) === 3);
+    const operativi = hits.filter(f => LearningStore.livelloDi(f.category) !== 3);
+
+    if (permanenti.length > 0) {
+      sezioni.push(`### L3 — Permanente (chi è e cosa fa)\n${permanenti.map(f => `- ${f.text}`).join('\n')}`);
+    }
+    if (operativi.length > 0) {
+      sezioni.push(`### L2 — Operativa (situazione attuale)\n${operativi.map(f => `- ${f.text}`).join('\n')}`);
+    }
+
+    // L1: cosa è stato fatto di recente, per non rifarlo
+    const recenti = this.azioniRecenti(10);
+    if (recenti.length > 0) {
+      const righe = recenti.map(a => `- ${a.testo}${a.riuscita ? '' : ' (non riuscito)'}`).join('\n');
+      sezioni.push(`### L1 — Sessione (cosa hai già fatto)\n${righe}\nNon ripetere queste operazioni se hai già il risultato.`);
+    }
+
+    if (sezioni.length === 0) return '';
+    return '## MEMORIA\n' + sezioni.join('\n\n')
+      + '\n\n(Se un dato risulta superato, aggiornalo con save_memory invece di ripetere quello vecchio.)';
   }
 
   getStats() {

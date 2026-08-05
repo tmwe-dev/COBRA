@@ -87,7 +87,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'cobra-learn-'));
 
   const blocco = store.buildRecallBlock('parlami del cliente Acme');
   ok('il blocco per il prompt contiene il fatto', /Acme/.test(blocco));
-  ok('il blocco ha un titolo riconoscibile', /COSA SO GIA/.test(blocco));
+  ok('il blocco ha un titolo riconoscibile', /## MEMORIA/.test(blocco));
   ok('blocco vuoto se nulla è pertinente', store.buildRecallBlock('quantistica dei tachioni') === '');
 
   // ─────────────────────────────────────────
@@ -156,6 +156,59 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'cobra-learn-'));
     store5._callLite = async () => risposta;
     const r = await store5.extractFromConversation(turni, { openaiKey: 'finta' }, () => {});
     ok(`risposta malformata gestita: "${String(risposta).substring(0, 18)}"`, !!r && typeof r === 'object');
+  }
+
+  // ─────────────────────────────────────────
+  section('Tre livelli di memoria');
+  // ─────────────────────────────────────────
+  {
+    const st = new LearningStore(TMP);
+    st.facts = []; st.azioni = []; st.save(); st.salvaAzioni();
+
+    // L1: le azioni si registrano da sole
+    st.registraAzione('google_search', { query: 'voli havana' }, { ok: true });
+    st.registraAzione('navigate', { url: 'https://kayak.it' }, { ok: true });
+    st.registraAzione('create_file', { filename: 'report.md' }, { ok: true });
+    ok('L1 registra le azioni compiute', st.azioni.length === 3, `${st.azioni.length}`);
+    ok('L1 descrive l azione in modo leggibile',
+       /Cercato: "voli havana"/.test(st.azioni[0].testo), st.azioni[0].testo);
+    ok('L1 non registra due volte la stessa azione consecutiva',
+       st.registraAzione('create_file', { filename: 'report.md' }, { ok: true }) === null);
+    ok('L1 ignora gli strumenti senza descrizione',
+       st.registraAzione('scroll_page', { direction: 'down' }, { ok: true }) === null);
+    ok('L1 non registra segreti',
+       st.registraAzione('google_search', { query: 'la mia password è: abc123xyz' }, { ok: true }) === null);
+
+    // L2 → L3: promozione con richiami e conferme
+    st.addFact('Il magazzino principale è a Malpensa', { category: 'processo' });
+    for (let i = 0; i < 3; i++) st.addFact('Il magazzino principale è a Malpensa');
+    for (let i = 0; i < 9; i++) st.recall('magazzino Malpensa');
+    const prima = st.facts[0].livello || 2;
+    const esiti = st.promuoviEDecadi();
+    ok('un fatto molto usato e confermato sale a L3',
+       st.facts[0].livello === 3 && esiti.promossiA3 === 1,
+       `da ${prima} a ${st.facts[0].livello}`);
+
+    // Il decadimento tocca solo ciò che non è permanente
+    st.addFact('Nota temporanea poco usata', { category: 'processo' });
+    const nota = st.facts.find(f => /temporanea/.test(f.text));
+    nota.updatedAt = new Date(Date.now() - 100 * 86400000).toISOString();
+    const e2 = st.promuoviEDecadi();
+    ok('un fatto fermo da mesi perde confidenza', e2.decaduti >= 1, JSON.stringify(e2));
+    ok('un fatto permanente non decade',
+       st.facts.find(f => /Malpensa/.test(f.text)).confidence >= 1
+       || st.facts.find(f => /Malpensa/.test(f.text)).livello === 3);
+
+    // Il blocco per il prompt separa i livelli
+    const blocco = st.buildRecallBlock('magazzino');
+    ok('il blocco distingue i livelli', /L3 — Permanente/.test(blocco) || /L2 — Operativa/.test(blocco), blocco.substring(0, 120));
+    ok('il blocco include le azioni recenti', /L1 — Sessione/.test(blocco));
+    ok('il blocco dice di non ripetere il lavoro', /Non ripetere/.test(blocco));
+
+    // La potatura toglie le azioni scadute
+    st.azioni.forEach(a => { a.quando = new Date(Date.now() - 48 * 3600000).toISOString(); });
+    const tolte = st.potaAzioni();
+    ok('le azioni piu vecchie di un giorno vengono dimenticate', tolte > 0, `${tolte}`);
   }
 
   // ─────────────────────────────────────────
