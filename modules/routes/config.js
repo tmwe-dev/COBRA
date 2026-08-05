@@ -1,7 +1,42 @@
 // modules/routes/config.js — /api/config/keys, /api/config/email
 
+const fs = require('fs');
+const path = require('path');
 const { trovaServerPosta } = require('../utils/mail-autoconfig');
 const { leggiPosta } = require('../utils/imap');
+const { writeAtomicSync } = require('../utils/atomic-file');
+
+/**
+ * Scrive le chiavi nel file .env, aggiornando quelle già presenti e
+ * aggiungendo le nuove. Senza questo, una chiave inserita dall'interfaccia
+ * andava persa al primo riavvio e l'utente doveva reinserirla ogni volta.
+ *
+ * @returns {string[]} nomi delle variabili effettivamente scritte
+ */
+function salvaChiaviNelEnv(coppie, ctx) {
+  const file = path.join(__dirname, '..', '..', '.env');
+  const daScrivere = Object.entries(coppie).filter(([, v]) => v && String(v).trim());
+  if (daScrivere.length === 0) return [];
+
+  let righe = [];
+  try { righe = fs.readFileSync(file, 'utf8').split('\n'); } catch { righe = []; }
+
+  const scritte = [];
+  for (const [nome, valore] of daScrivere) {
+    const pulito = String(valore).trim();
+    const i = righe.findIndex(r => r.trim().startsWith(nome + '='));
+    if (i >= 0) righe[i] = `${nome}=${pulito}`;
+    else righe.push(`${nome}=${pulito}`);
+    scritte.push(nome);
+    // Rende la chiave disponibile anche ai moduli che leggono da process.env
+    process.env[nome] = pulito;
+  }
+
+  const testo = righe.filter((r, i) => r.trim() !== '' || i < righe.length - 1).join('\n').replace(/\n+$/, '') + '\n';
+  const ok = writeAtomicSync(file, testo);
+  if (!ok && ctx?.log) ctx.log('[API Keys] Scrittura del .env non riuscita: le chiavi valgono solo per questa sessione');
+  return ok ? scritte : [];
+}
 
 function register(router, ctx) {
   // ── POST /api/config/keys ──
@@ -16,10 +51,24 @@ function register(router, ctx) {
       if (cfg.openaiModel) ctx.aiKeys.openaiModel = cfg.openaiModel;
       if (cfg.anthropicModel) ctx.aiKeys.anthropicModel = cfg.anthropicModel;
       if (cfg.geminiModel) ctx.aiKeys.geminiModel = cfg.geminiModel;
+      // Le chiavi inserite dall'interfaccia vivevano solo in memoria e sparivano
+      // ad ogni riavvio: vanno scritte nel .env come le altre, così si
+      // inseriscono una volta sola.
+      const salvate = salvaChiaviNelEnv({
+        OPENAI_API_KEY: cfg.openai,
+        ANTHROPIC_API_KEY: cfg.anthropic,
+        GEMINI_API_KEY: cfg.gemini,
+        GROQ_API_KEY: cfg.groq,
+        ELEVENLABS_API_KEY: cfg.elevenlabs,
+        OPENAI_MODEL: cfg.openaiModel,
+        ANTHROPIC_MODEL: cfg.anthropicModel,
+        GEMINI_MODEL: cfg.geminiModel,
+      }, ctx);
+
       const active = Object.keys(ctx.aiKeys).filter(k => k.endsWith('Key') && ctx.aiKeys[k]).map(k => k.replace('Key', ''));
-      ctx.log(`[API Keys] Configurate: ${active.join(', ')}`);
+      ctx.log(`[API Keys] Configurate: ${active.join(', ')}${salvate ? ' (salvate su .env)' : ''}`);
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, providers: active }));
+      res.end(JSON.stringify({ ok: true, providers: active, persistite: salvate }));
     } catch (e) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'JSON non valido' }));
