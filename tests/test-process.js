@@ -151,6 +151,33 @@ section('Robustezza');
   ok('il riepilogo funziona sempre', typeof p.riepilogo().totale === 'number');
 }
 
+// ─────────────────────────────────────────
+section('Gli strumenti sono utilizzabili davvero');
+// ─────────────────────────────────────────
+{
+  // Un tool assente dalla tassonomia ricade nel valore prudenziale
+  // "destructive" e viene bloccato: è successo davvero al primo avvio.
+  const { computeEffectiveRisk } = require('../modules/risk/calculator');
+  const SM = require('../modules/supermario');
+  const { COBRA_TOOLS } = require('../modules/tools/schemas');
+  const handlers = require('../modules/tools/handlers');
+
+  const nomi = ['processo_avvia', 'processo_inizia_passo', 'processo_completa_passo',
+                'processo_fallisci_passo', 'processo_stato'];
+  for (const n of nomi) {
+    const r = computeEffectiveRisk(n, {});
+    ok(`${n}: non richiede conferma`, r.requires_confirmation === false, `rischio=${r.level}`);
+    ok(`${n}: nessun avviso di tool sconosciuto`,
+       !SM.validateToolCall(n, {}).warnings.some(w => w.startsWith('unknown_tool')));
+    ok(`${n}: ha uno schema dichiarato`, COBRA_TOOLS.some(t => t.function.name === n));
+    ok(`${n}: ha un gestore registrato`, typeof handlers[n] === 'function');
+  }
+
+  // Regola generale: ogni strumento dichiarato deve essere eseguibile
+  const senzaGestore = COBRA_TOOLS.map(t => t.function.name).filter(n => typeof handlers[n] !== 'function');
+  ok('ogni strumento dichiarato ha un gestore', senzaGestore.length === 0, senzaGestore.join(', '));
+}
+
 console.log('');
 console.log(FAIL === 0
   ? `\x1b[32mRISULTATO: ${PASS} PASS, 0 FAIL\x1b[0m`

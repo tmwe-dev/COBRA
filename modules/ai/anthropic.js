@@ -59,7 +59,15 @@ async function callAnthropic(key, model, systemPrompt, messages, tools, ctx) {
     }
     return { text: textBlocks.map(b => b.text).join('\n') || '', toolsUsed: _toolsUsed, usage: data.usage ? { prompt_tokens: data.usage.input_tokens, completion_tokens: data.usage.output_tokens } : undefined };
   }
-  return { text: '', toolsUsed: _toolsUsed };
+  // Giri esauriti: restituire testo vuoto farebbe scartare il lavoro dal router,
+  // che lo interpreta come fallimento e passa al provider successivo.
+  const usati = [...new Set(_toolsUsed.filter(t => t.ok).map(t => t.name))];
+  return {
+    text: 'Ho raggiunto il limite di operazioni per questa richiesta e mi sono fermato prima di completarla.'
+      + (usati.length ? `\n\nStrumenti usati: ${usati.join(', ')}.` : '')
+      + '\n\nChiedimi di riprendere da dove ho lasciato, oppure restringi la richiesta.',
+    toolsUsed: _toolsUsed, giriEsauriti: true,
+  };
 }
 
 module.exports = { callAnthropic };

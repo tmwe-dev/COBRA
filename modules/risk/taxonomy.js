@@ -70,6 +70,13 @@ const TOOL_RISK_TAXONOMY = {
   read_inbox:      { level:'read', confirm:false, batchable:true, truth:'Alias di check_emails.' },
   send_whatsapp:   { level:'send', confirm:true, batchable:false, ttl:300, truth:'Alias di whatsapp_send.' },
   send_linkedin:   { level:'send', confirm:true, batchable:false, ttl:300, truth:'Alias di linkedin_send_message.' },
+  // Conduzione dei processi: toccano solo lo stato interno del piano, non
+  // hanno alcun effetto sul mondo esterno.
+  processo_avvia:          { level:'inspect', confirm:false, batchable:false, truth:'Dichiara il piano di lavoro.' },
+  processo_inizia_passo:   { level:'inspect', confirm:false, batchable:false, truth:'Segna un passo come iniziato.' },
+  processo_completa_passo: { level:'inspect', confirm:false, batchable:false, truth:'Chiude un passo allegando la prova.' },
+  processo_fallisci_passo: { level:'inspect', confirm:false, batchable:false, truth:'Dichiara un passo fallito con motivo.' },
+  processo_stato:          { level:'read', confirm:false, batchable:true, truth:'Mostra lo stato del processo.' },
   // web_search ed execute_js sono già definiti sopra (righe 11 e 50).
   // Ridefinirli qui li sovrascriveva silenziosamente e rischiava divergenze.
 };

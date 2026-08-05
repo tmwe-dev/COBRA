@@ -63,7 +63,15 @@ async function callGemini(key, model, systemPrompt, messages, tools, ctx) {
     const _usage = data.usageMetadata ? { prompt_tokens: data.usageMetadata.promptTokenCount, completion_tokens: data.usageMetadata.candidatesTokenCount } : undefined;
     return { text: textParts.map(p => p.text).join('\n') || '', toolsUsed: _toolsUsed, usage: _usage };
   }
-  return { text: '', toolsUsed: _toolsUsed };
+  // Giri esauriti: restituire testo vuoto farebbe scartare il lavoro dal router,
+  // che lo interpreta come fallimento e passa al provider successivo.
+  const usati = [...new Set(_toolsUsed.filter(t => t.ok).map(t => t.name))];
+  return {
+    text: 'Ho raggiunto il limite di operazioni per questa richiesta e mi sono fermato prima di completarla.'
+      + (usati.length ? `\n\nStrumenti usati: ${usati.join(', ')}.` : '')
+      + '\n\nChiedimi di riprendere da dove ho lasciato, oppure restringi la richiesta.',
+    toolsUsed: _toolsUsed, giriEsauriti: true,
+  };
 }
 
 module.exports = { callGemini };

@@ -59,7 +59,36 @@ async function callOpenAI(provider, key, model, systemPrompt, messages, tools, c
     }
     return { text: choice.message?.content || '', toolsUsed: _toolsUsed, usage: data.usage };
   }
-  return { text: 'Operazione completata.', toolsUsed: _toolsUsed };
+  // Giri esauriti. Rispondere "Operazione completata" sarebbe una bugia: il
+  // lavoro è stato interrotto, non concluso. Si fa un'ultima chiamata SENZA
+  // strumenti chiedendo di riferire quello che si è raccolto, così le
+  // informazioni ottenute non vanno perse.
+  try {
+    apiMessages.push({
+      role: 'user',
+      content: 'Hai esaurito le operazioni disponibili. Non usare altri strumenti: '
+        + 'riferisci ORA quello che hai raccolto finora, indicando chiaramente cosa manca '
+        + 'e perché. Se hai dati reali, riportali. Se non ne hai, dillo apertamente.',
+    });
+    const chiusura = await fetch(baseUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+      body: JSON.stringify({ model, messages: apiMessages, max_tokens: 4000, temperature: 0.5 }),
+    });
+    if (chiusura.ok) {
+      const d = await chiusura.json();
+      const testo = d.choices?.[0]?.message?.content;
+      if (testo) return { text: testo, toolsUsed: _toolsUsed, usage: d.usage, giriEsauriti: true };
+    }
+  } catch { /* si ricade sul messaggio esplicito qui sotto */ }
+
+  const usati = [...new Set(_toolsUsed.filter(t => t.ok).map(t => t.name))];
+  return {
+    text: 'Ho raggiunto il limite di operazioni per questa richiesta e mi sono fermato prima di completarla.'
+      + (usati.length ? `\n\nStrumenti usati: ${usati.join(', ')}.` : '')
+      + '\n\nChiedimi di riprendere da dove ho lasciato, oppure restringi la richiesta.',
+    toolsUsed: _toolsUsed, giriEsauriti: true,
+  };
 }
 
 module.exports = { callOpenAI };
