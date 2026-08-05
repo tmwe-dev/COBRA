@@ -4,6 +4,7 @@
 const path = require('path');
 const fs = require('fs');
 const { assertSSRFSafe } = require('../../security/ssrf');
+const { creaXlsx, righeDaTesto } = require('../../utils/xlsx');
 
 async function saveToKb(args, ctx) {
   ctx.emitThinking('Salvo nel KB...');
@@ -32,6 +33,24 @@ async function createFile(args, ctx) {
   if (!filePath.startsWith(_base + path.sep) && filePath !== _base) return JSON.stringify({ error: 'Path traversal bloccato' });
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+
+  const estensione = (args.filename || '').split('.').pop().toLowerCase();
+  if (estensione === 'xlsx') {
+    // Un .xlsx non è testo: scriverci dentro un CSV produce un file che Excel
+    // rifiuta di aprire. Si costruisce l'archivio vero.
+    const righe = righeDaTesto(args.content || '');
+    if (righe.length === 0) return JSON.stringify({ error: 'Contenuto vuoto o non tabellare: per un Excel servono righe (CSV, JSON o tabella markdown)' });
+    try {
+      fs.writeFileSync(filePath, creaXlsx(righe, args.sheet || 'Report'));
+      ctx.wsBroadcast({ type: 'file_created', filename: args.filename });
+      ctx.broadcastFile({ filename: args.filename, size: fs.statSync(filePath).size,
+        text: righe.slice(0, 30).map(r => r.join(' | ')).join('\n') });
+      return JSON.stringify({ ok: true, filename: args.filename, righe: righe.length, colonne: (righe[0] || []).length });
+    } catch (e) {
+      return JSON.stringify({ error: `Creazione del file Excel fallita: ${e.message}` });
+    }
+  }
+
   fs.writeFileSync(filePath, args.content || '');
   ctx.wsBroadcast({ type: 'file_created', filename: args.filename });
   const ext = (args.filename || '').split('.').pop().toLowerCase();
