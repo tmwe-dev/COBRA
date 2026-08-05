@@ -23,11 +23,19 @@ async function avvia(args, ctx) {
   ctx.session.processo = new Processo(obiettivo, normalizzati);
   ctx.log(`[Processo] Avviato: "${obiettivo}" con ${normalizzati.length} passi`);
   trasmetti(ctx);
-  return JSON.stringify({
+  const p = ctx.session.processo;
+  const risposta = {
     ok: true,
-    ...ctx.session.processo.riepilogo(),
+    ...p.riepilogo(),
     promemoria: 'Esegui i passi uno per volta. Ogni passo si chiude allegando il risultato dello strumento usato.',
-  });
+  };
+  // Le dipendenze scartate vanno segnalate: il modello deve sapere che il
+  // piano che ha in mente non è quello che il motore ha registrato.
+  if (p.avvisi.length > 0) {
+    risposta.avvisi = p.avvisi;
+    ctx.log(`[Processo] Piano corretto: ${p.avvisi.join('; ')}`);
+  }
+  return JSON.stringify(risposta);
 }
 
 async function iniziaPasso(args, ctx) {

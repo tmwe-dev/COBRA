@@ -152,6 +152,38 @@ section('Robustezza');
 }
 
 // ─────────────────────────────────────────
+section('Un piano impossibile viene corretto alla nascita');
+// ─────────────────────────────────────────
+{
+  // Caso reale: il modello ha numerato i passi da zero, il passo 2 dipendeva
+  // dal passo 0 che non esiste, e il processo si e fermato li per sempre.
+  const p = new Processo('prova', [
+    { titolo: 'A' },
+    { titolo: 'B', dipendeDa: [0] },
+    { titolo: 'C', dipendeDa: [99] },
+    { titolo: 'D', dipendeDa: [4] },
+    { titolo: 'E', dipendeDa: [1] },
+  ]);
+  ok('la dipendenza da 0 viene scartata', p.passo(2).dipendeDa.length === 0);
+  ok('la dipendenza da un passo inesistente viene scartata', p.passo(3).dipendeDa.length === 0);
+  ok('un passo non puo dipendere da se stesso o dai successivi', p.passo(4).dipendeDa.length === 0);
+  ok('le dipendenze valide restano', p.passo(5).dipendeDa[0] === 1);
+  ok('gli scarti vengono segnalati', p.avvisi.length === 3, JSON.stringify(p.avvisi));
+  ok('il messaggio spiega la numerazione', /si contano da 1/.test(p.avvisi[0]));
+  ok('il piano resta eseguibile', p.prossimoPasso()?.n === 1);
+  ok('non nasce in stallo', p.inStallo() === false);
+}
+{
+  // Stallo riconosciuto: nessun passo eseguibile ma processo non concluso
+  const p = new Processo('prova', [{ titolo: 'A' }, { titolo: 'B', dipendeDa: [1] }]);
+  p.falliscePasso(1, 'Sito irraggiungibile');
+  ok('con la dipendenza fallita il seguito non parte', p.iniziaPasso(2).ok === false);
+  ok('lo stallo viene riconosciuto', p.inStallo() === true);
+  ok('il testo per l AI indica la via d uscita',
+     /STALLO[\s\S]*processo_fallisci_passo/.test(p.perIlPrompt()), p.perIlPrompt().substring(0, 200));
+}
+
+// ─────────────────────────────────────────
 section('Gli strumenti sono utilizzabili davvero');
 // ─────────────────────────────────────────
 {

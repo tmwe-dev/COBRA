@@ -49,18 +49,40 @@ class Processo {
     this.obiettivo = String(obiettivo || '').trim();
     this.creatoIl = new Date().toISOString();
     this.chiusoIl = null;
-    this.passi = passi.map((p, i) => ({
-      n: i + 1,
-      titolo: String(p.titolo || p.title || `passo ${i + 1}`).trim(),
-      stato: 'attesa',
-      bloccante: p.bloccante !== false,      // per difetto un passo è necessario
-      dipendeDa: Array.isArray(p.dipendeDa) ? p.dipendeDa : [],
-      prova: null,
-      motivo: null,
-      iniziatoIl: null,
-      chiusoIl: null,
-      tentativi: 0,
-    }));
+    this.avvisi = [];
+    const totale = passi.length;
+
+    this.passi = passi.map((p, i) => {
+      const n = i + 1;
+      // Le dipendenze vanno ripulite subito: un piano con un riferimento
+      // impossibile non si completerà MAI, e il blocco arriverebbe solo a
+      // metà lavoro. È già successo: il modello ha numerato i passi da zero,
+      // il passo 2 dipendeva dal passo 0 che non esiste, e il processo si è
+      // fermato lì.
+      const grezze = Array.isArray(p.dipendeDa) ? p.dipendeDa : [];
+      const valide = [];
+      for (const d of grezze) {
+        const num = Number(d);
+        if (!Number.isInteger(num)) { this.avvisi.push(`passo ${n}: dipendenza "${d}" non è un numero, ignorata`); continue; }
+        if (num === 0) { this.avvisi.push(`passo ${n}: i passi si contano da 1, la dipendenza 0 è stata ignorata`); continue; }
+        if (num < 1 || num > totale) { this.avvisi.push(`passo ${n}: il passo ${num} non esiste, dipendenza ignorata`); continue; }
+        if (num >= n) { this.avvisi.push(`passo ${n}: non può dipendere dal passo ${num} che viene dopo, dipendenza ignorata`); continue; }
+        valide.push(num);
+      }
+
+      return {
+        n,
+        titolo: String(p.titolo || p.title || `passo ${n}`).trim(),
+        stato: 'attesa',
+        bloccante: p.bloccante !== false,      // per difetto un passo è necessario
+        dipendeDa: [...new Set(valide)],
+        prova: null,
+        motivo: null,
+        iniziatoIl: null,
+        chiusoIl: null,
+        tentativi: 0,
+      };
+    });
   }
 
   passo(n) { return this.passi.find(p => p.n === Number(n)) || null; }
@@ -170,6 +192,17 @@ class Processo {
     return this.passi.find(p => p.stato === 'attesa' && this._dipendenzeSoddisfatte(p)) || null;
   }
 
+  /**
+   * Stallo: restano passi aperti ma nessuno è eseguibile.
+   * Va riconosciuto e detto, altrimenti si continua a riprovare all'infinito
+   * un passo che non partirà mai.
+   */
+  inStallo() {
+    if (this.concluso()) return false;
+    if (this.prossimoPasso()) return false;
+    return !this.passi.some(p => p.stato === 'in_corso' || p.stato === 'verifica');
+  }
+
   riepilogo() {
     const conteggi = {};
     for (const s of STATI) conteggi[s] = this.passi.filter(p => p.stato === s).length;
@@ -202,7 +235,10 @@ class Processo {
       ? 'Tutti i passi sono chiusi: puoi consegnare il risultato.'
       : prossimo
         ? `Prossimo passo da eseguire: ${prossimo.n}. ${prossimo.titolo}`
-        : 'Nessun passo eseguibile: alcuni attendono dipendenze non soddisfatte.';
+        : this.inStallo()
+          ? 'PROCESSO IN STALLO: nessun passo è eseguibile. Chiudi i passi rimasti '
+            + 'con processo_fallisci_passo indicando il motivo, poi consegna quello che hai.'
+          : 'Un passo è in corso: portalo a termine.';
 
     return `# PROCESSO IN CORSO — ${this.obiettivo}\n${righe}\n\n${chiusura}\n`
       + 'Un passo si chiude SOLO con "processo_completa_passo" allegando il risultato dello strumento usato, '
