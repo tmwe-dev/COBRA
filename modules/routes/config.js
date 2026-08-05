@@ -75,6 +75,82 @@ function register(router, ctx) {
     }
   });
 
+  // ── GET /api/config/keys/test ──
+  // Prova ogni chiave con una chiamata minima al fornitore. Sapere che una
+  // chiave è "presente" non serve: conta se funziona.
+  router.get('/api/config/keys/test', async (body, res) => {
+    const k = ctx.aiKeys;
+    const esiti = {};
+
+    const prova = async (nome, chiave, esegui) => {
+      if (!chiave) { esiti[nome] = { stato: 'assente', messaggio: 'Nessuna chiave configurata' }; return; }
+      const t0 = Date.now();
+      try {
+        const r = await esegui(chiave);
+        esiti[nome] = { ...r, ms: Date.now() - t0 };
+      } catch (e) {
+        esiti[nome] = { stato: 'errore', messaggio: e.message, ms: Date.now() - t0 };
+      }
+    };
+
+    await Promise.all([
+      prova('openai', k.openaiKey, async (key) => {
+        const r = await fetch('https://api.openai.com/v1/models', {
+          headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(12000),
+        });
+        if (r.ok) { const d = await r.json(); return { stato: 'ok', messaggio: `${(d.data || []).length} modelli disponibili` }; }
+        if (r.status === 401) return { stato: 'non valida', messaggio: 'Chiave rifiutata' };
+        if (r.status === 429) return { stato: 'limite', messaggio: 'Quota esaurita o troppe richieste' };
+        return { stato: 'errore', messaggio: `HTTP ${r.status}` };
+      }),
+
+      prova('anthropic', k.anthropicKey, async (key) => {
+        const r = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+          body: JSON.stringify({ model: 'claude-3-5-haiku-20241022', max_tokens: 1, messages: [{ role: 'user', content: 'ok' }] }),
+          signal: AbortSignal.timeout(12000),
+        });
+        if (r.ok) return { stato: 'ok', messaggio: 'Risponde correttamente' };
+        const testo = await r.text().catch(() => '');
+        if (r.status === 401 || /authentication/i.test(testo)) return { stato: 'non valida', messaggio: 'Chiave rifiutata' };
+        if (r.status === 429) return { stato: 'limite', messaggio: 'Quota esaurita' };
+        if (r.status === 400 && /model/i.test(testo)) return { stato: 'ok', messaggio: 'Chiave valida (modello di prova non disponibile)' };
+        return { stato: 'errore', messaggio: `HTTP ${r.status}` };
+      }),
+
+      prova('gemini', k.geminiKey, async (key) => {
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(key)}`, {
+          signal: AbortSignal.timeout(12000),
+        });
+        if (r.ok) { const d = await r.json(); return { stato: 'ok', messaggio: `${(d.models || []).length} modelli disponibili` }; }
+        const testo = await r.text().catch(() => '');
+        if (/leaked|compromised/i.test(testo)) return { stato: 'compromessa', messaggio: 'Google l\'ha segnalata come esposta: va rigenerata' };
+        if (r.status === 400 || r.status === 403) return { stato: 'non valida', messaggio: 'Chiave rifiutata' };
+        return { stato: 'errore', messaggio: `HTTP ${r.status}` };
+      }),
+
+      prova('elevenlabs', k.elevenlabsKey, async (key) => {
+        const r = await fetch('https://api.elevenlabs.io/v1/user', {
+          headers: { 'xi-api-key': key }, signal: AbortSignal.timeout(12000),
+        });
+        if (r.ok) {
+          const d = await r.json().catch(() => ({}));
+          const sub = d.subscription || {};
+          const residui = (sub.character_limit || 0) - (sub.character_count || 0);
+          return { stato: 'ok', messaggio: `Piano ${sub.tier || 'attivo'}${sub.character_limit ? `, ${residui} caratteri residui` : ''}` };
+        }
+        if (r.status === 401) return { stato: 'non valida', messaggio: 'Chiave rifiutata' };
+        return { stato: 'errore', messaggio: `HTTP ${r.status}` };
+      }),
+    ]);
+
+    const funzionanti = Object.values(esiti).filter(e => e.stato === 'ok').length;
+    ctx.log(`[API Keys] Verifica: ${Object.entries(esiti).map(([n, e]) => `${n}=${e.stato}`).join(' ')}`);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ funzionanti, totale: Object.keys(esiti).length, esiti }));
+  });
+
   // ── GET /api/config/keys ──
   router.get('/api/config/keys', (body, res) => {
     const active = Object.keys(ctx.aiKeys).filter(k => k.endsWith('Key') && ctx.aiKeys[k]).map(k => k.replace('Key', ''));
@@ -122,11 +198,15 @@ function register(router, ctx) {
 
       // 2. Prova davvero le credenziali prima di salvarle
       let verifica;
+      const tentativo = { host: scoperta.imapHost, port: scoperta.imapPort, user: email, pass: password };
       try {
-        verifica = await leggiPosta(
-          { host: scoperta.imapHost, port: scoperta.imapPort, user: email, pass: password },
-          { limit: 1, onlyUnread: false, timeoutMs: 12000 }
-        );
+        verifica = await leggiPosta(tentativo, { limit: 1, onlyUnread: false, timeoutMs: 12000 });
+        // Se il certificato ha imposto un nome diverso, si conserva quello
+        if (tentativo.hostEffettivo && tentativo.hostEffettivo !== scoperta.imapHost) {
+          ctx.log(`[Email] Server corretto in base al certificato: ${scoperta.imapHost} → ${tentativo.hostEffettivo}`);
+          scoperta.imapHost = tentativo.hostEffettivo;
+          scoperta.fonte += ' (nome corretto dal certificato)';
+        }
       } catch (e) {
         const msg = String(e.message || '');
         const credenzialiRifiutate = /AUTHENTICATIONFAILED|Invalid credentials|LOGIN failed|autentic/i.test(msg);

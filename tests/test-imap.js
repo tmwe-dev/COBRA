@@ -4,7 +4,8 @@
 const path = require('path');
 process.chdir(path.resolve(__dirname, '..'));
 
-const { decodeHeader, bodyPreview, analizzaFetch, leggiPosta } = require('../modules/utils/imap');
+const { decodeHeader, bodyPreview, analizzaFetch, leggiPosta,
+        nomiDalCertificato, alternativeDaCertificato } = require('../modules/utils/imap');
 
 let PASS = 0, FAIL = 0;
 function ok(name, cond, detail = '') {
@@ -89,6 +90,32 @@ ok('oggetto semplice invariato', msgs[1].oggetto === 'Conferma ritiro', msgs[1].
 
 ok('risposta vuota non rompe', analizzaFetch('').length === 0);
 ok('risposta malformata non rompe', Array.isArray(analizzaFetch('spazzatura senza struttura')));
+
+// ─────────────────────────────────────────
+section('Certificato intestato a un altro dominio');
+// ─────────────────────────────────────────
+{
+  // Caso reale: mail.tmwe.it ospitato su macchine intestate a *.vmteca.net
+  const errore = "Hostname/IP does not match certificate's altnames: "
+    + "Host: mail.tmwe.it. is not in the cert's altnames: DNS:*.vmteca.net, DNS:vmteca.net";
+  const nomi = nomiDalCertificato(errore);
+  ok('estrae i nomi validi del certificato',
+     nomi.includes('*.vmteca.net') && nomi.includes('vmteca.net'), nomi.join(' | '));
+  ok('non confonde le due occorrenze di "altnames"',
+     !nomi.some(n => /Host:|is not/.test(n)), nomi.join(' | '));
+
+  const alt = alternativeDaCertificato(nomi);
+  ok('propone gli host IMAP del provider', alt.includes('imap.vmteca.net'), alt.join(' | '));
+  ok('propone anche la variante mail.', alt.includes('mail.vmteca.net'));
+  ok('non propone duplicati', alt.length === new Set(alt).size);
+
+  ok('messaggio senza certificato non produce nulla',
+     nomiDalCertificato('errore generico').length === 0);
+  ok('nomi non wildcard senza prefisso non generano proposte',
+     alternativeDaCertificato(['esempio.it']).length === 0);
+  ok('nomi gia specifici vengono mantenuti',
+     alternativeDaCertificato(['imap.esempio.it']).includes('imap.esempio.it'));
+}
 
 // ─────────────────────────────────────────
 section('Controlli sulla configurazione');

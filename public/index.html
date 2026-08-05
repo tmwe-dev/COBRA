@@ -1168,8 +1168,10 @@
       <label>ElevenLabs API Key</label>
       <input type="password" id="cfgElevenlabs" placeholder="...">
       <div class="status-msg" id="cfgStatus"></div>
+      <div id="cfgTestEsiti" style="font-size:11px;margin-top:10px;line-height:1.8"></div>
       <div class="btn-row">
         <button class="btn-cancel" onclick="toggleConfig()">Chiudi</button>
+        <button class="btn-cancel" onclick="testaChiavi()">Verifica chiavi</button>
         <button class="btn-save" onclick="saveConfig()">Salva</button>
       </div>
 
@@ -2179,6 +2181,26 @@
 
     // ── Config ──
     function toggleConfig() { document.getElementById('configOverlay').classList.toggle('open'); }
+
+    // ── Verifica delle chiavi API ──
+    // Non basta sapere che una chiave è presente: va provata contro il fornitore.
+    async function testaChiavi() {
+      const box = document.getElementById('cfgTestEsiti');
+      box.innerHTML = '<span style="color:var(--text2)">Verifico ogni chiave...</span>';
+      try {
+        const d = await fetch('/api/config/keys/test').then(r => r.json());
+        const colore = { ok: 'var(--green)', assente: 'var(--text3)' };
+        const icona = { ok: '✅', assente: '—', 'non valida': '❌',
+                        compromessa: '⚠️', limite: '⏳', errore: '❌' };
+        box.innerHTML = Object.entries(d.esiti).map(([nome, e]) =>
+          `<div style="color:${colore[e.stato] || 'var(--red)'}">`
+          + `${icona[e.stato] || '?'} <b>${nome}</b>: ${e.stato} — `
+          + `<span style="color:var(--text2)">${e.messaggio}</span></div>`
+        ).join('');
+      } catch (e) {
+        box.innerHTML = '<span style="color:var(--red)">Verifica non riuscita: ' + e.message + '</span>';
+      }
+    }
 
     // ── Collegamento della casella di posta ──
     // La password viene inviata solo al server locale, non viene mai mostrata

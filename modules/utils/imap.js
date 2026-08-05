@@ -137,6 +137,36 @@ function virgolette(s) {
 }
 
 /**
+ * Ricava dal messaggio d'errore i nomi per cui il certificato è valido.
+ * Node li elenca così: "is not in the cert's altnames: DNS:*.esempio.it, DNS:esempio.it"
+ */
+function nomiDalCertificato(messaggio) {
+  // Il messaggio contiene due volte la parola "altnames": si estraggono
+  // direttamente le voci DNS, che compaiono solo nell'elenco vero.
+  const trovati = [...String(messaggio || '').matchAll(/DNS:([^\s,]+)/gi)].map(m => m[1]);
+  return [...new Set(trovati)];
+}
+
+/**
+ * Da "*.vmteca.net" ricava gli host IMAP plausibili di quel provider.
+ * Il server è lo stesso: cambia solo il nome con cui lo si contatta, e usare
+ * quello giusto permette di mantenere la verifica del certificato attiva
+ * invece di disabilitarla.
+ */
+function alternativeDaCertificato(nomi) {
+  const proposte = [];
+  for (const nome of nomi) {
+    if (nome.startsWith('*.')) {
+      const base = nome.slice(2);
+      proposte.push(`imap.${base}`, `mail.${base}`, `imaps.${base}`);
+    } else if (/^(imap|mail|imaps)\./i.test(nome)) {
+      proposte.push(nome);
+    }
+  }
+  return [...new Set(proposte)];
+}
+
+/**
  * Legge i messaggi dalla casella.
  *
  * @param {object} cfg  host, port, user, pass
@@ -151,7 +181,36 @@ async function leggiPosta(cfg, opts = {}) {
   const soloNonLette = opts.onlyUnread !== false;
   const casella = opts.mailbox || 'INBOX';
 
-  const s = await apriSessione({ host, port, timeoutMs: opts.timeoutMs || 15000 });
+  // Molti provider ospitano la posta di un dominio su macchine intestate a un
+  // altro nome: "mail.tuodominio.it" esiste, ma il certificato è di
+  // "*.provider.net". Invece di disattivare la verifica — che toglierebbe ogni
+  // protezione — si rileggono i nomi validi dal certificato e si riprova con
+  // quelli, mantenendo il controllo attivo.
+  let s;
+  try {
+    s = await apriSessione({ host, port, timeoutMs: opts.timeoutMs || 15000 });
+  } catch (e) {
+    const nomi = nomiDalCertificato(e.message);
+    const alternative = alternativeDaCertificato(nomi);
+    if (alternative.length === 0) throw e;
+
+    let ultimoErrore = e;
+    for (const altHost of alternative) {
+      try {
+        s = await apriSessione({ host: altHost, port, timeoutMs: opts.timeoutMs || 15000 });
+        cfg.hostEffettivo = altHost;   // il chiamante può salvarlo
+        break;
+      } catch (e2) { ultimoErrore = e2; }
+    }
+    if (!s) {
+      throw new Error(
+        `Il certificato del server è intestato a ${nomi.join(', ')}, non a ${host}. `
+        + `Ho provato ${alternative.join(', ')} senza riuscirci. `
+        + 'Chiedi al tuo fornitore il nome esatto del server IMAP.'
+      );
+    }
+  }
+
   try {
     await s.comando(`LOGIN ${virgolette(user)} ${virgolette(pass)}`, 'LOGIN');
     const selezione = await s.comando(`SELECT ${virgolette(casella)}`, 'SELECT');
@@ -222,4 +281,7 @@ function analizzaFetch(raw) {
   return messaggi;
 }
 
-module.exports = { leggiPosta, decodeHeader, bodyPreview, analizzaFetch };
+module.exports = {
+  leggiPosta, decodeHeader, bodyPreview, analizzaFetch,
+  nomiDalCertificato, alternativeDaCertificato,
+};
