@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "COBRA Bridge",
-  "version": "2.4.0",
+  "version": "2.5.0",
   "description": "Motore di automazione browser per COBRA: una sola scheda di lavoro, connessione stabile, nessuna finestra aperta d'autorità.",
   "permissions": [
     "activeTab",
@@ -11,7 +11,8 @@
     "notifications",
     "cookies",
     "alarms",
-    "storage"
+    "storage",
+    "debugger"
   ],
   "optional_permissions": [
     "downloads"

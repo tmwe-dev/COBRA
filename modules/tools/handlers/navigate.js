@@ -92,8 +92,14 @@ async function handle(args, ctx) {
         ctx.wsBroadcast({ type: 'monitor_content', markdown: content.substring(0, 8000), url: ctx.session.lastPage.url, title });
         try {
           const ss = await ctx.bridgeCommand('screenshot', { quality: 70 });
-          if (ss.ok && ss.screenshot) { ctx.session.lastScreenshotData = ss.screenshot; ctx.session.lastBroadcastUrl = ctx.session.lastPage.url; ctx.wsBroadcast({ type: 'screenshot', data: ss.screenshot, url: ctx.session.lastPage.url, title }); }
-        } catch (_) { /* best-effort */ }
+          if (ss.ok && ss.screenshot) {
+            ctx.session.lastScreenshotData = ss.screenshot;
+            ctx.session.lastBroadcastUrl = ctx.session.lastPage.url;
+            ctx.wsBroadcast({ type: 'screenshot', data: ss.screenshot, url: ctx.session.lastPage.url, title });
+          } else {
+            ctx.log(`[Screenshot] navigate non ha ottenuto l'immagine: ${ss?.error || 'risposta senza campo screenshot'}`);
+          }
+        } catch (e) { ctx.log(`[Screenshot] navigate: comando fallito — ${e.message}`); }
         const result = { ok: true, url: ctx.session.lastPage.url, title, content, via: 'bridge' };
         if (content.length < 500) result.hint = 'CONTENUTO SCARSO: pagina dinamica? Usa screenshot() poi read_page().';
         return JSON.stringify(result);

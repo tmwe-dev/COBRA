@@ -255,9 +255,13 @@ async function _bridgeNav(url) {
     await new Promise(r => setTimeout(r, 1000));
     await _bridgeCmd('dismiss_overlay').catch(() => {});
   }
-  const ssResult = await _bridgeCmd('screenshot', { quality: 70 }).catch(() => ({}));
+  const ssResult = await _bridgeCmd('screenshot', { quality: 70 })
+    .catch((e) => ({ ok: false, error: e.message }));
   if (ssResult?.ok && ssResult?.screenshot) {
     wsModule.wsBroadcast({ type: 'screenshot', data: ssResult.screenshot, url, title: '' });
+  } else {
+    // Senza questo messaggio l'anteprima spariva dal monitor senza spiegazione
+    log(`[Screenshot] Non ottenuto per ${url}: ${ssResult?.error || 'risposta senza immagine'} (chiavi=${Object.keys(ssResult || {}).join(',')})`);
   }
   const contentResult = await _bridgeCmd('get_page_content').catch(() => ({}));
   return { ok: true, url, screenshot: ssResult?.screenshot, content: contentResult };

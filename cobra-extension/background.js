@@ -271,6 +271,27 @@ function eseguiNellaPagina(sorgente, resolveCode, mouseCode, argomenti) {
   return fn(...argomenti);
 }
 
+/**
+ * Cattura la pagina tramite il protocollo di ispezione di Chrome.
+ * A differenza della cattura diretta funziona anche quando la finestra non è
+ * visibile, perché chiede al motore di disegnare la pagina invece di leggere
+ * quello che c'è sullo schermo.
+ */
+async function catturaConIspettore(tabId, qualita = 70) {
+  const bersaglio = { tabId };
+  let collegato = false;
+  try {
+    await chrome.debugger.attach(bersaglio, '1.3');
+    collegato = true;
+    const risposta = await chrome.debugger.sendCommand(bersaglio, 'Page.captureScreenshot', {
+      format: 'jpeg', quality: qualita, captureBeyondViewport: false,
+    });
+    return risposta?.data || null;
+  } finally {
+    if (collegato) { try { await chrome.debugger.detach(bersaglio); } catch { /* già staccato */ } }
+  }
+}
+
 // Il ponte serve SOLO alle funzioni che usano gli helper: ricostruirle richiede
 // eval, che molti siti (Google compreso) vietano tramite CSP. Le funzioni che
 // non ne hanno bisogno — fra cui tutte le letture di contenuto — vengono
@@ -662,13 +683,27 @@ async function executeCommand(command, args) {
             await new Promise(r => setTimeout(r, 200));
           } catch { windowId = null; }
         }
+        // Prima via: cattura diretta. Veloce, ma Chrome smette di disegnare le
+        // finestre completamente coperte e restituisce "image readback failed".
         try {
           const dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: 'jpeg', quality: args.quality || 70 });
-          if (!dataUrl) return { ok: false, error: 'Nessuna immagine catturata' };
-          return { ok: true, screenshot: dataUrl.split(',')[1] };
+          if (dataUrl) return { ok: true, screenshot: dataUrl.split(',')[1], via: 'cattura diretta' };
         } catch (e) {
-          return { ok: false, error: `Cattura non riuscita: ${e.message}` };
+          console.log('[COBRA Bridge] Cattura diretta non riuscita:', e.message);
         }
+
+        // Seconda via: il protocollo di ispezione, che disegna la pagina anche
+        // se la finestra non è visibile. È l'unico modo per avere l'anteprima
+        // senza portare la finestra in primo piano.
+        if (idScheda && chrome.debugger) {
+          try {
+            const immagine = await catturaConIspettore(idScheda, args.quality || 70);
+            if (immagine) return { ok: true, screenshot: immagine, via: 'ispettore' };
+          } catch (e) {
+            return { ok: false, error: `Cattura non riuscita: ${e.message}` };
+          }
+        }
+        return { ok: false, error: 'Nessuna immagine catturata: la finestra di lavoro non è disegnata e l\'ispettore non è disponibile' };
       }
 
       // ════════════════════════════════════════
