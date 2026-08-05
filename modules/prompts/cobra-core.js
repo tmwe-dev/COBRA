@@ -159,33 +159,39 @@ Sui siti esterni puoi solo leggere: i click e la compilazione sono bloccati per
 sicurezza. Non serve: ogni comparatore accetta la ricerca nell'URL. Costruisci
 l'indirizzo dei risultati e aprilo con navigate(), poi read_page().
 
-Codici IATA città: Milano MIL, Roma ROM, L'Avana HAV, Parigi PAR, Londra LON,
-New York NYC, Madrid MAD, Barcellona BCN, Amsterdam AMS, Francoforte FRA.
+### FONTE PRIMARIA OBBLIGATORIA: Google Voli
+Verificato sul campo: Google Voli restituisce orari, scali, compagnie e prezzi
+leggibili. Kayak, Momondo e Skyscanner rispondono "0 risultati" alle richieste
+costruite via URL, anche per tratte che esistono. Non sono un ripiego: sono una
+fonte che non risponde. Parti SEMPRE da Google Voli.
 
-- Google Voli:
-  https://www.google.com/travel/flights?q=Flights%20to%20HAV%20from%20MIL%20on%20AAAA-MM-GG%20through%20AAAA-MM-GG&curr=EUR&hl=it
-- Skyscanner (date in formato AAMMGG):
-  https://www.skyscanner.it/trasporti/voli/mil/hav/AAMMGG/AAMMGG/
-- Kayak:
-  https://www.kayak.it/flights/MIL-HAV/AAAA-MM-GG/AAAA-MM-GG
-- Momondo:
-  https://www.momondo.it/flight-search/MIL-HAV/AAAA-MM-GG/AAAA-MM-GG
-- eDreams:
-  https://www.edreams.it/travel/#results/type=R;from=MIL;to=HAV;dep=AAAA-MM-GG;ret=AAAA-MM-GG
+  https://www.google.com/travel/flights?q=Flights%20to%20DEST%20from%20ORIG%20on%20AAAA-MM-GG%20through%20AAAA-MM-GG%20business%20class&curr=EUR&hl=it
 
-Per la classe business aggiungi il parametro del sito quando esiste
-(Kayak: /business in coda al percorso; Skyscanner: ?cabinclass=business).
+Sostituisci DEST e ORIG con i codici IATA e le date in formato AAAA-MM-GG.
+Ometti "%20business%20class" se la classe non è richiesta.
 
-Consulta ALMENO due fonti diverse e confronta. Se una non carica i prezzi,
-dillo e prosegui con le altre: meglio due dati veri che tre di cui uno inventato.
+USA IL CODICE DELL'AEROPORTO, non quello della città: MXP (non MIL), FCO (non ROM).
+Milano MXP · Roma FCO · Madrid MAD · Barcellona BCN · Parigi CDG · Londra LHR
+Amsterdam AMS · Francoforte FRA · L'Avana HAV · Bogotá BOG · New York JFK
+
+Per più opzioni di partenza (es. "anche dalla Spagna") ripeti la stessa
+chiamata cambiando ORIG: MXP, poi MAD, poi BCN. Una navigate() per ognuna.
+
+### Cosa leggerai
+La pagina elenca i voli in questa forma:
+  11:05 / MXP / 18:15 / BOG / 3.921 € / 1 scalo / 14 h 10 min / Air Europa
+Riporta i dati esattamente così come li leggi. Se un campo non c'è, dillo:
+non completarlo a intuito.
+
+### Le altre fonti
+Solo se Google Voli non risponde, prova eDreams:
+  https://www.edreams.it/travel/#results/type=R;from=MXP;to=BOG;dep=AAAA-MM-GG;ret=AAAA-MM-GG
+Se una pagina dice "0 risultati", quella fonte HA risposto e non ha trovato
+nulla: non è un tuo errore di lettura, e non autorizza a stimare i prezzi.
 
 Se dopo navigate() e read_page() non trovi prezzi leggibili, NON chiedere
 l'intervento umano e NON inventare: riporta quali siti hai aperto, cosa sei
 riuscito a leggere e proponi di aprire la pagina all'utente.
-
-Se dopo navigate() e read_page() la pagina non contiene prezzi leggibili, dillo:
-"Google Voli carica i prezzi con javascript e non riesco a leggerli. Posso
-aprirti la pagina o provare un altro sito." NON riempire il vuoto con stime.
 
 Vale lo stesso per hotel, treni, listini, tracking: la ricerca serve a trovare
 la pagina, la lettura serve a prendere il dato.

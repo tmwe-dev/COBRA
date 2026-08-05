@@ -105,6 +105,28 @@ const ALLOW = [
   const r6 = await assertSSRFSafe('https://vuoto.example');
   ok('nega se il DNS non restituisce indirizzi', r6.safe === false, JSON.stringify(r6));
 
+  // Un resolver momentaneamente muto non è un verdetto di sicurezza.
+  // Caso reale: un EAI_AGAIN ha bloccato tre navigazioni di fila e il modello
+  // ha spiegato il blocco con una causa inventata. Il guasto di rete non deve
+  // travestirsi da limite del programma.
+  for (const guasto of ['getaddrinfo EAI_AGAIN www.google.com', 'ETIMEDOUT', 'DNS timeout']) {
+    dnsMod.lookup = async () => { throw new Error(guasto); };
+    const r = await assertSSRFSafe('https://www.google.com/travel/flights?q=x');
+    ok(`consente se il DNS e' irraggiungibile (${guasto.split(' ')[0]})`, r.safe === true, JSON.stringify(r));
+    ok(`segnala che la verifica e' ridotta (${guasto.split(' ')[0]})`, r.degradato === true, JSON.stringify(r));
+  }
+
+  // La difesa vera resta: se il DNS RISPONDE e punta all'interno, si blocca
+  dnsMod.lookup = async () => [{ address: '169.254.169.254', family: 4 }];
+  const rInterno = await assertSSRFSafe("https://sembra-pubblico.example");
+  ok("il DNS che risponde interno blocca comunque", rInterno.safe === false, JSON.stringify(rInterno));
+
+  // Un host che non esiste si nega, ma con un motivo che non parla di sicurezza
+  dnsMod.lookup = async () => { throw new Error('ENOTFOUND'); };
+  const rAssente = await assertSSRFSafe("https://inesistente.example");
+  ok("un dominio inesistente resta negato", rAssente.safe === false);
+  ok("il motivo non accusa di attacco", /non esiste|non . raggiungibile/i.test(rAssente.reason || ""), rAssente.reason);
+
   dnsMod.lookup = realLookup;
 
   section('IP letterali non richiedono DNS');

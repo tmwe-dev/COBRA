@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const { assertSSRFSafe } = require('../../security/ssrf');
 const { creaXlsx, righeDaTesto } = require('../../utils/xlsx');
+const { importiSenzaFonte, blocchiDuplicati, fontiDelTurno } = require('../../security/verifica-dati');
 
 async function saveToKb(args, ctx) {
   ctx.emitThinking('Salvo nel KB...');
@@ -34,12 +35,43 @@ async function createFile(args, ctx) {
   const dir = path.dirname(filePath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
+  // ── I dati del file devono venire dalle pagine lette ──
+  // Vale solo quando in questo turno qualcosa è stato letto davvero: se il file
+  // nasce da un dettato dell'utente non c'è nulla da confrontare.
+  const fonti = fontiDelTurno(ctx.session);
+  if (fonti.length > 500) {
+    const { totale, mancanti } = importiSenzaFonte(args.content || '', fonti);
+    if (mancanti.length > 0 && mancanti.length >= Math.ceil(totale * 0.25)) {
+      ctx.log(`[Verifica] create_file rifiutato: ${mancanti.length}/${totale} importi non risultano in nessuna pagina letta`);
+      return JSON.stringify({
+        error: 'SCRITTURA RIFIUTATA: questi importi non compaiono in nessuna pagina che hai letto in questo turno: '
+          + mancanti.slice(0, 8).join(', ')
+          + '. Rileggi la pagina della fonte e riporta le cifre esatte, oppure togli dal report le voci che non hai potuto verificare, '
+          + 'scrivendo apertamente che il dato non era disponibile. Non stimare.',
+      });
+    }
+  }
+
   const estensione = (args.filename || '').split('.').pop().toLowerCase();
   if (estensione === 'xlsx') {
     // Un .xlsx non è testo: scriverci dentro un CSV produce un file che Excel
     // rifiuta di aprire. Si costruisce l'archivio vero.
     const righe = righeDaTesto(args.content || '');
     if (righe.length === 0) return JSON.stringify({ error: 'Contenuto vuoto o non tabellare: per un Excel servono righe (CSV, JSON o tabella markdown)' });
+
+    // Un blocco di righe ripetuto identico sotto un'altra intestazione significa
+    // che i risultati di una ricerca sono stati attribuiti anche a un'altra.
+    const doppi = blocchiDuplicati(righe);
+    if (doppi.length > 0) {
+      const d = doppi[0];
+      ctx.log(`[Verifica] create_file rifiutato: righe ${d.prima}-${d.prima + d.righe - 1} identiche a ${d.seconda}-${d.seconda + d.righe - 1}`);
+      return JSON.stringify({
+        error: `SCRITTURA RIFIUTATA: le righe ${d.prima}-${d.prima + d.righe - 1} sono identiche alle righe `
+          + `${d.seconda}-${d.seconda + d.righe - 1}. Due ricerche diverse non danno gli stessi identici risultati: `
+          + 'hai copiato il blocco di una tratta sotto l\'intestazione di un\'altra. Rileggi la pagina della tratta '
+          + 'sbagliata e riporta i suoi dati veri; se per quella tratta non hai letto nulla, scrivilo invece di riempirla.',
+      });
+    }
     try {
       fs.writeFileSync(filePath, creaXlsx(righe, args.sheet || 'Report'));
       ctx.wsBroadcast({ type: 'file_created', filename: args.filename });

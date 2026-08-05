@@ -18,6 +18,26 @@ async function handle(args, ctx) {
     }
   } catch (_) { /* best-effort */ }
 
+  // ── Cache per turno: lo stesso URL non si rilegge ──
+  // Osservato in produzione: su una richiesta con tre partenze diverse il
+  // modello ha riaperto gli stessi tre indirizzi ad ogni passo del processo,
+  // nove navigazioni per tre pagine. Oltre al tempo sprecato, il vero danno è
+  // che i blocchi di risultati si confondono tra loro e finiscono attribuiti
+  // alla tratta sbagliata. Una pagina già letta in questo turno si restituisce
+  // com'era, dicendolo apertamente.
+  if (!ctx.session._cachePagine) ctx.session._cachePagine = new Map();
+  const chiave = String(url).trim();
+  if (ctx.session._cachePagine.has(chiave)) {
+    const c = ctx.session._cachePagine.get(chiave);
+    ctx.log(`[navigate] Già letta in questo turno, servita dalla cache: ${chiave}`);
+    ctx.emitReasoning('Pagina già letta in questo turno: riuso il contenuto', '♻️');
+    return JSON.stringify({
+      ok: true, url: c.url, title: c.title, content: c.content, via: 'cache-turno',
+      nota: 'Questa pagina l\'hai GIÀ letta in questo turno: sotto c\'è il contenuto identico a prima. '
+        + 'Non rileggerla ancora. Se ti serve una tratta o un parametro diverso, cambia l\'URL.',
+    });
+  }
+
   // Same-domain loop protection
   try {
     const navDom = new URL(url).hostname.replace('www.', '');
@@ -36,6 +56,9 @@ async function handle(args, ctx) {
     ctx.log(`[Security/SSRF] navigate BLOCCATO ${url}: ${ssrf.reason}`);
     return JSON.stringify({ error: `URL bloccato: ${ssrf.reason}` });
   }
+  // Va detto a voce alta: se il controllo è stato saltato per un guasto di rete
+  // e più tardi qualcosa non torna, questa riga è la spiegazione.
+  if (ssrf.degradato) ctx.log(`[Security/SSRF] verifica ridotta su ${url}: ${ssrf.reason}`);
   if (/^mailto:/i.test(url)) return JSON.stringify({ error: 'Non navigare mailto: — usa send_email.' });
 
   // Human Driver delay
@@ -70,21 +93,33 @@ async function handle(args, ctx) {
         let content = (bridgeNav.content?.markdown || bridgeNav.content?.text || '').substring(0, 12000);
 
         // Molti siti (Google Voli, portali di prenotazione, gestionali) caricano
-        // i dati dopo il rendering iniziale: alla prima lettura la pagina è vuota.
-        // Si rilegge finché il contenuto non cresce, con attese progressive.
-        const attese = [0, 1500, 2500, 4000];
+        // i dati dopo il rendering iniziale. La soglia sui caratteri non basta:
+        // misurato su Google Voli, a 4 secondi la pagina ha già 1.400 caratteri
+        // di intestazioni e filtri ma ZERO prezzi; i risultati compaiono verso il
+        // nono secondo. Fermarsi sulla lunghezza significa leggere il guscio e
+        // credere che il sito non abbia dati.
+        //
+        // Si aspetta quindi finché la pagina non è FERMA e non dichiara più di
+        // stare caricando, non finché è abbastanza lunga.
+        const attese = [0, 1200, 1800, 2500, 3000, 3500, 4000, 4000];
+        let uguali = 0;
         for (const attesa of attese) {
           if (attesa) await new Promise(r => setTimeout(r, attesa));
+          let cresciuto = false;
           try {
             const fresh = await ctx.bridgeCommand('get_page_content', {});
             const freshText = fresh?.markdown || fresh?.text || '';
-            if (fresh?.ok && freshText.length > content.length) content = freshText.substring(0, 12000);
+            if (fresh?.ok && freshText.length > content.length) { content = freshText.substring(0, 12000); cresciuto = true; }
           } catch (_) { /* si tiene il contenuto già ottenuto */ }
-          // Sopra questa soglia la pagina ha sicuramente reso i suoi contenuti
-          if (content.length > 1200) break;
+
+          uguali = cresciuto ? 0 : uguali + 1;
+          const staCaricando = /caricamento|sto cercando|in corso\.\.\.|loading|searching|please wait|ricerca in corso/i.test(content);
+          // Ferma e senza segnali di attesa: la pagina ha finito, qualunque sia la lunghezza
+          if (uguali >= 2 && !staCaricando) break;
         }
-        if (content.length <= 1200) {
-          ctx.log(`[navigate] Contenuto scarso dopo ${attese.length} tentativi su ${url} (${content.length} caratteri)`);
+        const haNumeri = /(?:€|\$|£)\s?\d|\d[\d.,]*\s?(?:€|\$|£|EUR|USD)/.test(content);
+        if (!haNumeri && content.length <= 1500) {
+          ctx.log(`[navigate] Pagina senza dati leggibili su ${url} (${content.length} caratteri) — probabile blocco anti-bot o zero risultati`);
         }
         ctx.session.lastPage = { url: bridgeNav.url || url, title, markdown: content, links: [], html: '' };
         ctx.emitSiteVisit(ctx.session.lastPage.url, title || url, 'active');
@@ -100,8 +135,18 @@ async function handle(args, ctx) {
             ctx.log(`[Screenshot] navigate non ha ottenuto l'immagine: ${ss?.error || 'risposta senza campo screenshot'}`);
           }
         } catch (e) { ctx.log(`[Screenshot] navigate: comando fallito — ${e.message}`); }
+        ctx.session._cachePagine.set(chiave, { url: ctx.session.lastPage.url, title, content });
         const result = { ok: true, url: ctx.session.lastPage.url, title, content, via: 'bridge' };
-        if (content.length < 500) result.hint = 'CONTENUTO SCARSO: pagina dinamica? Usa screenshot() poi read_page().';
+        // Distinguere "non ho letto" da "non c'è niente da leggere" è decisivo:
+        // se l'AI non lo sa, riempie il vuoto con dati inventati.
+        if (/0\s+risultati|nessun risultato|no results found/i.test(content)) {
+          result.hint = 'QUESTA FONTE NON HA RISULTATI per la ricerca fatta. Non è un errore di lettura: '
+            + 'il sito ha risposto e non ha trovato nulla. Cambia fonte (per i voli: Google Voli) '
+            + 'oppure cambia parametri. NON inventare dati.';
+        } else if (!haNumeri && content.length < 1500) {
+          result.hint = 'CONTENUTO SCARSO: la pagina non ha reso i dati (dinamica o anti-bot). '
+            + 'Usa screenshot() poi read_page(), oppure cambia fonte. NON inventare dati.';
+        }
         return JSON.stringify(result);
       }
       ctx.log(`[navigate] Bridge ha risposto senza ok: ${JSON.stringify(bridgeNav).substring(0, 200)}`);

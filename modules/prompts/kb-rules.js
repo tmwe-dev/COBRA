@@ -32,6 +32,13 @@ const ALWAYS_LOADED_KB = [
 
   { id:'process_report_aziende', domain:'workflow', title:'Processo Report Aziende — Prospecting Commerciale', priority:90, always_load:false,
     content:`PROCESSO RICORRENTE — REPORT AZIENDE (https://www.reportaziende.it/)
+
+QUANDO VALE: SOLO per la ricerca di aziende prospect su reportaziende.it.
+Se la richiesta riguarda altro (voli, hotel, spedizioni, listini, qualunque
+altro report), IGNORA completamente questa regola — comprese le colonne qui
+sotto, che valgono solo per gli elenchi di aziende. Le colonne di un file le
+decide il contenuto della richiesta, mai una regola di un altro dominio.
+
 URL: https://www.reportaziende.it/
 Tipo: piattaforma a pagamento TMWE per ricerca e qualificazione aziende prospect.
 Il login lo fa l'utente nel browser. COBRA opera nella sessione autenticata.

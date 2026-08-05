@@ -148,8 +148,31 @@ async function assertSSRFSafe(urlString, { timeoutMs = 3000 } = {}) {
       new Promise((_, rej) => setTimeout(() => rej(new Error('DNS timeout')), timeoutMs)),
     ]);
   } catch (e) {
-    // In caso di errore DNS si nega: meglio un falso blocco che una richiesta interna
-    return { safe: false, reason: `Risoluzione DNS fallita: ${e.message}` };
+    // Un resolver che non risponde NON è un verdetto di sicurezza.
+    //
+    // Osservato in produzione: un EAI_AGAIN passeggero ha fatto fallire tre
+    // navigazioni in pochi millisecondi; il modello, vedendo tre errori
+    // istantanei, ha dichiarato il passo fallito inventando una spiegazione
+    // ("i siti non hanno caricato"). Un guasto della rete si era travestito da
+    // limite del programma.
+    //
+    // La distinzione che conta: se il DNS RISPONDE e indica un indirizzo
+    // interno, si blocca — quella è la difesa vera, e resta intatta. Se invece
+    // il DNS non risponde affatto, non sappiamo nulla, e per un dominio
+    // pubblico e ben formato (isSSRFSafe è già passato sopra) si procede.
+    // Nel percorso bridge la pagina la apre comunque Chrome, che risolve per
+    // conto suo: negare qui non protegge niente e ferma il lavoro.
+    const transitorio = /EAI_AGAIN|ETIMEDOUT|ESERVFAIL|DNS timeout|queryA ETIMEOUT/i.test(e.message || '');
+    if (transitorio) {
+      return {
+        safe: true,
+        degradato: true,
+        reason: `DNS non raggiungibile (${e.message}): controllo sugli indirizzi non eseguito`,
+      };
+    }
+    // NXDOMAIN e simili: il dominio non esiste, non c'è nulla da proteggere,
+    // ma nemmeno da visitare. Si nega con un motivo che non confonda.
+    return { safe: false, reason: `Il dominio non esiste o non è raggiungibile: ${e.message}` };
   }
 
   const list = (addresses || []).map(a => a.address);

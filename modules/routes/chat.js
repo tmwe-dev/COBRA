@@ -63,6 +63,11 @@ function register(router, ctx) {
       // 1. Supervisor start
       ctx.CobraSupervisor.startRequest(null, message);
       ctx.session.pagineDelTurno = [];
+      // La cache delle pagine vale per un turno solo: al turno dopo i prezzi
+      // e le disponibilità possono essere cambiati, e servire dati vecchi
+      // spacciandoli per letti adesso sarebbe peggio che rileggerli.
+      ctx.session._cachePagine = new Map();
+      ctx._navDomainCount = {};
 
       // 2-3. Conversation + ChatMemory
       const conv = ctx.conversationEngine.getOrCreateActive('Chat');
