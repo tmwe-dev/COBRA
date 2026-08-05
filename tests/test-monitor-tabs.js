@@ -56,7 +56,7 @@ section('Nessuna scheda portata in primo piano');
 section('L anteprima delle pagine continua a funzionare');
 // ─────────────────────────────────────────
 {
-  const shot = ext.slice(ext.indexOf("case 'screenshot':"), ext.indexOf("case 'screenshot':") + 1600);
+  const shot = ext.slice(ext.indexOf("case 'screenshot':"), ext.indexOf("case 'screenshot':") + 2600);
   ok('lo screenshot recupera la scheda persistita', /recuperaWorkTab\(\)/.test(shot),
      'con la variabile azzerata fotograferebbe la scheda sbagliata');
   ok('rende attiva la scheda nella SUA finestra', /tabs\.update\(idScheda, \{ active: true \}\)/.test(shot),
@@ -65,7 +65,22 @@ section('L anteprima delle pagine continua a funzionare');
   ok('non ruba il fuoco alla finestra dell utente',
      !/windows\.update\([^)]*focused:\s*true/.test(shot));
   ok('segnala i fallimenti invece di restituire un vuoto',
-     /return \{ ok: false, error:/.test(shot));
+     /ok: false, error:/.test(shot));
+  ok('ha una seconda via quando la finestra non è disegnata',
+     /catturaConIspettore/.test(shot),
+     'Chrome non fotografa le finestre coperte: senza alternativa l\'anteprima sparisce');
+  ok('la cattura diretta resta il primo tentativo',
+     shot.indexOf('captureVisibleTab') < shot.indexOf('catturaConIspettore'),
+     'la via leggera va provata per prima');
+}
+{
+  ok('la cattura tramite ispettore stacca sempre il collegamento',
+     /finally \{[\s\S]{0,160}debugger\.detach/.test(ext),
+     'restare collegati lascerebbe il banner di debug sulla pagina');
+  const man = JSON.parse(fs.readFileSync('cobra-extension/manifest.json', 'utf8'));
+  ok('il permesso debugger è dichiarato fra quelli obbligatori',
+     (man.permissions || []).includes('debugger'),
+     'Chrome non lo accetta fra gli opzionali');
 }
 {
   // La scheda di lavoro deve stare in una finestra propria, altrimenti
