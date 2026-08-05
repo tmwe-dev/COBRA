@@ -1,0 +1,380 @@
+{
+  "conversations": {
+    "conv_1778418632836_meykvtfkv": {
+      "id": "conv_1778418632836_meykvtfkv",
+      "title": "Nuova Chat",
+      "messages": [],
+      "summary": "",
+      "metadata": {},
+      "createdAt": "2026-05-10T13:10:32.837Z",
+      "updatedAt": "2026-05-10T13:10:32.837Z"
+    },
+    "conv_1778424898981_2vk7pe52s": {
+      "id": "conv_1778424898981_2vk7pe52s",
+      "title": "Nuova Chat",
+      "messages": [],
+      "summary": "",
+      "metadata": {},
+      "createdAt": "2026-05-10T14:54:58.981Z",
+      "updatedAt": "2026-05-10T14:54:58.981Z"
+    },
+    "conv_1778474986797_764s01lxv": {
+      "id": "conv_1778474986797_764s01lxv",
+      "title": "Nuova Chat",
+      "messages": [
+        {
+          "id": "msg_1778476673495_ub1odtpye",
+          "role": "user",
+          "content": "ciao",
+          "metadata": {},
+          "timestamp": "2026-05-11T05:17:53.495Z"
+        },
+        {
+          "id": "msg_1778476972463_g4iooyi8a",
+          "role": "user",
+          "content": "ci siete?",
+          "metadata": {},
+          "timestamp": "2026-05-11T05:22:52.463Z"
+        },
+        {
+          "id": "msg_1778477229653_hik2ov6d2",
+          "role": "user",
+          "content": "CIAO",
+          "metadata": {},
+          "timestamp": "2026-05-11T05:27:09.653Z"
+        },
+        {
+          "id": "msg_1778477231766_554isi1p6",
+          "role": "assistant",
+          "content": "Errore AI: gemini: Your API key was reported as leaked. Please use another API key.",
+          "metadata": {},
+          "timestamp": "2026-05-11T05:27:11.766Z"
+        }
+      ],
+      "summary": "",
+      "metadata": {},
+      "createdAt": "2026-05-11T04:49:46.797Z",
+      "updatedAt": "2026-05-11T05:27:11.767Z"
+    },
+    "conv_1778481084747_izz4ns2g5": {
+      "id": "conv_1778481084747_izz4ns2g5",
+      "title": "Nuova Chat",
+      "messages": [
+        {
+          "id": "msg_1778481094059_lq5s8nmre",
+          "role": "user",
+          "content": "C'è qualcuno in ascolto",
+          "metadata": {},
+          "timestamp": "2026-05-11T06:31:34.059Z"
+        },
+        {
+          "id": "msg_1778481096244_21rtsvs85",
+          "role": "assistant",
+          "content": "Errore AI: gemini: Your API key was reported as leaked. Please use another API key.",
+          "metadata": {},
+          "timestamp": "2026-05-11T06:31:36.244Z"
+        }
+      ],
+      "summary": "",
+      "metadata": {},
+      "createdAt": "2026-05-11T06:31:24.747Z",
+      "updatedAt": "2026-05-11T06:31:36.244Z"
+    },
+    "conv_1778498111440_nq588mlls": {
+      "id": "conv_1778498111440_nq588mlls",
+      "title": "Nuova Chat",
+      "messages": [
+        {
+          "id": "msg_1778498148049_m9yhv67mv",
+          "role": "user",
+          "content": "Per un lavoro davvero preciso al 100%, servirebbe ancora una cosa: 1 esempio reale di request/response per ogni endpoint TMWE, preso da log o test reali. ",
+          "metadata": {},
+          "timestamp": "2026-05-11T11:15:48.050Z"
+        },
+        {
+          "id": "msg_1778498150066_w8j4qx8vk",
+          "role": "assistant",
+          "content": "Errore AI: gemini: Your API key was reported as leaked. Please use another API key.",
+          "metadata": {},
+          "timestamp": "2026-05-11T11:15:50.066Z"
+        },
+        {
+          "id": "msg_1778498155695_yhmgqz06m",
+          "role": "user",
+          "content": "Per un lavoro davvero preciso al 100%, servirebbe ancora una cosa: 1 esempio reale di request/response per ogni endpoint TMWE, preso da log o test reali. - Elastic Server Host: https://38.242.207.31:9200 Usuario: elastic Password: lI030AoiXco2ztUnvEyi verifica qui i dati che ti servono",
+          "metadata": {},
+          "timestamp": "2026-05-11T11:15:55.695Z"
+        },
+        {
+          "id": "msg_1778498157424_0shh0rwrw",
+          "role": "assistant",
+          "content": "Errore AI: gemini: models/gemini-2.5-pro-preview-05-06 is not found for API version v1beta, or is not supported for generateContent. Call ListModels to see the list of available models and their supported methods.",
+          "metadata": {},
+          "timestamp": "2026-05-11T11:15:57.424Z"
+        }
+      ],
+      "summary": "",
+      "metadata": {},
+      "createdAt": "2026-05-11T11:15:11.440Z",
+      "updatedAt": "2026-05-11T11:15:57.424Z"
+    },
+    "conv_1778500867137_4qxj4omt5": {
+      "id": "conv_1778500867137_4qxj4omt5",
+      "title": "Nuova Chat",
+      "messages": [
+        {
+          "id": "msg_1778500882177_w4fzcrddx",
+          "role": "user",
+          "content": "Esplora e mostrami la prima pagina del Corriere della Sera E dimmi le principali notizie",
+          "metadata": {},
+          "timestamp": "2026-05-11T12:01:22.177Z"
+        },
+        {
+          "id": "msg_1778802251314_41v8emrs5",
+          "role": "user",
+          "content": "fai lo scraping e dimmi il totale scoperto https://www.wcaworld.com/WCAworldBlacklist",
+          "metadata": {},
+          "timestamp": "2026-05-14T23:44:11.315Z"
+        },
+        {
+          "id": "msg_1778802253720_sstorgmy9",
+          "role": "assistant",
+          "content": "Errore AI: gemini: Your API key was reported as leaked. Please use another API key.",
+          "metadata": {},
+          "timestamp": "2026-05-14T23:44:13.720Z"
+        },
+        {
+          "id": "msg_1785814615726_04krsrdur",
+          "role": "user",
+          "content": "dammi le notizie principali del giorno delle principali testate giornalistiche italiane",
+          "metadata": {},
+          "timestamp": "2026-08-04T03:36:55.726Z"
+        },
+        {
+          "id": "msg_1785814617413_jmvsdwvev",
+          "role": "assistant",
+          "content": "Errore AI: gemini: Your API key was reported as leaked. Please use another API key.",
+          "metadata": {},
+          "timestamp": "2026-08-04T03:36:57.413Z"
+        },
+        {
+          "id": "msg_1785815322251_t5hf5byal",
+          "role": "user",
+          "content": "quali sono i principali titoli dei giornali di oggi",
+          "metadata": {},
+          "timestamp": "2026-08-04T03:48:42.251Z"
+        },
+        {
+          "id": "msg_1785816760316_j8hic2z39",
+          "role": "user",
+          "content": "ciao, rispondi con una sola frase breve",
+          "metadata": {},
+          "timestamp": "2026-08-04T04:12:40.316Z"
+        },
+        {
+          "id": "msg_1785816763708_l23or06nj",
+          "role": "assistant",
+          "content": "Non posso fornire i titoli dei giornali di oggi a causa di un errore tecnico.",
+          "metadata": {},
+          "timestamp": "2026-08-04T04:12:43.708Z"
+        }
+      ],
+      "summary": "",
+      "metadata": {},
+      "createdAt": "2026-05-11T12:01:07.137Z",
+      "updatedAt": "2026-08-04T04:12:43.708Z"
+    },
+    "conv_1785816774809_pxotvfwvm": {
+      "id": "conv_1785816774809_pxotvfwvm",
+      "title": "Nuova Chat",
+      "messages": [
+        {
+          "id": "msg_1785816774820_17mzhdbb0",
+          "role": "user",
+          "content": "ciao, chi sei e cosa sai fare?",
+          "metadata": {},
+          "timestamp": "2026-08-04T04:12:54.820Z"
+        },
+        {
+          "id": "msg_1785816777519_4i7g3h9hp",
+          "role": "assistant",
+          "content": "Sono COBRA, il segretario virtuale direzionale di TMWE — Transport Management Worldwide Express. Mi occupo di gestione operativa, spedizioni, vendite e supporto amministrativo. Posso aiutarti con urgenze logistiche, preventivi, analisi di dati e molto altro. Come posso assisterti oggi?",
+          "metadata": {},
+          "timestamp": "2026-08-04T04:12:57.519Z"
+        },
+        {
+          "id": "msg_1785816794022_iqcjs49fi",
+          "role": "user",
+          "content": "cerca voli per Milano domani",
+          "metadata": {},
+          "timestamp": "2026-08-04T04:13:14.022Z"
+        },
+        {
+          "id": "msg_1785816806051_kpwwokv34",
+          "role": "assistant",
+          "content": "Non posso cercare voli direttamente. Ti consiglio di visitare un sito di ricerca voli come Skyscanner o Google Flights per trovare le opzioni disponibili per Milano domani. Se hai bisogno di aiuto con altre informazioni o operazioni, fammi sapere!",
+          "metadata": {},
+          "timestamp": "2026-08-04T04:13:26.051Z"
+        },
+        {
+          "id": "msg_1785816806058_1erlcnhic",
+          "role": "user",
+          "content": "che ore sono?",
+          "metadata": {},
+          "timestamp": "2026-08-04T04:13:26.058Z"
+        },
+        {
+          "id": "msg_1785816808025_0ss6pprhz",
+          "role": "assistant",
+          "content": "Non posso fornire l'ora attuale. Ti consiglio di controllare l'orologio del tuo dispositivo. Se hai bisogno di assistenza su altro, sono qui per aiutarti!",
+          "metadata": {},
+          "timestamp": "2026-08-04T04:13:28.025Z"
+        },
+        {
+          "id": "msg_1785816808029_0s1363fs9",
+          "role": "user",
+          "content": "analizza il sito tmwe.it",
+          "metadata": {},
+          "timestamp": "2026-08-04T04:13:28.029Z"
+        },
+        {
+          "id": "msg_1785816815139_vk17vq6x0",
+          "role": "assistant",
+          "content": "**Azienda** — TMWE (Transport Management Worldwide Express)\n\n**Settore** — Spedizioni e trasporti\n\n**Contatti** — Non sono disponibili contatti specifici sul sito.\n\n**Note** — Il sito offre informazioni sui servizi di corriere espresso, spedizioni internazionali e gestione della logistica. Presenta anche sezioni dedicate ai vantaggi commerciali e alle modalità di funzionamento dei servizi. Non ci sono dettagli specifici su tariffe e contatti diretti.\n\nSe necessiti di ulteriori dettagli, fammi sapere!",
+          "metadata": {},
+          "timestamp": "2026-08-04T04:13:35.139Z"
+        },
+        {
+          "id": "msg_1785816888752_keeqny9hb",
+          "role": "user",
+          "content": "dimmi chi sei in 10 parole",
+          "metadata": {},
+          "timestamp": "2026-08-04T04:14:48.752Z"
+        },
+        {
+          "id": "msg_1785816891677_y004wfh02",
+          "role": "assistant",
+          "content": "Sono COBRA, segretario virtuale di TMWE, esperto in logistica.",
+          "metadata": {},
+          "timestamp": "2026-08-04T04:14:51.677Z"
+        }
+      ],
+      "summary": "",
+      "metadata": {},
+      "createdAt": "2026-08-04T04:12:54.809Z",
+      "updatedAt": "2026-08-04T04:14:51.677Z"
+    },
+    "conv_1785816891688_knjjam7c9": {
+      "id": "conv_1785816891688_knjjam7c9",
+      "title": "Nuova Chat",
+      "messages": [
+        {
+          "id": "msg_1785816891692_5jhlzu81w",
+          "role": "user",
+          "content": "cerca informazioni su DHL Italia",
+          "metadata": {},
+          "timestamp": "2026-08-04T04:14:51.692Z"
+        },
+        {
+          "id": "msg_1785816956912_byyrcrkie",
+          "role": "user",
+          "content": "ping",
+          "metadata": {},
+          "timestamp": "2026-08-04T04:15:56.912Z"
+        },
+        {
+          "id": "msg_1785816958386_enxkrf5wz",
+          "role": "assistant",
+          "content": "Procedo a cercare informazioni su DHL Italia. Un momento.",
+          "metadata": {},
+          "timestamp": "2026-08-04T04:15:58.386Z"
+        }
+      ],
+      "summary": "",
+      "metadata": {},
+      "createdAt": "2026-08-04T04:14:51.688Z",
+      "updatedAt": "2026-08-04T04:15:58.386Z"
+    },
+    "conv_1785816967045_hsmwot0vr": {
+      "id": "conv_1785816967045_hsmwot0vr",
+      "title": "Nuova Chat",
+      "messages": [
+        {
+          "id": "msg_1785822332581_wrrlcn02g",
+          "role": "user",
+          "content": "invia una email a test@example.com con oggetto \"prova\" e testo \"ciao\"",
+          "metadata": {},
+          "timestamp": "2026-08-04T05:45:32.581Z"
+        },
+        {
+          "id": "msg_1785822336535_soweyhxb8",
+          "role": "assistant",
+          "content": "Ho preparato la bozza dell'email. Ecco i dettagli:\n\n- **A:** test@example.com\n- **Oggetto:** prova\n- **Testo:** ciao\n\nVuoi che invii questa email?",
+          "metadata": {},
+          "timestamp": "2026-08-04T05:45:36.535Z"
+        },
+        {
+          "id": "msg_1785822353469_57hvh1yk0",
+          "role": "user",
+          "content": "ricorda che il mio codice cliente TMWE è ABC-9931",
+          "metadata": {},
+          "timestamp": "2026-08-04T05:45:53.469Z"
+        },
+        {
+          "id": "msg_1785822356501_aymhk9wj1",
+          "role": "assistant",
+          "content": "Ho memorizzato il tuo codice cliente TMWE: ABC-9931. Se hai bisogno di ulteriori informazioni o assistenza, fammi sapere!",
+          "metadata": {},
+          "timestamp": "2026-08-04T05:45:56.501Z"
+        },
+        {
+          "id": "msg_1785822356509_8avpmgrky",
+          "role": "user",
+          "content": "cerca nella knowledge base le regole di conferma",
+          "metadata": {},
+          "timestamp": "2026-08-04T05:45:56.509Z"
+        },
+        {
+          "id": "msg_1785822359982_xb690iyyd",
+          "role": "assistant",
+          "content": "Non sono riuscito a trovare informazioni specifiche sulle \"regole di conferma\" nella knowledge base. Se hai bisogno di dettagli su un argomento specifico o se desideri che cerchi qualcos'altro, fammelo sapere!",
+          "metadata": {},
+          "timestamp": "2026-08-04T05:45:59.982Z"
+        },
+        {
+          "id": "msg_1785822510965_btajzjha3",
+          "role": "user",
+          "content": "quali sono le regole su quando serve una conferma esplicita?",
+          "metadata": {},
+          "timestamp": "2026-08-04T05:48:30.965Z"
+        },
+        {
+          "id": "msg_1785822513784_nxl8wukrg",
+          "role": "assistant",
+          "content": "Le regole su quando serve una conferma esplicita sono le seguenti:\n\n1. **Invio di email/WhatsApp/LinkedIn**: È necessaria conferma prima di inviare comunicazioni.\n2. **Cancellazione di dati**: Serve conferma prima di procedere alla cancellazione.\n3. **Pagamento**: La conferma è richiesta al momento del pagamento reale o invio reale.\n\nNon è necessaria conferma per azioni come navigazione, ricerca, lettura pagine, bozze. Se hai bisogno di ulteriori chiarimenti, fammi sapere!",
+          "metadata": {},
+          "timestamp": "2026-08-04T05:48:33.784Z"
+        },
+        {
+          "id": "msg_1785822524585_bfl0f8uty",
+          "role": "user",
+          "content": "cerca su google chi è IATA, poi apri il loro sito ufficiale e dimmi cosa fanno",
+          "metadata": {},
+          "timestamp": "2026-08-04T05:48:44.585Z"
+        },
+        {
+          "id": "msg_1785822548498_cu2n8ww4p",
+          "role": "assistant",
+          "content": "L'International Air Transport Association (IATA) è un'associazione commerciale che rappresenta le compagnie aeree di tutto il mondo. Essa fornisce standard globali per la sicurezza, la sicurezza, l'efficienza e la sostenibilità nel settore del trasporto aereo. IATA supporta l'attività aeronautica e aiuta a formulare politiche per l'aviazione. La loro missione è quella di rappresentare e servire le compagnie aeree con advocacy e standard globali. Se desideri ulteriori dettagli o informazioni specifiche, fammi sapere!",
+          "metadata": {},
+          "timestamp": "2026-08-04T05:49:08.498Z"
+        }
+      ],
+      "summary": "**Riassunto (1 messaggi)**\n- **assistant**: Ho aperto la pagina principale di Wikipedia. Il primo link è \"Wikipedia:Pagina principale\", che intr\n",
+      "metadata": {},
+      "createdAt": "2026-08-04T04:16:07.045Z",
+      "updatedAt": "2026-08-04T05:49:08.498Z"
+    }
+  },
+  "activeConversationId": "conv_1785816967045_hsmwot0vr"
+}

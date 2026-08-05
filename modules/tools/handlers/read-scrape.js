@@ -11,12 +11,26 @@ async function readPage(args, ctx) {
   // Dismiss popup prima di leggere
   if (ctx.isBridgeReady()) { try { await ctx.dismissModalsBridge(); } catch (_) { /* best-effort */ } }
   else if (ctx.getState('activePage')) { try { await ctx.dismissModals(ctx.getState('activePage')); } catch (_) { /* best-effort */ } }
-  // Bridge: leggi contenuto se manca markdown
-  if (ctx.isBridgeReady() && !ctx.session.lastPage?.markdown) {
-    try {
-      const bc = await ctx.bridgeCommand('get_page_content');
-      if (bc.ok) ctx.session.lastPage = { url: bc.url || ctx.session.lastPage?.url || '', title: bc.title || '', markdown: bc.markdown || bc.text || '', links: [], html: '' };
-    } catch (_) { /* best-effort */ }
+  // Bridge: rilegge se il contenuto manca o è troppo scarno.
+  // Sulle pagine che caricano i dati via javascript la prima lettura torna
+  // spesso vuota: si riprova con attese progressive invece di arrendersi.
+  const scarso = (ctx.session.lastPage?.markdown || '').length < 1200;
+  if (ctx.isBridgeReady() && scarso) {
+    for (const attesa of [0, 1500, 2500]) {
+      if (attesa) await new Promise(r => setTimeout(r, attesa));
+      try {
+        const bc = await ctx.bridgeCommand('get_page_content');
+        const testo = bc?.markdown || bc?.text || '';
+        if (bc?.ok && testo.length > (ctx.session.lastPage?.markdown || '').length) {
+          ctx.session.lastPage = {
+            url: bc.url || ctx.session.lastPage?.url || '',
+            title: bc.title || ctx.session.lastPage?.title || '',
+            markdown: testo, links: [], html: '',
+          };
+        }
+      } catch (_) { /* si riprova al giro successivo */ }
+      if ((ctx.session.lastPage?.markdown || '').length > 1200) break;
+    }
   }
   if (!ctx.session.lastPage) return JSON.stringify({ error: 'Nessuna pagina caricata. Usa navigate prima.' });
   ctx.wsBroadcast({ type: 'page_loaded', url: ctx.session.lastPage.url, title: ctx.session.lastPage.title });

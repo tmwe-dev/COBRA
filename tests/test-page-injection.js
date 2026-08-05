@@ -65,12 +65,18 @@ ok('definisce RESOLVE_CODE nello scope della pagina',
    /globalThis\.RESOLVE_CODE = resolveCode/.test(ext));
 ok('definisce MOUSE_CODE nello scope della pagina',
    /globalThis\.MOUSE_CODE = mouseCode/.test(ext));
-ok('run passa il codice degli helper come argomento',
-   /args: \[func\.toString\(\), RESOLVE_CODE, MOUSE_CODE, args\]/.test(ext));
+ok('il ponte riceve il codice degli helper',
+   /args: \[sorgente, RESOLVE_CODE, MOUSE_CODE, args\]/.test(ext));
 {
-  const usi = (ext.match(/func: eseguiNellaPagina/g) || []).length;
-  ok('tutte e tre le varianti di iniezione usano il ponte', usi === 3, `trovate ${usi}`);
+  const usi = (ext.match(/\.\.\.parametriIniezione\(func, args\)/g) || []).length;
+  ok('tutte e tre le varianti di iniezione passano dal selettore', usi === 3, `trovate ${usi}`);
 }
+ok('il ponte si usa SOLO se la funzione ha bisogno degli helper',
+   /usaHelper\s*\n?\s*\?\s*\{ func: eseguiNellaPagina/.test(ext),
+   'eval è vietato dalla CSP di molti siti: le letture non devono passarci');
+ok('le funzioni senza helper vengono iniettate direttamente',
+   /:\s*\{ func, args \}/.test(ext),
+   'senza questa via le letture fallirebbero su Google e simili');
 {
   // Le costanti devono esistere prima che parta il collegamento, altrimenti
   // il primo comando le troverebbe non inizializzate

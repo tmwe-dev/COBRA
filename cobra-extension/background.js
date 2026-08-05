@@ -271,11 +271,22 @@ function eseguiNellaPagina(sorgente, resolveCode, mouseCode, argomenti) {
   return fn(...argomenti);
 }
 
+// Il ponte serve SOLO alle funzioni che usano gli helper: ricostruirle richiede
+// eval, che molti siti (Google compreso) vietano tramite CSP. Le funzioni che
+// non ne hanno bisogno — fra cui tutte le letture di contenuto — vengono
+// iniettate direttamente, senza eval, e funzionano ovunque.
+function parametriIniezione(func, args) {
+  const sorgente = func.toString();
+  const usaHelper = sorgente.includes('RESOLVE_CODE') || sorgente.includes('MOUSE_CODE');
+  return usaHelper
+    ? { func: eseguiNellaPagina, args: [sorgente, RESOLVE_CODE, MOUSE_CODE, args] }
+    : { func, args };
+}
+
 async function run(tabId, func, args = []) {
   const results = await chrome.scripting.executeScript({
     target: { tabId },
-    func: eseguiNellaPagina,
-    args: [func.toString(), RESOLVE_CODE, MOUSE_CODE, args],
+    ...parametriIniezione(func, args),
     world: 'MAIN',
   });
   return results[0]?.result ?? { ok: false, error: 'No result' };
@@ -284,8 +295,7 @@ async function run(tabId, func, args = []) {
 async function runIsolated(tabId, func, args = []) {
   const results = await chrome.scripting.executeScript({
     target: { tabId },
-    func: eseguiNellaPagina,
-    args: [func.toString(), RESOLVE_CODE, MOUSE_CODE, args],
+    ...parametriIniezione(func, args),
   });
   return results[0]?.result ?? { ok: false, error: 'No result' };
 }
@@ -293,8 +303,7 @@ async function runIsolated(tabId, func, args = []) {
 async function runInFrame(tabId, frameId, func, args = []) {
   const results = await chrome.scripting.executeScript({
     target: { tabId, frameIds: [frameId] },
-    func: eseguiNellaPagina,
-    args: [func.toString(), RESOLVE_CODE, MOUSE_CODE, args],
+    ...parametriIniezione(func, args),
     world: 'MAIN',
   });
   return results[0]?.result ?? { ok: false, error: 'No result' };

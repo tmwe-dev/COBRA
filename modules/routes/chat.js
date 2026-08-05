@@ -1,5 +1,6 @@
 // modules/routes/chat.js — /api/chat, /api/chat/abort, /api/chat/clear
-// Source: server.js lines 7984-8307 (SuperMario pipeline)
+
+const { analizzaRisposta, rispostaOnesta } = require('../security/fabrication-guard');
 
 function register(router, ctx) {
   // ── /api/chat — main chat endpoint ──
@@ -166,6 +167,26 @@ function register(router, ctx) {
       ctx.emitReasoning(`Modello: ${modelSelection.tier}`, '🧠');
       const _chatStart = Date.now();
       const result = await ctx.callAI(systemPrompt, msgs, useTools, { ...ctx, modelTier: modelSelection.tier });
+
+      // 8b. Guardia anti-invenzione.
+      // Un prezzo inventato è peggio di un "non lo so": chi legge non ha modo
+      // di distinguerlo da uno vero. Se la risposta contiene dati concreti ma
+      // nessuna fonte è stata consultata, si sostituisce con una dichiarazione
+      // onesta invece di lasciar passare il dato falso.
+      const verifica = analizzaRisposta(result.content, {
+        intent,
+        toolsUsed: result.toolsUsed || [],
+        kbSnippets: ctx.session.kbSnippets || [],
+        hasPageContent: !!ctx.session.lastPage?.markdown,
+      });
+      if (verifica.sospetta) {
+        ctx.log(`[AntiInvenzione] ${verifica.gravita}: ${verifica.motivi.join('; ')}`);
+        ctx.wsBroadcast({ type: 'ai_reasoning', text: `Risposta trattenuta: ${verifica.motivi.join('; ')}`, icon: '🛑' });
+        if (verifica.gravita === 'invenzione') {
+          result.content = rispostaOnesta(verifica.gravita, verifica.motivi);
+          result.fabricationBlocked = true;
+        }
+      }
 
       // 9. Store + post-processing
       ctx.conversationEngine.addMessage(conv.id, 'assistant', result.content);

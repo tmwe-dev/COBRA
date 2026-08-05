@@ -68,12 +68,24 @@ async function handle(args, ctx) {
         }
         const title = bridgeNav.content?.title || '';
         let content = (bridgeNav.content?.markdown || bridgeNav.content?.text || '').substring(0, 12000);
-        // Rilettura fresca dopo la chiusura di cookie banner e overlay
-        try {
-          const fresh = await ctx.bridgeCommand('get_page_content', {});
-          const freshText = fresh?.markdown || fresh?.text || '';
-          if (fresh?.ok && freshText.length > content.length) content = freshText.substring(0, 12000);
-        } catch (_) { /* best-effort: resta il contenuto ottenuto da bridgeNavigate */ }
+
+        // Molti siti (Google Voli, portali di prenotazione, gestionali) caricano
+        // i dati dopo il rendering iniziale: alla prima lettura la pagina è vuota.
+        // Si rilegge finché il contenuto non cresce, con attese progressive.
+        const attese = [0, 1500, 2500, 4000];
+        for (const attesa of attese) {
+          if (attesa) await new Promise(r => setTimeout(r, attesa));
+          try {
+            const fresh = await ctx.bridgeCommand('get_page_content', {});
+            const freshText = fresh?.markdown || fresh?.text || '';
+            if (fresh?.ok && freshText.length > content.length) content = freshText.substring(0, 12000);
+          } catch (_) { /* si tiene il contenuto già ottenuto */ }
+          // Sopra questa soglia la pagina ha sicuramente reso i suoi contenuti
+          if (content.length > 1200) break;
+        }
+        if (content.length <= 1200) {
+          ctx.log(`[navigate] Contenuto scarso dopo ${attese.length} tentativi su ${url} (${content.length} caratteri)`);
+        }
         ctx.session.lastPage = { url: bridgeNav.url || url, title, markdown: content, links: [], html: '' };
         ctx.emitSiteVisit(ctx.session.lastPage.url, title || url, 'active');
         ctx.wsBroadcast({ type: 'page_loaded', url: ctx.session.lastPage.url, title });

@@ -105,7 +105,12 @@ ok(`navigate.js legge .markdown (non .content) dal bridge`,
    'navigate.js legge un campo che l\'estensione non produce');
 
 const rsSrc = fs.readFileSync(path.join(handlersDir, 'read-scrape.js'), 'utf8');
-ok(`read-scrape.js legge .markdown dal bridge`, /bc\.markdown/.test(rsSrc));
+ok(`read-scrape.js legge .markdown dal bridge`, /bc\?\.markdown|bc\.markdown/.test(rsSrc));
+ok(`read-scrape.js riprova sulle pagine caricate via javascript`,
+   /for \(const attesa of/.test(rsSrc),
+   'senza attese la prima lettura torna vuota su Google Voli e simili');
+ok(`navigate.js riprova sulle pagine caricate via javascript`,
+   /for \(const attesa of/.test(navSrc));
 
 console.log('');
 console.log(FAIL === 0

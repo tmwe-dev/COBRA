@@ -77,9 +77,15 @@ const _summaryCache = new Map();
 const _planTemplates = new Map();
 const _invocationLog = [];
 
+// Momento dell'ultimo turno operativo: serve a capire se una domanda breve è
+// il seguito di una ricerca appena fatta o un discorso nuovo.
+let _ultimoTaskTs = 0;
+const FINESTRA_CONTINUITA_MS = 15 * 60 * 1000;
+
 function setIntent(intent, scopes, operationLevel) {
   _lastMarioIntent = intent;
   _lastMarioScopes = scopes;
+  if (intent === 'task') _ultimoTaskTs = Date.now();
   return { intent, scopes, continued: false, operationLevel: operationLevel || 'read' };
 }
 
@@ -137,8 +143,24 @@ function routeIntent(message) {
   if (/\b(spedizione|express|cargo|air freight|courier|dhl|fedex|ups|awb|tracking|dogana)\b/i.test(msg)) scopes.add('logistics');
 
   if (scopes.size === 0) {
-    // Nessun scope riconosciuto → chat (non search+browse cieco)
-    // Eccezione: messaggi lunghi con verbi d'azione → search come fallback ragionevole
+    // CONTINUITÀ. Una segretaria a cui hai appena chiesto dei voli capisce che
+    // "dammi 3 opzioni con i prezzi" riguarda ancora i voli: non ricomincia da
+    // capo e soprattutto non inventa. Senza questa regola il messaggio finiva
+    // su 'chat', il modello restava senza strumenti e, non potendo cercare,
+    // produceva dati verosimili ma falsi.
+    const dopoUnTask = _lastMarioIntent === 'task'
+      && (Date.now() - _ultimoTaskTs) < FINESTRA_CONTINUITA_MS;
+    const sembraSeguito = /\b(dammi|dimmi|voglio|mostrami|fammi|elenca|dettagl|preciso|precisi|prezzi|costi|orari|durata|altri|altre|ancora|solo|invece|anche|meglio|opzioni|alternative|quale|quali|quanto|quanti|conferma|approfondisci|spiega)\b/i.test(msg)
+      || msg.length < 80;
+
+    if (dopoUnTask && sembraSeguito) {
+      const ereditati = (_lastMarioScopes || []).filter(s => s !== 'chat');
+      if (ereditati.length > 0) {
+        return { intent: 'task', scopes: ereditati, continued: true, operationLevel: 'read' };
+      }
+    }
+
+    // Nessun segnale e nessun contesto operativo → conversazione
     if (msg.length < 60 || msg.endsWith('?')) return setIntent('chat', ['chat']);
     scopes.add('search');
   }
@@ -499,6 +521,41 @@ function logToolExecution(toolName, toolArgs, result, riskLevel, guardKind, late
 // ══════════════════════════════════════════════════════════════
 // 12. ASSEMBLE — il cuore di SuperMario, costruisce il prompt finale
 // ══════════════════════════════════════════════════════════════
+/**
+ * Blocco con la data corrente e i riferimenti temporali più usati.
+ * Una segretaria che non sa che giorno è non può interpretare "sabato prossimo",
+ * "il 28" o "domani": tirerebbe a indovinare, e l'ha già fatto costruendo URL
+ * con l'anno sbagliato.
+ */
+function costruisciBloccoData(adesso = new Date()) {
+  const giorni = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
+  const mesi = ['gennaio', 'febbraio', 'marzo', 'aprile', 'maggio', 'giugno',
+    'luglio', 'agosto', 'settembre', 'ottobre', 'novembre', 'dicembre'];
+  const iso = (d) => d.toISOString().split('T')[0];
+  const somma = (giorniDaSommare) => {
+    const d = new Date(adesso);
+    d.setDate(d.getDate() + giorniDaSommare);
+    return d;
+  };
+  // Il "prossimo" giorno della settimana: se oggi è sabato, "sabato prossimo"
+  // è fra sette giorni, non oggi.
+  const prossimo = (indiceGiorno) => {
+    let delta = (indiceGiorno - adesso.getDay() + 7) % 7;
+    if (delta === 0) delta = 7;
+    return somma(delta);
+  };
+
+  const righe = [
+    `Oggi è ${giorni[adesso.getDay()]} ${adesso.getDate()} ${mesi[adesso.getMonth()]} ${adesso.getFullYear()} (${iso(adesso)}).`,
+    `Domani: ${iso(somma(1))}. Dopodomani: ${iso(somma(2))}.`,
+    'Prossimi giorni della settimana: '
+      + [1, 2, 3, 4, 5, 6, 0].map(i => `${giorni[i]} ${iso(prossimo(i))}`).join(', ') + '.',
+    `Se l'utente indica solo un giorno del mese (es. "il 28") intendi il primo ${adesso.getDate() <= 28 ? 'giorno utile a partire da oggi' : 'mese successivo'}.`,
+    'Usa SEMPRE queste date per costruire URL e parametri. Non dedurle a memoria.',
+  ];
+  return `# DATA CORRENTE\n${righe.join('\n')}`;
+}
+
 async function assemble({ intent, scopes, operationLevel, userMessage, conversationHistory, lastToolResult, voiceMode, allTools, ctx }) {
   const trace_id = crypto.randomUUID();
   const startTime = Date.now();
@@ -525,6 +582,10 @@ async function assemble({ intent, scopes, operationLevel, userMessage, conversat
 
   // 4. DYNAMIC CONTEXT
   const contextParts = [];
+
+  // Data e ora correnti. Senza, "sabato prossimo" o "il 28" non sono
+  // interpretabili e il modello costruisce URL con anni sbagliati.
+  contextParts.push(costruisciBloccoData());
 
   // Pagina corrente (UNTRUSTED — delimitata per injection defense, Microsoft Spotlighting pattern)
   if (session.lastPage && scopes.some(s => ['browse', 'interact', 'search', 'data'].includes(s))) {
