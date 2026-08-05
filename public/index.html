@@ -2182,6 +2182,28 @@
     // ── Config ──
     function toggleConfig() { document.getElementById('configOverlay').classList.toggle('open'); }
 
+    // ── Pagine consultate ──
+    // Ogni pagina che COBRA ha aperto diventa un collegamento: da lì l'utente
+    // può proseguire da solo, per esempio per completare una prenotazione.
+    function mostraPagineConsultate(pagine) {
+      if (!Array.isArray(pagine) || pagine.length === 0) return;
+      const box = document.createElement('div');
+      box.className = 'bubble system';
+      const chip = (p) => {
+        const dominio = (p.url || '').replace(/^https?:\/\/(www\.)?/, '').split('/')[0];
+        return `<a href="${escapeHtml(p.url)}" target="_blank" title="${escapeHtml(p.title || '')}"
+                  style="display:inline-block;margin:3px 4px 0 0;padding:5px 11px;border-radius:12px;
+                  background:var(--glass);border:1px solid var(--glass-border);color:var(--text2);
+                  font-size:11px;text-decoration:none;max-width:210px;overflow:hidden;
+                  text-overflow:ellipsis;white-space:nowrap">${escapeHtml(dominio)} &#x2197;</a>`;
+      };
+      box.innerHTML = '<div style="font-size:11px;color:var(--text2);margin-bottom:4px">'
+        + 'PAGINE CONSULTATE &middot; apri per proseguire tu</div>'
+        + pagine.map(chip).join('');
+      chatMessages.appendChild(box);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
     // ── Processo in corso ──
     // Un solo riquadro che si aggiorna: si vedono i passi spuntarsi mentre
     // COBRA lavora, invece di un elenco di messaggi che scorre via.
@@ -2559,6 +2581,9 @@
             break;
           case 'processo':
             mostraProcesso(msg);
+            break;
+          case 'pagine_consultate':
+            mostraPagineConsultate(msg.pagine);
             break;
           case 'task_created':
             addLogEntry(`Job creato: "${msg.name}" (${msg.steps} step)`, 'tool');

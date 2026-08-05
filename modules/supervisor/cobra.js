@@ -64,7 +64,7 @@ const CobraSupervisor = {
     // Confrontare tre o quattro fonti richiede facilmente una ventina di
     // passi fra navigazioni, letture e screenshot: con il limite a 20 il
     // lavoro veniva troncato a metà proprio sulle richieste più utili.
-    if (this._totalToolCount > 32) return { warning: 'force_stop', tool: toolName, message: 'STOP: Hai fatto troppi tentativi (' + this._totalToolCount + '). Fermati e rispondi con quello che hai raccolto.' };
+    if (this._totalToolCount > 120) return { warning: 'force_stop', tool: toolName, message: 'STOP: Hai fatto troppi tentativi (' + this._totalToolCount + '). Fermati e rispondi con quello che hai raccolto.' };
 
     // 5+ consecutive failures
     if (this._failedToolCount >= 5) return { warning: 'force_stop', tool: toolName, message: 'STOP: 5 tool consecutivi falliti. Fai screenshot() e rispondi.' };

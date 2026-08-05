@@ -387,6 +387,15 @@ const ctx = {
   },
   emitSiteVisit: (url, title, status) => {
     wsModule.wsBroadcast({ type: 'page_loaded', url, title, status });
+    // Si tiene traccia delle pagine consultate nel turno: a fine lavoro
+    // diventano collegamenti su cui l'utente può proseguire da solo, per
+    // esempio per completare una prenotazione.
+    if (url) {
+      if (!Array.isArray(session.pagineDelTurno)) session.pagineDelTurno = [];
+      if (!session.pagineDelTurno.some(p => p.url === url)) {
+        session.pagineDelTurno.push({ url, title: title || url });
+      }
+    }
   },
   // Extension relay + bridge helper + KB seed
   extRelay: _extRelay,

@@ -8,7 +8,9 @@ function register(router, ctx) {
     // Rete di sicurezza: qualunque sia il percorso di uscita, il client riceve
     // sempre una risposta entro il limite. Una richiesta appesa è indistinguibile
     // da un blocco totale dal punto di vista dell'utente.
-    const MAX_TURN_MS = 180000;
+    // Un confronto fra piu fonti con report finale richiede minuti, non secondi.
+    // Questo non e un limite al lavoro ma una rete contro i blocchi totali.
+    const MAX_TURN_MS = 900000;
     let _risposto = false;
     const _invia = (status, payload) => {
       if (_risposto) return;
@@ -60,6 +62,7 @@ function register(router, ctx) {
 
       // 1. Supervisor start
       ctx.CobraSupervisor.startRequest(null, message);
+      ctx.session.pagineDelTurno = [];
 
       // 2-3. Conversation + ChatMemory
       const conv = ctx.conversationEngine.getOrCreateActive('Chat');
@@ -233,6 +236,13 @@ function register(router, ctx) {
 
       // 11. Record
       ctx.ResponseRecorder.recordChat({ userMessage: message, intent, systemPromptLength: systemPrompt.length, provider: result.provider, model: result.model || '', response: result.content, toolsUsed: result.toolsUsed || [], durationMs: Date.now() - _chatStart, kbEntries: (ctx.session.kbSnippets || []).length, repetitionDetected: !!repetitionWarning, marioScope: marioResult.scope, marioTraceId: marioResult.trace_id, taskPlanSteps: taskPlan ? taskPlan.steps.length : 0 });
+
+      // Le pagine consultate diventano collegamenti: da lì l'utente prosegue
+      // per conto suo, per esempio per completare una prenotazione.
+      const consultate = ctx.session.pagineDelTurno || [];
+      if (consultate.length > 0) {
+        ctx.wsBroadcast({ type: 'pagine_consultate', pagine: consultate.slice(0, 12) });
+      }
 
       const meterStatus = ctx.TokenMeter.getStatus();
       _invia(200, { content: result.content, provider: result.provider, intent, tokens: meterStatus.totalTokens, tokenLevel: meterStatus.level });

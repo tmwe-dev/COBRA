@@ -40,10 +40,14 @@ const COBRA_DEFAULTS = Object.freeze({
   MAX_SEARCH_QUERY_LENGTH: 1000,
   ACTION_LOG_MAX_SIZE: 50,
   DEFAULT_LANGUAGE: 'it',
-  MAX_TOTAL_TOOL_CALLS: 40,
+  // Nessun tetto arbitrario al lavoro: un confronto fra sei fonti con report
+  // finale supera facilmente le cinquanta operazioni. A fermare l'esecuzione
+  // restano i controlli che individuano i cicli veri (stessa azione ripetuta
+  // sugli stessi argomenti) e il budget di spesa giornaliero.
+  MAX_TOTAL_TOOL_CALLS: 150,
   MAX_TIMEOUT_MS: 600000,
   MAX_RECURSION_DEPTH: 25,
-  MAX_TOOL_ROUNDS: 18,
+  MAX_TOOL_ROUNDS: 60,
 });
 
 const COBRA_USER_DATA = process.env.COBRA_PROFILE_DIR ||
