@@ -61,7 +61,10 @@ const CobraSupervisor = {
     }
 
     // Hard limit: 20+ total calls
-    if (this._totalToolCount > 20) return { warning: 'force_stop', tool: toolName, message: 'STOP: Hai fatto troppi tentativi (' + this._totalToolCount + '). Fermati e rispondi.' };
+    // Confrontare tre o quattro fonti richiede facilmente una ventina di
+    // passi fra navigazioni, letture e screenshot: con il limite a 20 il
+    // lavoro veniva troncato a metà proprio sulle richieste più utili.
+    if (this._totalToolCount > 32) return { warning: 'force_stop', tool: toolName, message: 'STOP: Hai fatto troppi tentativi (' + this._totalToolCount + '). Fermati e rispondi con quello che hai raccolto.' };
 
     // 5+ consecutive failures
     if (this._failedToolCount >= 5) return { warning: 'force_stop', tool: toolName, message: 'STOP: 5 tool consecutivi falliti. Fai screenshot() e rispondi.' };
@@ -72,20 +75,26 @@ const CobraSupervisor = {
       return { warning: 'circular_loop', tool: toolName };
     }
 
-    // Sequence pattern loop
-    const toolNames = this._toolCallLog.map(t => t.tool);
+    // Loop di sequenza.
+    //
+    // Il confronto avviene su tool E argomenti. Guardando solo i nomi, la
+    // sequenza navigate→read_page ripetuta su TRE SITI DIVERSI veniva scambiata
+    // per un loop e il lavoro si interrompeva: ma confrontare più fonti è
+    // esattamente ciò che si chiede a una segretaria. Un loop vero è tornare
+    // sulla STESSA pagina, non visitarne di nuove.
+    const passi = this._toolCallLog.map(t => `${t.tool}:${t.args}`);
     for (const seqLen of [2, 3, 4]) {
-      if (toolNames.length >= seqLen * 3) {
-        const lastSeq = toolNames.slice(-seqLen);
-        let repeats = 0;
-        for (let i = toolNames.length - seqLen; i >= 0; i -= seqLen) {
-          const chunk = toolNames.slice(i, i + seqLen);
-          if (chunk.length === seqLen && chunk.every((t, j) => t === lastSeq[j])) repeats++;
+      if (passi.length >= seqLen * 3) {
+        const ultima = passi.slice(-seqLen);
+        let ripetizioni = 0;
+        for (let i = passi.length - seqLen; i >= 0; i -= seqLen) {
+          const blocco = passi.slice(i, i + seqLen);
+          if (blocco.length === seqLen && blocco.every((p, j) => p === ultima[j])) ripetizioni++;
           else break;
         }
-        if (repeats >= 2) {
-          const pattern = lastSeq.join('→');
-          return { warning: 'force_stop', tool: toolName, message: `LOOP DI SEQUENZA: [${pattern}] ripetuto ${repeats + 1}x. FERMATI.` };
+        if (ripetizioni >= 2) {
+          const schema = ultima.map(p => p.split(':')[0]).join('→');
+          return { warning: 'force_stop', tool: toolName, message: `LOOP DI SEQUENZA: [${schema}] ripetuto ${ripetizioni + 1}x sugli stessi argomenti. FERMATI.` };
         }
       }
     }

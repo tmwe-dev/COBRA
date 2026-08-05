@@ -69,12 +69,31 @@ async function executeTool(name, args, ctx) {
     if (marioValidation.warnings.length > 0) ctx.log(`[SuperMario] Tool ${name} warnings: ${marioValidation.warnings.join(', ')}`);
   }
 
-  // Whitelist guard — block DOM interaction on non-whitelisted domains
+  // Interazione fuori dai domini di fiducia.
+  //
+  // Bloccare ogni click su un sito non elencato impediva anche le azioni
+  // innocue — aprire un filtro, passare alla pagina successiva, scegliere una
+  // data — e quindi impediva a COBRA di esplorare. Il rischio vero non sta nel
+  // click in sé ma in COSA si clicca: "pagina successiva" e "Paga ora" sono
+  // due cose diverse.
+  //
+  // Fuori whitelist si consente quindi l'esplorazione, mentre le azioni che
+  // possono produrre effetti irreversibili restano soggette alla conferma
+  // dell'utente, gestita subito sotto da guardToolCall.
   if (INTERACT_TOOLS.includes(name)) {
     const currentUrl = ctx.session.lastPage?.url;
     if (!isDomainWhitelisted(currentUrl)) {
-      ctx.log(`[Whitelist] BLOCKED ${name} on ${currentUrl}`);
-      return JSON.stringify({ error: `Tool ${name} bloccato: dominio non in whitelist. COBRA opera in sola lettura su questo sito.`, blocked: true, reason: 'domain_not_whitelisted' });
+      // Questi restano vietati fuori whitelist: caricano file dal disco,
+      // scrivono negli appunti o alterano la pagina in modo arbitrario.
+      const SEMPRE_VIETATI_FUORI_WHITELIST = ['upload_file', 'clipboard_write', 'mutate_dom_js'];
+      if (SEMPRE_VIETATI_FUORI_WHITELIST.includes(name)) {
+        ctx.log(`[Whitelist] ${name} negato su ${currentUrl}`);
+        return JSON.stringify({
+          error: `${name} non è consentito su un sito non autorizzato. Su questo sito posso leggere, navigare e cliccare, ma non caricare file o modificarne il contenuto.`,
+          blocked: true, reason: 'tool_non_consentito_fuori_whitelist',
+        });
+      }
+      ctx.log(`[Whitelist] ${name} consentito su ${currentUrl} (dominio esterno, azione soggetta a verifica del rischio)`);
     }
   }
 

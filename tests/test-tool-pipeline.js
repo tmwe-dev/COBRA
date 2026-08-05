@@ -139,10 +139,26 @@ function section(t) { console.log(`\n\x1b[1m── ${t} ──\x1b[0m`); }
     ok('SSRF guard blocca IP locale', /bloccato|locale|privato/i.test(res), res.substring(0, 150));
   }
   {
-    // click_element su dominio non whitelisted → whitelist guard
-    ctx.session.lastPage = { url: 'https://sito-non-whitelisted-xyz.com/', title: 'x' };
-    const res = await ctx.executeTool('click_element', { selector: '#btn' });
-    ok('whitelist guard blocca interazione', /whitelist|bloccato/i.test(res), res.substring(0, 150));
+    // Fuori whitelist l'esplorazione è consentita: cliccare un link o un
+    // filtro non è pericoloso, e senza questo COBRA non potrebbe navigare.
+    ctx.session.lastPage = { url: 'https://sito-esterno-xyz.com/', title: 'x' };
+    const esplora = await ctx.executeTool('click_element', { selector: '#pagina-successiva' });
+    ok('click di esplorazione consentito fuori whitelist',
+       !/whitelist|non consentito/i.test(esplora), esplora.substring(0, 150));
+
+    // Ma i tool che caricano file o alterano la pagina restano vietati
+    const vietato = await ctx.executeTool('upload_file', { selector: '#f', path: '/tmp/x' });
+    ok('upload_file resta vietato fuori whitelist',
+       /non è consentito|non consentito/i.test(vietato), vietato.substring(0, 150));
+
+    // E un click su un bottone di pagamento richiede comunque conferma.
+    // Si riparte da una richiesta pulita: il supervisore blocca i click
+    // consecutivi senza uno sguardo alla pagina, e qui interferirebbe.
+    ctx.CobraSupervisor.startRequest(null, 'verifica conferma pagamento');
+    const rischioso = await ctx.executeTool('click_element', { selector: '#pay', text: 'Paga ora' });
+    ok('click su "Paga ora" richiede conferma anche fuori whitelist',
+       /pending_confirmation|conferma/i.test(rischioso), rischioso.substring(0, 150));
+    ctx.CobraSupervisor.completeRequest('fine verifica');
     ctx.session.lastPage = null;
   }
 
@@ -158,6 +174,37 @@ function section(t) { console.log(`\n\x1b[1m── ${t} ──\x1b[0m`); }
     }
     ok('supervisor interrompe loop di scroll', stopped);
     ctx.CobraSupervisor.completeRequest('test');
+  }
+
+  // ═══════════════════════════════════════════
+  section('7b. Confrontare più fonti non è un loop');
+  // ═══════════════════════════════════════════
+  {
+    ctx.CobraSupervisor.startRequest(null, 'confronto multi-sito');
+    const visite = [
+      ['navigate', { url: 'https://kayak.it/a' }], ['read_page', {}],
+      ['navigate', { url: 'https://momondo.it/b' }], ['read_page', {}],
+      ['navigate', { url: 'https://skyscanner.it/c' }], ['read_page', {}],
+      ['navigate', { url: 'https://expedia.it/d' }], ['read_page', {}],
+    ];
+    let fermato = null;
+    for (const [t, a] of visite) {
+      const r = ctx.CobraSupervisor.recordToolCall(t, a);
+      if (r && r.warning === 'force_stop') { fermato = t; break; }
+    }
+    ok('quattro siti diversi non vengono scambiati per un loop', fermato === null,
+       `fermato su ${fermato}`);
+    ctx.CobraSupervisor.completeRequest('ok');
+
+    // Ma tornare sulla stessa pagina resta un loop
+    ctx.CobraSupervisor.startRequest(null, 'loop reale');
+    let fermato2 = null;
+    for (let i = 0; i < 10; i++) {
+      const r = ctx.CobraSupervisor.recordToolCall(i % 2 ? 'read_page' : 'navigate', { url: 'https://stesso.it' });
+      if (r && r.warning === 'force_stop') { fermato2 = i; break; }
+    }
+    ok('il loop vero sulla stessa pagina viene fermato', fermato2 !== null, 'non fermato');
+    ctx.CobraSupervisor.completeRequest('ok');
   }
 
   // ═══════════════════════════════════════════

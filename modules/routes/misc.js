@@ -4,11 +4,70 @@
 const path = require('path');
 const fs = require('fs');
 
+// Estensioni riconosciute, con il tipo da dichiarare al browser
+const TIPI_FILE = {
+  txt: 'text/plain; charset=utf-8', md: 'text/markdown; charset=utf-8',
+  csv: 'text/csv; charset=utf-8', json: 'application/json; charset=utf-8',
+  html: 'text/html; charset=utf-8', xml: 'application/xml; charset=utf-8',
+  pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg',
+  jpeg: 'image/jpeg', gif: 'image/gif', svg: 'image/svg+xml',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+};
+
 function register(router, ctx) {
   // ── Bridge Token ──
   router.get('/api/bridge-token', (b, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ token: ctx.BRIDGE_SESSION_TOKEN }));
+  });
+
+  // ── Scarico dei file prodotti da COBRA ──
+  // I file venivano scritti su disco ma non c'era modo di ottenerli:
+  // "salvalo in un file scaricabile" produceva un file irraggiungibile.
+  // Il router passa il percorso come terzo argomento
+  router.get('/api/files/*', (b, res, pathname) => {
+    const base = path.resolve(ctx.dataDir, 'files');
+    let nome = '';
+    try { nome = decodeURIComponent(String(pathname || '').replace(/^\/api\/files\//, '')); }
+    catch { nome = ''; }
+
+    const percorso = path.resolve(base, nome);
+    // Il file deve stare dentro la cartella dei file, sempre
+    if (!nome || (!percorso.startsWith(base + path.sep) && percorso !== base)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Percorso non consentito' }));
+      return;
+    }
+    if (!fs.existsSync(percorso) || !fs.statSync(percorso).isFile()) {
+      res.writeHead(404, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'File non trovato' }));
+      return;
+    }
+    const ext = nome.split('.').pop().toLowerCase();
+    res.writeHead(200, {
+      'Content-Type': TIPI_FILE[ext] || 'application/octet-stream',
+      'Content-Disposition': `attachment; filename="${path.basename(nome).replace(/"/g, '')}"`,
+      'Content-Length': fs.statSync(percorso).size,
+    });
+    fs.createReadStream(percorso).pipe(res);
+  });
+
+  // ── Elenco dei file prodotti ──
+  router.get('/api/files', (b, res) => {
+    const base = path.resolve(ctx.dataDir, 'files');
+    let elenco = [];
+    try {
+      elenco = fs.readdirSync(base)
+        .filter(f => !f.startsWith('.') && fs.statSync(path.join(base, f)).isFile())
+        .map(f => {
+          const st = fs.statSync(path.join(base, f));
+          return { nome: f, byte: st.size, modificato: st.mtime.toISOString(), url: `/api/files/${encodeURIComponent(f)}` };
+        })
+        .sort((a, b2) => new Date(b2.modificato) - new Date(a.modificato));
+    } catch { elenco = []; }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ file: elenco }));
   });
 
   // ── Monitor File ──

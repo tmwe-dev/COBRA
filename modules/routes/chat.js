@@ -1,6 +1,6 @@
 // modules/routes/chat.js — /api/chat, /api/chat/abort, /api/chat/clear
 
-const { analizzaRisposta, rispostaOnesta } = require('../security/fabrication-guard');
+const { analizzaRisposta, rispostaOnesta, analizzaResa } = require('../security/fabrication-guard');
 
 function register(router, ctx) {
   // ── /api/chat — main chat endpoint ──
@@ -186,6 +186,33 @@ function register(router, ctx) {
           result.content = rispostaOnesta(verifica.gravita, verifica.motivi);
           result.fabricationBlocked = true;
         }
+      }
+
+      // 8c. Insistenza. Se si è arreso dopo pochi tentativi, non si consegna la
+      // resa all'utente: gli si fa notare e gli si dà una seconda occasione,
+      // com'è normale per chi ha preso un incarico e deve portarlo a termine.
+      const resa = analizzaResa(result.content, { toolsUsed: result.toolsUsed || [] });
+      if (resa.resa && !result.fabricationBlocked) {
+        ctx.log(`[Insistenza] ${resa.suggerimento}`);
+        ctx.emitReasoning('Non mi accontento: provo un\'altra strada.', '🔁');
+        try {
+          const secondoTentativo = await ctx.callAI(
+            systemPrompt + '\n\n# NOTA DEL SUPERVISORE\n'
+              + `Ti sei fermato dopo ${resa.tentativi} tentativi dicendo di non farcela. `
+              + 'Non è sufficiente: prova una strada diversa da quella che ha fallito — un altro sito, '
+              + 'un URL diretto ai risultati, uno screenshot seguito da una rilettura. '
+              + 'Se anche così non ottieni il dato, spiega ESATTAMENTE cosa hai provato e cosa ha impedito di ottenerlo.',
+            [...msgs, { role: 'assistant', content: result.content },
+             { role: 'user', content: 'Non ti fermare qui: prova un\'altra strada e poi dimmi cosa hai trovato.' }],
+            useTools, { ...ctx, modelTier: modelSelection.tier }
+          );
+          if (secondoTentativo?.content && (secondoTentativo.toolsUsed || []).length > 0) {
+            ctx.log(`[Insistenza] Secondo tentativo: ${secondoTentativo.toolsUsed.length} strumenti usati`);
+            result.content = secondoTentativo.content;
+            result.toolsUsed = [...(result.toolsUsed || []), ...(secondoTentativo.toolsUsed || [])];
+            result.secondoTentativo = true;
+          }
+        } catch (e) { ctx.log(`[Insistenza] Secondo tentativo fallito: ${e.message}`); }
       }
 
       // 9. Store + post-processing

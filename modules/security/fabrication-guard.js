@@ -91,4 +91,39 @@ function rispostaOnesta(gravita, motivi) {
     + 'Riformula la richiesta e la faccio davvero, oppure verifica che l\'estensione Chrome sia collegata.';
 }
 
-module.exports = { analizzaRisposta, rispostaOnesta, SEGNALI_DATI_CONCRETI, PROMESSE_DI_AZIONE };
+// Frasi con cui si consegna un lavoro incompleto senza dirlo
+const RESE_PREMATURE = [
+  /\bnon (posso|riesco) (ad )?(accedere|interagire|procedere)\b/i,
+  /\brichiedo un intervento umano\b/i,
+  /\bti consiglio di (cercare|verificare|controllare) (tu|direttamente|manualmente)\b/i,
+  /\bpuoi (cercare|verificare) (tu )?(direttamente|manualmente)\b/i,
+];
+
+/**
+ * Verifica se la risposta consegna un lavoro incompleto senza averci provato.
+ * Arrendersi dopo un solo tentativo non è un limite tecnico, è una resa.
+ *
+ * @param {string} testo
+ * @param {object} contesto { toolsUsed, richiesta }
+ * @returns {{resa:boolean, tentativi:number, suggerimento?:string}}
+ */
+function analizzaResa(testo, contesto = {}) {
+  const risposta = String(testo || '');
+  const tentativi = (contesto.toolsUsed || []).length;
+  const siArrende = RESE_PREMATURE.some(re => re.test(risposta));
+  if (!siArrende) return { resa: false, tentativi };
+
+  // Con pochi tentativi alle spalle, la rinuncia è prematura
+  if (tentativi < 4) {
+    return {
+      resa: true, tentativi,
+      suggerimento: `Si è fermato dopo ${tentativi} tentativi: prima di rinunciare andrebbero provate altre strade (altro sito, URL diretto, screenshot e rilettura).`,
+    };
+  }
+  return { resa: false, tentativi };
+}
+
+module.exports = {
+  analizzaRisposta, rispostaOnesta, analizzaResa,
+  SEGNALI_DATI_CONCRETI, PROMESSE_DI_AZIONE, RESE_PREMATURE,
+};

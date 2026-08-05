@@ -570,9 +570,14 @@ async function assemble({ intent, scopes, operationLevel, userMessage, conversat
   let selectedTools = selectTools(scopes, allTools || []);
   const opLevel = operationLevel || 'read';
   if (opLevel === 'read') {
-    const READ_BLOCKED_TOOLS = ['fill_form', 'type_human', 'select_dropdown', 'get_page_elements'];
-    selectedTools = selectedTools.filter(t => !READ_BLOCKED_TOOLS.includes(t.function.name));
-    log(`[SuperMario] OperationLevel=read → blocked interaction tools`);
+    // In sola lettura si toglievano anche gli strumenti che servono a
+    // esplorare: senza get_page_elements COBRA non sa cosa c'è nella pagina, e
+    // senza select_dropdown non può scegliere una data in un comparatore.
+    // Restano fuori solo quelli che immettono testo, che è l'inizio di una
+    // compilazione vera e propria.
+    const NON_IN_SOLA_LETTURA = ['fill_form', 'type_human'];
+    selectedTools = selectedTools.filter(t => !NON_IN_SOLA_LETTURA.includes(t.function.name));
+    log(`[SuperMario] Sola lettura: esclusi ${NON_IN_SOLA_LETTURA.join(', ')}`);
   }
   const selectedToolNames = selectedTools.map(t => t.function.name);
   log(`[SuperMario] Scope: [${scopes.join(',')}] → ${selectedTools.length} tools: [${selectedToolNames.join(',')}]`);

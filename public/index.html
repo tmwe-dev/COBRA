@@ -2182,6 +2182,36 @@
     // ── Config ──
     function toggleConfig() { document.getElementById('configOverlay').classList.toggle('open'); }
 
+    // ── File prodotti da COBRA ──
+    // Un file scritto su disco che l'utente non può prendere non serve a nulla:
+    // ogni file creato compare in chat come pulsante di scarico.
+    const ICONE_FILE = { pdf:'📄', csv:'📊', xlsx:'📊', json:'🔧', md:'📝',
+                         txt:'📝', html:'🌐', png:'🖼️', jpg:'🖼️', docx:'📄' };
+
+    function mostraFileScaricabile(filename) {
+      if (!filename) return;
+      const est = filename.split('.').pop().toLowerCase();
+      const div = document.createElement('div');
+      div.className = 'bubble system';
+      div.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap';
+      div.innerHTML =
+        `<span style="font-size:20px">${ICONE_FILE[est] || '📎'}</span>`
+        + `<span style="flex:1;min-width:120px"><b>${escapeHtml(filename)}</b></span>`
+        + `<a href="/api/files/${encodeURIComponent(filename)}" download="${escapeHtml(filename)}" `
+        + `style="padding:6px 14px;border-radius:8px;background:var(--accent-gradient);color:#fff;`
+        + `text-decoration:none;font-size:12px;font-weight:500">Scarica</a>`
+        + `<button onclick="apriFile('${escapeHtml(filename).replace(/'/g, "\\'")}')" `
+        + `style="padding:6px 14px;border-radius:8px;background:var(--glass);color:var(--text2);`
+        + `border:1px solid var(--glass-border);font-size:12px;cursor:pointer">Apri</button>`;
+      chatMessages.appendChild(div);
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+      addLogEntry('File pronto: ' + filename, '&#x1f4be;', 'tool');
+    }
+
+    function apriFile(filename) {
+      window.open('/api/files/' + encodeURIComponent(filename), '_blank');
+    }
+
     // ── Verifica delle chiavi API ──
     // Non basta sapere che una chiave è presente: va provata contro il fornitore.
     async function testaChiavi() {
@@ -2487,6 +2517,9 @@
             break;
           case 'monitor_file':
             showMonitorFile(msg);
+            break;
+          case 'file_created':
+            mostraFileScaricabile(msg.filename);
             break;
           case 'task_created':
             addLogEntry(`Job creato: "${msg.name}" (${msg.steps} step)`, 'tool');

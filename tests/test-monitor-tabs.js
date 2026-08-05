@@ -89,9 +89,14 @@ ok('open_url non chiama piu window.open',
    'la webapp apriva una scheda senza chiedere');
 ok('open_url propone un collegamento cliccabile',
    /case 'open_url':[\s\S]{0,600}addBubble/.test(front));
-ok('window.open resta solo per gli export',
-   (front.match(/window\.open\(/g) || []).length <= 1,
+// window.open è ammesso solo dove lo chiede l'utente: scarico di un export e
+// apertura di un file prodotto. Mai per la navigazione automatica.
+ok('window.open resta confinato a export e apertura file',
+   (front.match(/window\.open\(/g) || []).length <= 2,
    `occorrenze: ${(front.match(/window\.open\(/g) || []).length}`);
+ok('i file prodotti hanno un pulsante di scarico in chat',
+   /function mostraFileScaricabile/.test(front) && /api\/files\//.test(front),
+   'un file su disco che non si può scaricare non serve a nulla');
 
 // ─────────────────────────────────────────
 section('Archivio delle pagine nel monitor');
