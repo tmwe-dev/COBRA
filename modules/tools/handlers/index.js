@@ -10,6 +10,7 @@ const browserControl = require('./browser-control');
 const bridgeTools = require('./bridge-tools');
 const data = require('./data');
 const communication = require('./communication');
+const processo = require('./process');
 
 // Merge all handlers into a single map
 const allHandlers = {
@@ -22,6 +23,7 @@ const allHandlers = {
   ...bridgeTools,
   ...data,
   ...communication,
+  ...processo,
 };
 
 module.exports = allHandlers;

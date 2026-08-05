@@ -71,6 +71,15 @@ const COBRA_TOOLS = [
   { type:'function', function:{ name:'read_table', description:'Legge contenuto tabella HTML in formato strutturato.', parameters:{ type:'object', properties:{ selector:{ type:'string' }, maxRows:{ type:'number' } }, required:[] } } },
   { type:'function', function:{ name:'wait_network_idle', description:'Attende rete inattiva. Utile per SPA.', parameters:{ type:'object', properties:{ idleMs:{ type:'number' }, timeout:{ type:'number' } }, required:[] } } },
   { type:'function', function:{ name:'clipboard_write', description:'Scrive testo nella clipboard del browser.', parameters:{ type:'object', properties:{ text:{ type:'string' } }, required:['text'] } } },
+// ── Conduzione di processi a piu passi ──
+  // Le regole sono applicate dal motore: un passo si chiude solo con la prova
+  // di uno strumento eseguito, e il processo finisce solo quando tutti i passi
+  // sono chiusi. Non sono indicazioni, sono vincoli.
+  { type:'function', function:{ name:'processo_avvia', description:'OBBLIGATORIO prima di iniziare un lavoro che richiede piu di due operazioni (confronti fra fonti, raccolte dati, report, procedure). Dichiara l\'obiettivo e i passi.', parameters:{ type:'object', properties:{ obiettivo:{ type:'string', description:'Cosa si deve ottenere, in una frase' }, passi:{ type:'array', description:'Da 2 a 15 passi in ordine', items:{ type:'object', properties:{ titolo:{ type:'string' }, bloccante:{ type:'boolean', description:'false se il processo puo proseguire anche senza questo passo' }, dipendeDa:{ type:'array', items:{ type:'number' }, description:'Numeri dei passi che devono essere completati prima' } }, required:['titolo'] } } }, required:['obiettivo','passi'] } } },
+  { type:'function', function:{ name:'processo_inizia_passo', description:'Segna che stai iniziando un passo. Da chiamare PRIMA di eseguirlo.', parameters:{ type:'object', properties:{ passo:{ type:'number' } }, required:['passo'] } } },
+  { type:'function', function:{ name:'processo_completa_passo', description:'Chiude un passo. Richiede la prova: il risultato dello strumento che hai realmente eseguito. Senza prova il passo resta aperto.', parameters:{ type:'object', properties:{ passo:{ type:'number' }, prova:{ type:'string', description:'Il risultato dello strumento usato, non una tua descrizione' } }, required:['passo','prova'] } } },
+  { type:'function', function:{ name:'processo_fallisci_passo', description:'Dichiara che un passo non e riuscito, spiegando perche. Un passo non si abbandona in silenzio.', parameters:{ type:'object', properties:{ passo:{ type:'number' }, motivo:{ type:'string' } }, required:['passo','motivo'] } } },
+  { type:'function', function:{ name:'processo_stato', description:'Mostra a che punto e il processo e quale passo viene dopo.', parameters:{ type:'object', properties:{}, required:[] } } },
 ];
 
 // TOOL_RISK_MAP: backward compat wrapper over TOOL_RISK_TAXONOMY

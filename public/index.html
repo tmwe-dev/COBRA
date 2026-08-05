@@ -2182,6 +2182,42 @@
     // ── Config ──
     function toggleConfig() { document.getElementById('configOverlay').classList.toggle('open'); }
 
+    // ── Processo in corso ──
+    // Un solo riquadro che si aggiorna: si vedono i passi spuntarsi mentre
+    // COBRA lavora, invece di un elenco di messaggi che scorre via.
+    const SEGNI_PASSO = {
+      attesa:      { simbolo: '○', colore: 'var(--text3)' },
+      in_corso:    { simbolo: '◐', colore: 'var(--lilac)' },
+      verifica:    { simbolo: '◑', colore: 'var(--lilac)' },
+      completato:  { simbolo: '●', colore: 'var(--green)' },
+      fallito:     { simbolo: '✕', colore: 'var(--red)' },
+      impossibile: { simbolo: '⊘', colore: 'var(--text3)' },
+    };
+
+    function mostraProcesso(p) {
+      let box = document.getElementById('proc-' + p.id);
+      if (!box) {
+        box = document.createElement('div');
+        box.id = 'proc-' + p.id;
+        box.className = 'bubble system';
+        box.style.cssText = 'border-left:3px solid var(--lilac);padding-left:12px';
+        chatMessages.appendChild(box);
+      }
+      const righe = (p.passi || []).map(s => {
+        const seg = SEGNI_PASSO[s.stato] || SEGNI_PASSO.attesa;
+        const barrato = s.stato === 'completato' ? 'opacity:0.65' : '';
+        const nota = s.motivo ? ` <span style="color:var(--text3)">— ${escapeHtml(s.motivo)}</span>` : '';
+        return `<div style="${barrato}"><span style="color:${seg.colore}">${seg.simbolo}</span> `
+             + `${escapeHtml(s.titolo)}${nota}</div>`;
+      }).join('');
+      const stato = p.concluso ? 'concluso' : p.interrotto ? 'interrotto' : 'in corso';
+      box.innerHTML =
+        `<div style="font-size:11px;color:var(--text2);margin-bottom:6px">`
+        + `PROCESSO · ${escapeHtml(p.obiettivo)} · ${p.completati}/${p.totale} · ${stato}</div>`
+        + `<div style="font-size:13px;line-height:1.9">${righe}</div>`;
+      chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
     // ── File prodotti da COBRA ──
     // Un file scritto su disco che l'utente non può prendere non serve a nulla:
     // ogni file creato compare in chat come pulsante di scarico.
@@ -2520,6 +2556,9 @@
             break;
           case 'file_created':
             mostraFileScaricabile(msg.filename);
+            break;
+          case 'processo':
+            mostraProcesso(msg);
             break;
           case 'task_created':
             addLogEntry(`Job creato: "${msg.name}" (${msg.steps} step)`, 'tool');

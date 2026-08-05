@@ -230,6 +230,38 @@ class LearningStore {
   }
 
   /**
+   * Le attività che ricorrono più spesso, ricavate dal registro invece che
+   * chieste all'utente. Servono a due cose: far capire a COBRA cosa fa
+   * abitualmente questa persona, e far emergere i candidati a diventare
+   * procedure salvate.
+   */
+  attivitaFrequenti(minimo = 3) {
+    const conteggio = new Map();
+    for (const a of this.azioni) {
+      // Si raggruppa sul soggetto principale, non sul testo esatto: cercare
+      // "voli Milano Havana" e "voli Roma Parigi" è la stessa attività, ed è
+      // quella ricorrenza che interessa far emergere.
+      const parole = normalizeText(a.testo)
+        .replace(/^(cercato|aperto|letto|email inviata a|file creato|salvato in knowledge base|cliccato)\s*/, '')
+        .split(' ').filter(w => w.length > 3);
+      // Per gli indirizzi il soggetto è il dominio, non il percorso
+      const soggetto = a.strumento === 'navigate'
+        ? (String(a.testo).match(/https?:\/\/(?:www\.)?([^/\s]+)/) || [])[1] || parole[0]
+        : parole[0];
+      if (!soggetto) continue;
+      const chiave = `${a.strumento}|${soggetto}`;
+      const voce = conteggio.get(chiave) || { strumento: a.strumento, soggetto, volte: 0, ultima: a.quando };
+      voce.volte++;
+      if (a.quando > voce.ultima) voce.ultima = a.quando;
+      conteggio.set(chiave, voce);
+    }
+    return [...conteggio.values()]
+      .filter(v => v.volte >= minimo)
+      .sort((a, b) => b.volte - a.volte)
+      .slice(0, 8);
+  }
+
+  /**
    * Inserisce un fatto, oppure rafforza quello equivalente già presente.
    * @returns {'nuovo'|'rafforzato'|'scartato'}
    */
@@ -336,6 +368,14 @@ class LearningStore {
     if (recenti.length > 0) {
       const righe = recenti.map(a => `- ${a.testo}${a.riuscita ? '' : ' (non riuscito)'}`).join('\n');
       sezioni.push(`### L1 — Sessione (cosa hai già fatto)\n${righe}\nNon ripetere queste operazioni se hai già il risultato.`);
+    }
+
+    // Ciò che l'utente chiede spesso: aiuta a capire il contesto senza doverlo
+    // spiegare ogni volta, e segnala cosa vale la pena trasformare in procedura.
+    const frequenti = this.attivitaFrequenti();
+    if (frequenti.length > 0) {
+      const righe = frequenti.map(f => `- ${f.soggetto} (${f.volte} volte)`).join('\n');
+      sezioni.push(`### Attività ricorrenti dell'utente\n${righe}`);
     }
 
     if (sezioni.length === 0) return '';

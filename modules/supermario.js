@@ -38,19 +38,26 @@ const RUNTIME_CONTRACT = {
 // ── TOOL SCOPE — sottoinsiemi per intent ──
 const TOOL_SCOPES = {
   chat: [],
-  search: ['google_search', 'navigate', 'read_page', 'scrape_url', 'batch_scrape', 'read_table'],
+  search: ['google_search', 'navigate', 'read_page', 'scrape_url', 'batch_scrape', 'read_table',
+           'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato'],
   browse: ['navigate', 'read_page', 'screenshot', 'scroll_page', 'get_page_elements', 'get_page_snapshot', 'read_table',
-           'detect_block', 'verify_action', 'wait_network_idle', 'request_human_takeover'],
+           'detect_block', 'verify_action', 'wait_network_idle', 'request_human_takeover',
+           'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato'],
   interact: ['navigate', 'click_element', 'fill_form', 'inspect_dom_js', 'mutate_dom_js', 'scroll_page', 'screenshot', 'get_page_elements', 'get_page_snapshot', 'read_page',
              'hover_element', 'drag_drop', 'upload_file', 'switch_tab', 'wait_for', 'select_option', 'press_key',
              'type_human', 'key_combo', 'select_dropdown', 'set_datepicker', 'clipboard_write',
-             'detect_block', 'verify_action', 'wait_network_idle', 'request_human_takeover'],
-  data: ['extract_data', 'read_table', 'crawl_website', 'batch_scrape', 'create_file', 'scrape_url', 'navigate', 'read_page'],
-  admin: ['save_to_kb', 'kb_update', 'kb_delete', 'create_task', 'run_task', 'list_tasks', 'delete_task', 'save_memory', 'search_kb', 'list_local_files'],
-  file: ['list_local_files', 'read_local_file', 'save_local_file', 'search_local_files', 'create_file'],
+             'detect_block', 'verify_action', 'wait_network_idle', 'request_human_takeover',
+           'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato'],
+  data: ['extract_data', 'read_table', 'crawl_website', 'batch_scrape', 'create_file', 'scrape_url', 'navigate', 'read_page',
+           'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato'],
+  admin: ['save_to_kb', 'kb_update', 'kb_delete', 'create_task', 'run_task', 'list_tasks', 'delete_task', 'save_memory', 'search_kb', 'list_local_files',
+           'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato'],
+  file: ['list_local_files', 'read_local_file', 'save_local_file', 'search_local_files', 'create_file',
+           'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato'],
   communicate: ['send_email', 'open_whatsapp', 'open_linkedin', 'prepare_email_draft', 'prepare_whatsapp_message', 'prepare_linkedin_message', 'check_emails',
                  'linkedin_search', 'linkedin_profile', 'linkedin_send_message', 'linkedin_connect', 'linkedin_inbox', 'linkedin_read_thread',
-                 'whatsapp_send', 'whatsapp_unread', 'whatsapp_read_thread'],
+                 'whatsapp_send', 'whatsapp_unread', 'whatsapp_read_thread',
+           'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato'],
   full: null, // all tools
 };
 
@@ -591,6 +598,13 @@ async function assemble({ intent, scopes, operationLevel, userMessage, conversat
   // Data e ora correnti. Senza, "sabato prossimo" o "il 28" non sono
   // interpretabili e il modello costruisce URL con anni sbagliati.
   contextParts.push(costruisciBloccoData());
+
+  // Processo in corso: dove si trova il lavoro e qual è il prossimo passo.
+  // Va ripetuto ad ogni turno, altrimenti il modello perde il filo appena la
+  // conversazione si allunga.
+  if (session.processo && !session.processo.concluso()) {
+    contextParts.push(session.processo.perIlPrompt());
+  }
 
   // Pagina corrente (UNTRUSTED — delimitata per injection defense, Microsoft Spotlighting pattern)
   if (session.lastPage && scopes.some(s => ['browse', 'interact', 'search', 'data'].includes(s))) {
