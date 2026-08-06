@@ -55,8 +55,18 @@ section('R2 — Nessun passo si abbandona in silenzio');
   const p = nuovo();
   ok('fallire richiede un motivo', p.falliscePasso(1, '').ok === false);
   ok('fallire richiede un motivo comprensibile', p.falliscePasso(1, 'no').ok === false);
-  ok('con un motivo il fallimento è accettato', p.falliscePasso(1, 'Il sito non risponde').ok === true);
-  ok('il motivo viene conservato', /non risponde/.test(p.passo(1).motivo));
+  // Un motivo che ripete il fallimento non e' un motivo: lasciava l'utente
+  // davanti a un passo rosso senza sapere cosa fosse successo.
+  ok('rifiuta "non sono riuscito a completare il passo 1"',
+     p.falliscePasso(1, 'Non sono riuscito a completare il passo 1.').ok === false);
+  ok('rifiuta "non ci sono riuscito"', p.falliscePasso(1, 'Non ci sono riuscito').ok === false);
+  ok('spiega cosa scrivere invece',
+     /cosa te lo ha impedito/i.test(p.falliscePasso(1, 'Non sono riuscito a completare il passo 1.').motivo || ''));
+  ok('accetta un motivo che dice qualcosa',
+     p.falliscePasso(1, 'Kayak ha risposto 0 risultati per questa tratta').ok === true);
+  const p3 = nuovo();
+  ok('con un motivo il fallimento è accettato', p3.falliscePasso(1, 'Il sito non risponde').ok === true);
+  ok('il motivo viene conservato', /0 risultati/.test(p.passo(1).motivo));
 }
 
 // ─────────────────────────────────────────

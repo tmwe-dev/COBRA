@@ -4,7 +4,19 @@
 const PAYMENT_BUTTONS = /\b(paga ora|pay now|conferma pagamento|confirm payment|completa acquisto|complete purchase|place order|acquista ora|buy now|procedi al pagamento|proceed to payment|finalizza ordine|submit payment|conferma ordine|paga|checkout)\b/i;
 const PAYMENT_SELECTORS = /card.?number|cc.?number|credit.?card|carta.?di.?credito|cvv|cvc|security.?code|expir|scadenza|card.?exp|billing.?card|numero.?carta|iban|routing.?number|account.?number|sort.?code/i;
 
+// Chi tocca la pagina lascia l'ora.
+//
+// La cache di navigate serve il testo letto prima senza muovere il browser.
+// Va benissimo finché nessuno ha toccato niente; ma dopo un click o un campo
+// compilato la pagina non è più quella, e riusare il vecchio testo significa
+// lavorare su una città mentre si crede di essere su un'altra. Questo segno
+// dice a navigate quando la scorciatoia non è più lecita.
+function pagineToccata(ctx) {
+  if (ctx && ctx.session) ctx.session._ultimaAzionePagina = Date.now();
+}
+
 async function clickElement(args, ctx) {
+  pagineToccata(ctx);
   ctx.emitThinking(`Clicco su "${args.selector}"...`);
   const sel = args.selector || '';
   // Payment button block — check selector text + real DOM text
@@ -46,6 +58,7 @@ async function clickElement(args, ctx) {
 }
 
 async function fillForm(args, ctx) {
+  pagineToccata(ctx);
   ctx.emitThinking('Compilo il form...');
   // Payment field block
   let fieldsToCheck; try { fieldsToCheck = typeof args.fields === 'string' ? JSON.parse(args.fields) : args.fields; } catch { fieldsToCheck = {}; }
@@ -106,6 +119,7 @@ async function fillForm(args, ctx) {
 }
 
 async function selectOption(args, ctx) {
+  pagineToccata(ctx);
   ctx.emitThinking(`Seleziono "${args.value}" in "${args.selector}"...`);
   if (ctx.isBridgeReady()) {
     await ctx.dismissModalsBridge();

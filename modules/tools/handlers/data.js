@@ -5,7 +5,9 @@ const path = require('path');
 const fs = require('fs');
 const { assertSSRFSafe } = require('../../security/ssrf');
 const { creaXlsx, righeDaTesto } = require('../../utils/xlsx');
-const { importiSenzaFonte, blocchiDuplicati, fontiDelTurno } = require('../../security/verifica-dati');
+const { importiSenzaFonte, blocchiDuplicati, fontiDelTurno, valoreImporto, numeriDi } = require('../../security/verifica-dati');
+const { componiDocumento, verificaFormato, TITOLO_REPORT, TITOLO_FONTI } = require('../../output/consegna');
+const { componiRivista } = require('../../output/rivista');
 
 async function saveToKb(args, ctx) {
   ctx.emitThinking('Salvo nel KB...');
@@ -59,6 +61,19 @@ async function createFile(args, ctx) {
     const righe = righeDaTesto(args.content || '');
     if (righe.length === 0) return JSON.stringify({ error: 'Contenuto vuoto o non tabellare: per un Excel servono righe (CSV, JSON o tabella markdown)' });
 
+    // Un foglio con la sola riga di intestazione non è un report: è la sua
+    // promessa. È successo con la vacanza a Bora Bora — "Voli | Hotel |
+    // Escursioni | Prezzi | Link" e sotto il vuoto — e l'utente si è ritrovato
+    // un file scaricabile che non conteneva niente.
+    const conDati = righe.filter(r => r.join('').trim().length > 0).length;
+    if (conDati <= 1) {
+      return JSON.stringify({
+        error: 'SCRITTURA RIFIUTATA: c\'è solo la riga di intestazione e nessun dato sotto. '
+          + 'Un file vuoto non aiuta: prima raccogli i dati aprendo le pagine, poi scrivi il file. '
+          + 'Se non sei riuscito a raccoglierli, dillo apertamente invece di consegnare un foglio vuoto.',
+      });
+    }
+
     // Un blocco di righe ripetuto identico sotto un'altra intestazione significa
     // che i risultati di una ricerca sono stati attribuiti anche a un'altra.
     const doppi = blocchiDuplicati(righe);
@@ -72,22 +87,91 @@ async function createFile(args, ctx) {
           + 'sbagliata e riporta i suoi dati veri; se per quella tratta non hai letto nulla, scrivilo invece di riempirla.',
       });
     }
+    // ── Lo standard di consegna si applica qui, non si spera ──
+    // Il modello scriveva "**Volo**" e "€ 1.698" come testo: asterischi a
+    // vista e prezzi non sommabili. Non è una questione di gusto — un foglio
+    // così non si usa. Se il documento non porta già intestazione e fonti,
+    // gliele si mette: le fonti sono le pagine che ha davvero aperto.
+    let righeFinali = righe;
+    const giaConforme = verificaFormato(righe).conforme;
+    if (!giaConforme) {
+      const fonti = [];
+      const cache = ctx.session._cachePagine;
+      if (cache && typeof cache.forEach === 'function') {
+        cache.forEach(v => fonti.push({ url: v.url, title: v.title }));
+      }
+      for (const p of (ctx.session.pagineDelTurno || [])) {
+        if (!fonti.some(f => f.url === (p.url || p))) fonti.push({ url: p.url || p, title: p.title || '' });
+      }
+      righeFinali = componiDocumento({
+        titolo: args.titolo || args.sheet || args.filename.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' '),
+        righe, fonti,
+      });
+      ctx.log(`[Consegna] Documento riformattato secondo lo standard (${fonti.length} fonti in calce)`);
+    }
+
     try {
-      fs.writeFileSync(filePath, creaXlsx(righe, args.sheet || 'Report'));
+      fs.writeFileSync(filePath, creaXlsx(righeFinali, args.sheet || 'Report'));
       ctx.wsBroadcast({ type: 'file_created', filename: args.filename });
-      ctx.broadcastFile({ filename: args.filename, size: fs.statSync(filePath).size,
-        text: righe.slice(0, 30).map(r => r.join(' | ')).join('\n') });
-      return JSON.stringify({ ok: true, filename: args.filename, righe: righe.length, colonne: (righe[0] || []).length });
+      // La pagina sa disegnare una tabella vera se le arriva {headers, rows}.
+      // Finora riceveva le righe incollate con delle barre verticali, cioe' un
+      // foglio di calcolo mostrato come se fosse un blocco di testo.
+      if (!Array.isArray(ctx.session.fileDelTurno)) ctx.session.fileDelTurno = [];
+      ctx.session.fileDelTurno.push({ filename: args.filename });
+      ctx.session.righeUltimoFile = righeFinali;
+      ctx.broadcastFile({
+        filename: args.filename,
+        size: fs.statSync(filePath).size,
+        table: { headers: righeFinali[0] || [], rows: righeFinali.slice(1, 200) },
+        text: righeFinali.slice(0, 30).map(r => r.join(' | ')).join('\n'),
+      });
+      return JSON.stringify({ ok: true, filename: args.filename, righe: righeFinali.length, colonne: (righeFinali[0] || []).length, formato: 'standard di consegna applicato' });
     } catch (e) {
       return JSON.stringify({ error: `Creazione del file Excel fallita: ${e.message}` });
     }
   }
 
+  // ── Un .pdf che è testo non è un pdf: è un file che non si apre ──
+  //
+  // Qui sotto si scrive il contenuto grezzo con qualunque estensione. Con
+  // filename "report.pdf" ne usciva un file che nessun lettore PDF apre —
+  // e, peggio, il criterio file_atteso lo accettava, perché guarda solo il
+  // suffisso del nome. Il sistema si dichiarava soddisfatto consegnando a
+  // Luca una cosa rotta: è il fallimento peggiore, perché non si vede.
+  //
+  // I formati che hanno una struttura vera si producono in altro modo o non
+  // si producono affatto. Meglio dirlo, e dire cosa fare.
+  const estFile = String(args.filename || '').split('.').pop().toLowerCase();
+  const FORMATI_STRUTTURATI = {
+    pdf: 'Il PDF non si scrive come testo. Produci il report con crea_report (esce impaginato in .html) '
+       + 'e dillo a Luca: si apre nel browser e con Stampa → Salva come PDF diventa un PDF vero.',
+    docx: 'Il .docx non si scrive come testo. Usa crea_report per il documento impaginato in .html, '
+        + 'oppure create_file con estensione .xlsx se servono tabelle.',
+    doc: 'Il .doc non si scrive come testo. Usa crea_report (.html) oppure .xlsx per le tabelle.',
+    pptx: 'Il .pptx non si scrive come testo. Usa crea_report (.html) per un documento presentabile.',
+  };
+  if (FORMATI_STRUTTURATI[estFile]) {
+    ctx.log(`[create_file] Rifiutato .${estFile}: sarebbe un file che non si apre`);
+    return JSON.stringify({ error: `Non posso produrre un .${estFile} scrivendolo come testo: `
+      + `uscirebbe un file che non si apre. ${FORMATI_STRUTTURATI[estFile]}` });
+  }
+
   fs.writeFileSync(filePath, args.content || '');
+  if (!Array.isArray(ctx.session.fileDelTurno)) ctx.session.fileDelTurno = [];
+  ctx.session.fileDelTurno.push({ filename: args.filename });
   ctx.wsBroadcast({ type: 'file_created', filename: args.filename });
   const ext = (args.filename || '').split('.').pop().toLowerCase();
   if (['txt','md','json','csv','html','xml','js','css'].includes(ext)) {
-    ctx.broadcastFile({ filename: args.filename, size: Buffer.byteLength(args.content || ''), text: (args.content || '').substring(0, 10000), markdown: ext === 'md' });
+    const anteprima = { filename: args.filename, size: Buffer.byteLength(args.content || ''),
+      text: (args.content || '').substring(0, 10000), markdown: ext === 'md' };
+    // Un csv e' una tabella: si mostra come tale, non come righe di testo.
+    if (['csv','tsv'].includes(ext)) {
+      try {
+        const righe = righeDaTesto(args.content || '');
+        if (righe.length > 1) anteprima.table = { headers: righe[0], rows: righe.slice(1, 200) };
+      } catch (_) { /* se non si lascia leggere come tabella, resta il testo */ }
+    }
+    ctx.broadcastFile(anteprima);
   } else if (['png','jpg','jpeg','gif','svg'].includes(ext)) {
     try { const b64 = fs.readFileSync(filePath, 'base64'); ctx.broadcastFile({ filename: args.filename, size: fs.statSync(filePath).size, image: `data:image/${ext};base64,${b64}` }); } catch (_) { /* best-effort */ }
   }
@@ -166,7 +250,25 @@ async function batchScrape(args, ctx) {
     const html = await resp.text();
     return { url, text: html.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '').replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 3000) };
   }));
-  return JSON.stringify({ ok: true, results: results.filter(r => r.status === 'fulfilled').map(r => r.value), count: results.filter(r => r.status === 'fulfilled').length });
+  // Anche qui la lettura è grezza, senza browser: sui siti che si disegnano
+  // con javascript arriva il guscio. Un guscio spacciato per risultato è il
+  // modo in cui nascono le "pagine bianche": lo si dichiara per quello che è,
+  // e si indica la strada giusta per quegli indirizzi. Il browser è uno solo,
+  // quindi i gusci si riaprono con navigate() uno per volta.
+  const riusciti = results.filter(r => r.status === 'fulfilled').map(r => r.value);
+  const pieni = riusciti.filter(r => (r.text || '').length >= 800);
+  const gusci = riusciti.filter(r => (r.text || '').length < 800).map(r => r.url);
+  if (ctx.registroFonti) {
+    for (const r of riusciti) { try { ctx.registroFonti.registra(r.url, { caratteri: (r.text || '').length }); } catch (_) { /* best-effort */ } }
+  }
+  const esito = { ok: true, results: pieni, count: pieni.length };
+  if (gusci.length) {
+    esito.pagineDaAprireNelBrowser = gusci;
+    esito.avviso = `${gusci.length} pagine sono arrivate vuote: si caricano con javascript. `
+      + 'NON considerarle senza dati — aprile una per una con navigate(), che usa il browser vero.';
+    ctx.log(`[batch_scrape] ${pieni.length} piene, ${gusci.length} gusci rimandati al browser`);
+  }
+  return JSON.stringify(esito);
 }
 
 // Local file tools (sandboxed in data/files/)
@@ -210,7 +312,139 @@ async function searchLocalFiles(args, ctx) {
   return JSON.stringify({ ok: true, results: results.slice(0, 20), count: results.length });
 }
 
+// Il report impaginato: copertina, raccomandazione obbligatoria con il
+// perché, sezioni a carte, immagini quando ci sono, fonti in coda. Si apre
+// nel browser e si salva in PDF con la stampa. Un elenco senza consiglio
+// viene rifiutato qui, dal codice.
+async function creaReport(args, ctx) {
+  ctx.emitThinking('Impagino il report...');
+  let spec = {};
+  try { spec = typeof args.spec === 'string' ? JSON.parse(args.spec) : (args.spec || args); }
+  catch (e) { return JSON.stringify({ error: 'La specifica del report non e\' JSON valido: ' + e.message }); }
+
+  // Le fonti non le dichiara il modello: sono le pagine davvero aperte
+  const fonti = [];
+  const cache = ctx.session._cachePagine;
+  if (cache && typeof cache.forEach === 'function') cache.forEach(v => fonti.push({ url: v.url, title: v.title }));
+  for (const p of (ctx.session.pagineDelTurno || [])) {
+    if (!fonti.some(x => x.url === (p.url || p))) fonti.push({ url: p.url || p, title: p.title || '' });
+  }
+  spec.fonti = fonti;
+
+  // ── Il percorso raccomandato deve essere il più controllato, non il meno ──
+  //
+  // crea_report importava importiSenzaFonte e blocchiDuplicati e non li
+  // chiamava: i controlli giravano solo su create_file, e per giunta solo nel
+  // ramo .xlsx. Ma il sistema stesso indirizza qui — il prompt del Collega
+  // dice che per ricerche e confronti "l'estensione giusta è html", e ogni
+  // formato non producibile viene convertito in html.
+  //
+  // Quindi il documento che Luca riceve più spesso era l'unico a uscire senza
+  // verifica, mentre in fondo alla pagina rivista.js firma "ogni dato proviene
+  // dalle pagine elencate sopra". Firmare ciò che nessuno ha controllato è
+  // peggio che non firmarlo.
+  //
+  // Qui si guardano i CAMPI, non il testo: nel report il prezzo è un campo
+  // suo, e quasi mai porta il simbolo della valuta attaccato. Cercandolo con
+  // la regola degli importi — che il simbolo lo pretende — un prezzo su due
+  // sarebbe risultato inesistente e quindi non verificabile: il controllo si
+  // sarebbe spento da solo proprio dove serve.
+  const testoFonti = fontiDelTurno(ctx.session);
+  const carte = (spec.sezioni || []).flatMap(sez => (sez.carte || []).map(c => ({ ...c, sezione: sez.titolo })));
+
+  if (testoFonti.trim().length > 0) {
+    const numeriLetti = numeriDi(testoFonti);
+    const inventati = [];
+    for (const c of carte) {
+      const v = valoreImporto(c.prezzo);
+      if (v === null || v < 100) continue;   // sotto i 100 la coincidenza è la regola
+      let trovato = false;
+      for (const f of numeriLetti) {
+        if (f === v || Math.abs(f - v) / v < 0.01) { trovato = true; break; }
+      }
+      if (!trovato) inventati.push(`${c.nome || 'una voce'}: ${c.prezzo}`);
+    }
+    if (inventati.length > 0) {
+      ctx.log(`[Report] rifiutato: ${inventati.length} prezzi non stanno in nessuna pagina letta`);
+      return JSON.stringify({ error: 'REPORT RIFIUTATO: questi prezzi non compaiono in nessuna delle pagine aperte: '
+        + inventati.join('; ') + '. Un numero senza fonte non si consegna: rileggi la pagina e riporta il valore '
+        + 'che c\'è scritto, oppure togli la voce e dillo.' });
+    }
+  }
+
+  // Due sezioni con le stesse identiche voci sono la ricerca fatta una volta
+  // sola e ricopiata sotto l'altro titolo. È già successo: i prezzi di
+  // Barcellona, veri, comparsi sotto l'intestazione Milano.
+  const perSezione = new Map();
+  for (const c of carte) {
+    const firma = `${String(c.nome || '').trim().toLowerCase()}¦${c.prezzo}`;
+    if (!perSezione.has(c.sezione)) perSezione.set(c.sezione, []);
+    perSezione.get(c.sezione).push(firma);
+  }
+  const sezioni = [...perSezione.entries()].filter(([, v]) => v.length >= 2);
+  for (let a = 0; a < sezioni.length; a++) {
+    for (let b = a + 1; b < sezioni.length; b++) {
+      if (sezioni[a][1].join('|') === sezioni[b][1][0] + (sezioni[b][1].length > 1 ? '|' + sezioni[b][1].slice(1).join('|') : '')) {
+        ctx.log(`[Report] rifiutato: "${sezioni[a][0]}" e "${sezioni[b][0]}" hanno le stesse identiche voci`);
+        return JSON.stringify({ error: `REPORT RIFIUTATO: le voci di "${sezioni[a][0]}" e "${sezioni[b][0]}" sono identiche, `
+          + 'prezzo per prezzo. Una delle due ricerche non è stata fatta: falla, invece di ricopiare l\'altra.' });
+      }
+    }
+  }
+
+  const esito = componiRivista(spec);
+  if (!esito.ok) {
+    ctx.log('[Report] rifiutato: ' + esito.errore);
+    return JSON.stringify({ error: 'REPORT RIFIUTATO: ' + esito.errore });
+  }
+
+  const nome = (args.filename || 'report').replace(/[^\w.-]/g, '_').replace(/\.html?$/i, '') + '.html';
+  const base = path.resolve(ctx.dataDir, 'files');
+  if (!fs.existsSync(base)) fs.mkdirSync(base, { recursive: true });
+  fs.writeFileSync(path.resolve(base, nome), esito.html);
+  if (!Array.isArray(ctx.session.fileDelTurno)) ctx.session.fileDelTurno = [];
+  ctx.session.fileDelTurno.push({ filename: nome });
+
+  // ── Il criterio "formato_consegna" deve giudicare IL DOCUMENTO ──
+  //
+  // Bug trovato il 6 agosto, ed è quello che ha fatto fallire Tokyo. Il
+  // criterio veniva valutato su "righeUltimoFile", che scriveva SOLO il ramo
+  // xlsx di create_file: per un report .html restava vuoto, e la verifica
+  // ripiegava sul messaggio di chat. Un messaggio di chat non contiene
+  // "REPORT", "Preparato il" e "FONTI CONSULTATE", quindi il criterio
+  // falliva SEMPRE — e nel log si legge tre volte "il documento non e'
+  // presentabile: manca l'intestazione", rivolto a un Esecutore che il
+  // documento l'aveva prodotto per davvero, giusto e impaginato.
+  //
+  // Il prompt del Collega ordina di mettere formato_consegna SEMPRE insieme
+  // a file_atteso, e di preferire l'html: cioè la combinazione consigliata
+  // era quella che non poteva riuscire.
+  //
+  // Qui il report dichiara sé stesso nella forma che la verifica conosce.
+  // Non è un trucco per far passare il controllo: componiRivista ha già
+  // rifiutato il documento se mancavano titolo, raccomandazione, due
+  // risultati o le fonti — quello che si dichiara è vero perché è stato
+  // verificato prima.
+  ctx.session.righeUltimoFile = [
+    [TITOLO_REPORT, String(spec.titolo || nome)],
+    ['Preparato il', new Date().toLocaleDateString('it-IT')],
+    ...(spec.sezioni || []).flatMap(sez => [
+      [String(sez.titolo || '')],
+      ...(sez.carte || []).map(c => [String(c.nome || ''), c.prezzo != null ? String(c.prezzo) : '', String(c.dettaglio || '')]),
+    ]),
+    [TITOLO_FONTI],
+    ...fonti.map(f => [String(f.url || '')]),
+  ];
+
+  ctx.wsBroadcast({ type: 'file_created', filename: nome });
+  ctx.broadcastFile({ filename: nome, size: Buffer.byteLength(esito.html), text: 'Report impaginato: aprilo per la versione completa.', markdown: false });
+  ctx.log(`[Report] ${nome} impaginato (${fonti.length} fonti)`);
+  return JSON.stringify({ ok: true, filename: nome, fonti: fonti.length,
+    nota: 'Report impaginato pronto. Si apre nel browser; per il PDF: stampa e Salva come PDF.' });
+}
+
 module.exports = {
+  crea_report: creaReport,
   save_to_kb: saveToKb, search_kb: searchKb, kb_update: kbUpdate, kb_delete: kbDelete,
   create_file: createFile, save_memory: saveMemory,
   create_task: createTask, run_task: runTask, delete_task: deleteTask, list_tasks: listTasks,

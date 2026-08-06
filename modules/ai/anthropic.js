@@ -1,3 +1,4 @@
+const { fetchConLimite } = require('./fetch-con-limite');
 // modules/ai/anthropic.js — Anthropic Claude API provider
 // Source: server.js lines 7301-7379
 
@@ -19,7 +20,7 @@ async function callAnthropic(key, model, systemPrompt, messages, tools, ctx) {
     const body = { model, max_tokens: 16000, system: systemPrompt, messages: apiMessages, temperature: 0.5 };
     if (anthropicTools) { body.tools = anthropicTools; body.tool_choice = { type: 'auto' }; }
 
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetchConLimite('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify(body)

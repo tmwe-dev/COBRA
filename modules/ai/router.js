@@ -1,3 +1,4 @@
+const { fetchConLimite } = require('./fetch-con-limite');
 // modules/ai/router.js — AI Provider Router with cascade fallback
 // Source: server.js lines 7454-7530
 
@@ -86,11 +87,13 @@ async function callAI(systemPrompt, messages, tools, ctx) {
     try {
       const fbUrl = aiKeys.openaiKey ? 'https://api.openai.com/v1/chat/completions' : 'https://api.groq.com/openai/v1/chat/completions';
       const fbModel = aiKeys.openaiKey ? (aiKeys.openaiModel || COBRA_DEFAULTS.OPENAI_MODEL) : (aiKeys.groqModel || COBRA_DEFAULTS.GROQ_MODEL);
-      const res = await fetch(fbUrl, {
+      // Anche l'ultima spiaggia deve poter fallire: se resta appesa qui, non
+      // c'e' piu' nessuno dopo di lei a cui passare il lavoro.
+      const res = await fetchConLimite(fbUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${fbKey}` },
         body: JSON.stringify({ model: fbModel, messages: [{ role: 'system', content: systemPrompt }, ...messages], max_tokens: 4000 })
-      });
+      }, 60000, 'fornitore di riserva');
       if (res.ok) {
         const d = await res.json();
         const text = d.choices?.[0]?.message?.content || '';

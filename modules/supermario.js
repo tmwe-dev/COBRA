@@ -20,7 +20,7 @@ const VOICE_RULES = require('./prompts/voice-rules');
 const RUNTIME_CONTRACT = {
   maxToolChainPerTurn: 25,
   bannedToolPatterns: ['delete_task'],
-  writeTools: ['save_to_kb', 'kb_update', 'kb_delete', 'create_file', 'save_local_file', 'save_memory', 'create_task',
+  writeTools: ['save_to_kb', 'kb_update', 'kb_delete', 'create_file', 'crea_report', 'save_local_file', 'save_memory', 'create_task',
                'prepare_email_draft', 'prepare_whatsapp_message', 'prepare_linkedin_message'],
   sendTools: ['send_email', 'open_whatsapp', 'open_linkedin', 'linkedin_send_message', 'linkedin_connect', 'whatsapp_send'],
   destructiveTools: ['delete_task'],
@@ -49,11 +49,11 @@ const TOOL_SCOPES = {
              'type_human', 'key_combo', 'select_dropdown', 'set_datepicker', 'clipboard_write',
              'detect_block', 'verify_action', 'wait_network_idle', 'request_human_takeover',
            'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato'],
-  data: ['extract_data', 'read_table', 'crawl_website', 'batch_scrape', 'create_file', 'scrape_url', 'navigate', 'read_page',
+  data: ['extract_data', 'read_table', 'crawl_website', 'batch_scrape', 'create_file', 'crea_report', 'scrape_url', 'navigate', 'read_page',
            'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato'],
   admin: ['save_to_kb', 'kb_update', 'kb_delete', 'create_task', 'run_task', 'list_tasks', 'delete_task', 'save_memory', 'search_kb', 'list_local_files',
            'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato'],
-  file: ['list_local_files', 'read_local_file', 'save_local_file', 'search_local_files', 'create_file',
+  file: ['list_local_files', 'read_local_file', 'save_local_file', 'search_local_files', 'create_file', 'crea_report',
            'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato'],
   communicate: ['send_email', 'open_whatsapp', 'open_linkedin', 'prepare_email_draft', 'prepare_whatsapp_message', 'prepare_linkedin_message', 'check_emails',
                  'linkedin_search', 'linkedin_profile', 'linkedin_send_message', 'linkedin_connect', 'linkedin_inbox', 'linkedin_read_thread',
@@ -240,14 +240,50 @@ Rispondi SOLO con JSON: {"scope":"...", "level":"..."}`;
 // ══════════════════════════════════════════════════════════════
 // 3. SELECT TOOLS — filtra tool per scope
 // ══════════════════════════════════════════════════════════════
+// Alcuni scope dicono DI COSA si parla, non COSA si deve saper fare:
+// "logistics", "sales", "tmwe", "findair", "memory" servono a scegliere i
+// capitoli di conoscenza, e in TOOL_SCOPES non esistono. Se sono gli unici
+// rilevati, l'Esecutore parte con zero strumenti — verificato:
+//   "memorizza che il codice cliente di Rossi è 4471" → [sales,memory] → 0
+//   "quali documenti servono in dogana per gli USA"   → [logistics]    → 0
+// e nel secondo caso save_memory esiste, ma vive nello scope "admin":
+// lo strumento c'era, era solo irraggiungibile dall'intento che porta il
+// suo nome. Qui ognuno di questi argomenti dichiara di che mani ha bisogno.
+const SCOPE_ARGOMENTO = {
+  memory: ['admin'],                 // save_memory, kb, ricordi
+  logistics: ['search', 'browse'],   // dogane, documenti, tratte: si guarda
+  sales: ['data', 'communicate'],    // clienti, preventivi, contatti
+  tmwe: ['search', 'browse', 'data'],
+  findair: ['search', 'browse', 'data'],
+};
+
 function selectTools(scopes, allTools) {
   if (!scopes || scopes.includes('chat')) return [];
+
+  // Gli argomenti si traducono nelle capacità che richiedono
+  const effettivi = [];
+  for (const s of scopes) {
+    effettivi.push(s);
+    if (SCOPE_ARGOMENTO[s]) effettivi.push(...SCOPE_ARGOMENTO[s]);
+  }
+
   const selectedNames = new Set();
-  for (const scope of scopes) {
+  for (const scope of effettivi) {
     const scopeTools = TOOL_SCOPES[scope];
     if (scopeTools === null) return allTools; // full scope
     if (scopeTools) scopeTools.forEach(t => selectedNames.add(t));
   }
+
+  // Rete di sicurezza: un lavoro da fare senza uno strumento in mano non è
+  // un lavoro, è un modello che deve inventare. Meglio le mani di base che
+  // il nulla — e resta scritto che è successo, perché è un buco da chiudere.
+  if (selectedNames.size === 0) {
+    console.log(`[SuperMario] Nessuno strumento per gli scope [${scopes.join(',')}]: uso quelli di base`);
+    for (const s of ['search', 'browse']) {
+      (TOOL_SCOPES[s] || []).forEach(t => selectedNames.add(t));
+    }
+  }
+
   return allTools.filter(t => selectedNames.has(t.function.name));
 }
 

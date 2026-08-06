@@ -29,6 +29,7 @@ const TOOL_RISK_TAXONOMY = {
   prepare_whatsapp_message: { level:'prepare', confirm:false, batchable:true, truth:'Prepara testo WhatsApp.' },
   prepare_linkedin_message: { level:'prepare', confirm:false, batchable:true, truth:'Prepara testo LinkedIn.' },
   create_file:     { level:'write_local', confirm:false, batchable:true, truth:'Crea file sandbox.' },
+  crea_report:     { level:'write_local', confirm:false, batchable:true, truth:'Crea report impaginato.' },
   save_local_file: { level:'write_local', confirm:false, batchable:true, truth:'Salva file locale.' },
   save_memory:     { level:'write_local', confirm:false, batchable:true, truth:'Salva memoria persistente.' },
   fill_form:       { level:'write_form', confirm:false, batchable:true, truth:'Compila form senza submit.' },

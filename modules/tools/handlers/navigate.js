@@ -3,6 +3,7 @@
 
 const { COBRA_DEFAULTS } = require('../../config');
 const { assertSSRFSafe } = require('../../security/ssrf');
+const { Sorveglianza } = require('../../collega/sorveglianza');
 
 async function handle(args, ctx) {
   const url = args.url;
@@ -27,15 +28,31 @@ async function handle(args, ctx) {
   // com'era, dicendolo apertamente.
   if (!ctx.session._cachePagine) ctx.session._cachePagine = new Map();
   const chiave = String(url).trim();
-  if (ctx.session._cachePagine.has(chiave)) {
+  // La cache serve il TESTO, ma il browser resta dov'è: se dopo si clicca o
+  // si compila un campo, si agisce sulla pagina precedente credendo di essere
+  // qui. È il modo in cui i prezzi di una città finiscono sotto il nome di
+  // un'altra — questa volta per meccanica, non per distrazione del modello.
+  //
+  // Quindi la scorciatoia vale solo se non c'è stato niente in mezzo. Appena
+  // qualcuno ha toccato la pagina, si torna a navigare per davvero.
+  const toccataDopo = ctx.session._ultimaAzionePagina
+    && ctx.session._cachePagine.has(chiave)
+    && ctx.session._ultimaAzionePagina > (ctx.session._cachePagine.get(chiave).quando || 0);
+
+  if (ctx.session._cachePagine.has(chiave) && !toccataDopo) {
     const c = ctx.session._cachePagine.get(chiave);
     ctx.log(`[navigate] Già letta in questo turno, servita dalla cache: ${chiave}`);
     ctx.emitReasoning('Pagina già letta in questo turno: riuso il contenuto', '♻️');
     return JSON.stringify({
       ok: true, url: c.url, title: c.title, content: c.content, via: 'cache-turno',
       nota: 'Questa pagina l\'hai GIÀ letta in questo turno: sotto c\'è il contenuto identico a prima. '
-        + 'Non rileggerla ancora. Se ti serve una tratta o un parametro diverso, cambia l\'URL.',
+        + 'Non rileggerla ancora. Se ti serve una tratta o un parametro diverso, cambia l\'URL. '
+        + 'Attenzione: il contenuto arriva dalla lettura di prima, la scheda del browser non si è mossa.',
     });
+  }
+  if (toccataDopo) {
+    ctx.log(`[navigate] La pagina è stata toccata dopo la lettura: ci torno per davvero invece di riusare la cache`);
+    ctx.session._cachePagine.delete(chiave);
   }
 
   // Same-domain loop protection
@@ -66,6 +83,12 @@ async function handle(args, ctx) {
   if (!hdCheck.allowed) return JSON.stringify({ error: hdCheck.reason, rateLimited: true });
   if (hdCheck.delayed) ctx.log(`[HumanDriver] navigate ${hdCheck.domain} delayed ${hdCheck.delay}ms`);
 
+  // Una navigazione può durare decine di secondi fra attese anti-bot, cookie
+  // e riletture. Se non lascia traccia nel registro, quel tempo è
+  // indistinguibile da un blocco — ed è già successo di cercare un guasto che
+  // non c'era. Si segna l'inizio e, sotto, la fine con la durata.
+  const _iniziaNav = Date.now();
+  ctx.log(`[navigate] → ${String(url).substring(0, 120)}`);
   ctx.emitReasoning('Apro il sito per leggere il contenuto...', '🌐');
   ctx.emitThinking(`Navigo su ${url}...`);
 
@@ -101,22 +124,89 @@ async function handle(args, ctx) {
         //
         // Si aspetta quindi finché la pagina non è FERMA e non dichiara più di
         // stare caricando, non finché è abbastanza lunga.
-        const attese = [0, 1200, 1800, 2500, 3000, 3500, 4000, 4000];
-        let uguali = 0;
-        for (const attesa of attese) {
-          if (attesa) await new Promise(r => setTimeout(r, attesa));
-          let cresciuto = false;
+        // Non c'è un tetto al tempo: c'è un tetto all'IMMOBILITÀ. Una pagina
+        // che cresce può prendersi un minuto — sta lavorando. Una ferma da tre
+        // letture ha finito, o non ha niente, e aspettare non la cambia.
+        // A decidere è la sorveglianza, e mentre decide parla a Luca.
+        const guardia = new Sorveglianza({
+          avvisa: (msg, icona) => { ctx.emitReasoning(msg, icona); ctx.log(`[Sorveglianza] ${msg}`); },
+          log: ctx.log,
+        });
+        const dominio = (() => { try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return url; } })();
+
+        let sbloccatoVolte = 0;
+        for (let giro = 0; giro < 25; giro++) {
+          if (giro) await new Promise(r => setTimeout(r, Math.min(1000 + giro * 300, 3000)));
+          let guasto = null;
+          let stato = null;
+
+          // Si CHIEDE alla pagina in che stato è, invece di indovinarlo dal
+          // testo. Il browser sa dire se ha finito di caricare e se c'è
+          // qualcosa che copre il contenuto: sono fatti, non stime.
+          try {
+            stato = await ctx.bridgeCommand('stato_pagina', {});
+          } catch (_) { /* comando non disponibile: si prosegue come prima */ }
+
+          // Un ostacolo si riconosce da cosa fa — sta davanti, copre, blocca
+          // lo scorrimento — non da come si chiama. Che sia un banner cookie,
+          // una newsletter, un invito a scaricare l'app o un avviso di età,
+          // il trattamento è lo stesso: si toglie di mezzo e si rilegge.
+          if (stato?.bloccata && sbloccatoVolte < 3) {
+            sbloccatoVolte++;
+            try {
+              const sblocco = await ctx.bridgeCommand('sblocca_pagina', {});
+              const quanti = (stato.ostacoli || []).length;
+              ctx.log(`[Ostacoli] ${dominio}: ${quanti} elemento/i copriva/no la pagina`
+                + `${stato.scorrimentoBloccato ? ' (scorrimento bloccato)' : ''} → ${(sblocco?.azioni || []).join(', ')}`);
+              ctx.emitReasoning(`Tolgo di mezzo quello che copre la pagina su ${dominio}`, '🧹');
+            } catch (e) { ctx.log(`[Ostacoli] sblocco non riuscito su ${dominio}: ${e.message}`); }
+            continue;   // si rilegge subito dopo aver liberato la vista
+          }
+
           try {
             const fresh = await ctx.bridgeCommand('get_page_content', {});
             const freshText = fresh?.markdown || fresh?.text || '';
-            if (fresh?.ok && freshText.length > content.length) { content = freshText.substring(0, 12000); cresciuto = true; }
-          } catch (_) { /* si tiene il contenuto già ottenuto */ }
+            // Il testo nuovo si tiene se è più lungo, OPPURE se porta dei dati
+            // che prima non c'erano. Su una pagina che si costruisce da sola
+            // lo scheletro di caricamento — filtri, elenco compagnie, riquadri
+            // vuoti — è spesso più lungo del risultato finale: preferendo
+            // sempre il più lungo si buttava via proprio la versione coi
+            // prezzi, che è l'unica che interessa.
+            const haDati = (t) => /(?:€|\$|£)\s?\d|\d[\d.,]*\s?(?:€|\$|EUR|USD)|\d{1,2}:\d{2}/.test(t);
+            if (fresh?.ok && freshText && (freshText.length > content.length || (haDati(freshText) && !haDati(content)))) {
+              content = freshText.substring(0, 12000);
+            }
+          } catch (e) { guasto = e.message; }
 
-          uguali = cresciuto ? 0 : uguali + 1;
-          const staCaricando = /caricamento|sto cercando|in corso\.\.\.|loading|searching|please wait|ricerca in corso/i.test(content);
-          // Ferma e senza segnali di attesa: la pagina ha finito, qualunque sia la lunghezza
-          if (uguali >= 2 && !staCaricando) break;
+          // Il documento non ha finito di caricare: è la pagina a dirlo, e
+          // finché lo dice non c'è nessun motivo di considerarla ferma.
+          const nonHaFinito = stato ? (!stato.pronta || stato.dichiaraAttesa) : false;
+          const staCaricando = nonHaFinito
+            || /caricamento|sto cercando|in corso\.\.\.|loading|searching|please wait|ricerca in corso/i.test(content);
+          const esito = guardia.segnala({ misura: content.length, attesa: staCaricando, guasto, cosa: dominio });
+
+          if (esito.decisione === 'concluso') break;
+          if (esito.decisione === 'cambia_strada') {
+            ctx.log(`[Sorveglianza] Cambio strada su ${dominio}: ${esito.motivo}`);
+            break;
+          }
+          if (esito.decisione === 'chiedi_a_luca') {
+            ctx.log(`[Sorveglianza] ${dominio}: ${esito.motivo} — consegno quello che ho`);
+            ctx.emitReasoning(`${dominio} è fermo: vado avanti con quello che sono riuscito a leggere`, '🔀');
+            break;
+          }
         }
+        // L'esperienza si scrive: la prossima volta il registro sapra' gia'
+        // se questa fonte risponde o fa perdere tempo.
+        if (ctx.registroFonti) {
+          try {
+            const haDati = /(?:€|\$|£)\s?\d|\d[\d.,]*\s?(?:€|\$|EUR|USD)|\d{1,2}:\d{2}/.test(content);
+            ctx.registroFonti.registra(url, { caratteri: content.length, bloccata: false, dati: haDati });
+          } catch (_) { /* best-effort */ }
+        }
+        const _sorv = guardia.riepilogo();
+        ctx.log(`[Sorveglianza] ${dominio}: ${_sorv.letture} letture, ${_sorv.progressi} progressi, `
+          + `${_sorv.guasti.length} guasti, ${Math.round(_sorv.durataMs / 1000)}s`);
         const haNumeri = /(?:€|\$|£)\s?\d|\d[\d.,]*\s?(?:€|\$|£|EUR|USD)/.test(content);
         if (!haNumeri && content.length <= 1500) {
           ctx.log(`[navigate] Pagina senza dati leggibili su ${url} (${content.length} caratteri) — probabile blocco anti-bot o zero risultati`);
@@ -135,7 +225,8 @@ async function handle(args, ctx) {
             ctx.log(`[Screenshot] navigate non ha ottenuto l'immagine: ${ss?.error || 'risposta senza campo screenshot'}`);
           }
         } catch (e) { ctx.log(`[Screenshot] navigate: comando fallito — ${e.message}`); }
-        ctx.session._cachePagine.set(chiave, { url: ctx.session.lastPage.url, title, content });
+        ctx.session._cachePagine.set(chiave, { url: ctx.session.lastPage.url, title, content, quando: Date.now() });
+        ctx.log(`[navigate] ← ${content.length} caratteri in ${Math.round((Date.now() - _iniziaNav) / 1000)}s da ${String(ctx.session.lastPage.url).substring(0, 80)}`);
         const result = { ok: true, url: ctx.session.lastPage.url, title, content, via: 'bridge' };
         // Distinguere "non ho letto" da "non c'è niente da leggere" è decisivo:
         // se l'AI non lo sa, riempie il vuoto con dati inventati.

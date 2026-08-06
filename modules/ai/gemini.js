@@ -1,3 +1,4 @@
+const { fetchConLimite } = require('./fetch-con-limite');
 // modules/ai/gemini.js — Google Gemini API provider
 // Source: server.js lines 7382-7452
 
@@ -20,7 +21,7 @@ async function callGemini(key, model, systemPrompt, messages, tools, ctx) {
     round++;
     const body = { system_instruction: { parts: [{ text: systemPrompt }] }, contents, generationConfig: { maxOutputTokens: 16000, temperature: 0.5 } };
     if (geminiTools) body.tools = geminiTools;
-    const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await fetchConLimite(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, 90000, 'Gemini');
     if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error?.message || `HTTP ${res.status}`); }
     const data = await res.json();
 

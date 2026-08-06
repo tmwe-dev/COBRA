@@ -135,6 +135,18 @@ class Processo {
     }
 
     if (p.stato === 'in_corso') p.stato = 'verifica';
+
+    // Un passo mai aperto formalmente, ma con la prova in mano, è un passo
+    // fatto. Prima veniva rifiutato per contabilità — e il modello, non
+    // sapendo che fare del rifiuto, lo dichiarava FALLITO: nel log del 6
+    // agosto si legge "Passo 1 fallito: Il passo è in stato di attesa e non
+    // può essere completato", che descrive un problema di registro, non un
+    // lavoro andato male. Chi legge crede che la ricerca sia fallita.
+    if (p.stato === 'attesa') {
+      p.stato = 'verifica';
+      this.avvisi.push(`Passo ${n} chiuso senza essere stato aperto: la prova c'era`);
+    }
+
     if (!this._transizioneValida(p.stato, 'completato')) {
       return { ok: false, motivo: `Il passo ${n} è in stato "${p.stato}": non può essere completato` };
     }
@@ -151,6 +163,16 @@ class Processo {
     const testo = String(motivo || '').trim();
     if (testo.length < 5) {
       return { ok: false, motivo: `Per dichiarare fallito il passo ${n} serve un motivo comprensibile` };
+    }
+    // "Non sono riuscito a completare il passo 1" non è un motivo: è la
+    // ripetizione del fallimento con altre parole. Passava il controllo sulla
+    // lunghezza e lasciava l'utente davanti a un passo rosso senza sapere
+    // perché. Un motivo deve dire cosa si è opposto: quale pagina, quale
+    // errore, cosa mancava.
+    const vuoto = /^(non (sono|ci sono) riuscit|non riesco|non . stato possibile|fallit|errore)[a-z\s]*(a|nel|per)?\s*(completare|eseguire|fare|portare a termine)?\s*(il\s*)?(passo|step)?\s*\d*\.?$/i.test(testo);
+    if (vuoto) {
+      return { ok: false, motivo: `"${testo}" non spiega niente: ripete solo che non ce l'hai fatta. `
+        + 'Scrivi cosa te lo ha impedito — quale pagina non ha risposto, quale dato mancava, quale errore hai visto.' };
     }
     if (p.stato === 'attesa') p.stato = 'in_corso';
     if (!this._transizioneValida(p.stato, 'fallito')) {

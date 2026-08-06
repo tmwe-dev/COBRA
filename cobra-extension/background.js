@@ -15,8 +15,13 @@
  *   ext    → { type:'bridge_result', id, result }
  */
 
-const COBRA_WS_URL = 'ws://localhost:3000';
-const COBRA_API_URL = 'http://localhost:3000';
+// 127.0.0.1 e NON localhost: il server ascolta solo su IPv4, mentre su macOS
+// "localhost" risolve prima in ::1 (IPv6). Verificato: http://::1:3000 non
+// risponde. Chi passa da "localhost" dipende dal ripiego su IPv4 del browser,
+// e quando quel ripiego tarda Chrome scrive un errore rosso sulla riga della
+// WebSocket. Con l'indirizzo esplicito non c'e' ambiguita' da risolvere.
+const COBRA_WS_URL = 'ws://127.0.0.1:3000';
+const COBRA_API_URL = 'http://127.0.0.1:3000';
 const VERSION = chrome.runtime.getManifest().version;
 let ws = null;
 let connected = false;
@@ -33,6 +38,15 @@ let _authRetryCount = 0; // Track auth retry attempts to prevent infinite loop
 // ── Work Tab: tab separato per navigazione, MAI il tab di COBRA ──
 let _workTabId = null;   // ID del tab di lavoro (booking.com, google, ecc.)
 let _cobraTabId = null;  // ID del tab dove gira l'interfaccia COBRA (localhost:3000)
+
+
+// Il tab di COBRA va riconosciuto sia che l'interfaccia sia aperta su
+// localhost sia su 127.0.0.1: sono lo stesso posto, e scambiarlo per un tab
+// di lavoro significa navigarci sopra e cancellare la chat sotto gli occhi.
+function eIlTabDiCobra(url) {
+  if (!url) return false;
+  return url.includes('localhost:3000') || url.includes('127.0.0.1:3000');
+}
 
 // ── Action Log (Modulo 5) ──
 const actionLog = [];
@@ -60,13 +74,43 @@ async function fetchBridgeToken() {
   }
 }
 
-function connect() {
+let _tentativiConnessione = 0;
+
+// Il server c'e'? Una domanda a cui si puo' rispondere PRIMA di aprire la
+// WebSocket. Senza questo controllo un server spento produce un errore rosso
+// non catturabile sulla riga "new WebSocket", che poi copre gli errori veri.
+async function serverVivo() {
+  try {
+    const r = await fetch(`${COBRA_API_URL}/api/status`, { cache: 'no-store' });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
+function riprova() {
+  _tentativiConnessione++;
+  // Si riprova sempre, ma senza martellare: da 2s fino a 30s.
+  const attesa = Math.min(2000 * _tentativiConnessione, 30000);
+  setTimeout(connect, attesa);
+}
+
+async function connect() {
   if (ws && ws.readyState <= 1) return;
+  if (!(await serverVivo())) {
+    if (_tentativiConnessione === 0 || _tentativiConnessione % 10 === 0) {
+      console.log(`[COBRA Bridge] Il server non risponde su ${COBRA_API_URL} — riprovo. Non è un errore dell'estensione: è COBRA spento o in riavvio.`);
+    }
+    updateBadge('OFF', '#ef4444');
+    riprova();
+    return;
+  }
   try {
     ws = new WebSocket(COBRA_WS_URL);
     ws.onopen = async () => {
       connected = true;
-      console.log('[COBRA Bridge v2.1] Connected');
+      _tentativiConnessione = 0;
+      console.log('[COBRA Bridge] Connesso a ' + COBRA_WS_URL);
       // Fetch auth token with retry
       for (let attempt = 0; attempt < 3 && !_bridgeToken; attempt++) {
         if (attempt > 0) await new Promise(r => setTimeout(r, 500 * attempt));
@@ -83,7 +127,7 @@ function connect() {
       try {
         const tabs = await chrome.tabs.query({ currentWindow: true });
         for (const t of tabs) {
-          if (t.url && t.url.includes('localhost:3000')) {
+          if (eIlTabDiCobra(t.url)) {
             _cobraTabId = t.id;
             console.log('[COBRA Bridge] COBRA tab registered:', t.id);
             break;
@@ -135,9 +179,14 @@ function connect() {
         }
       }
     };
-    ws.onclose = () => { connected = false; updateBadge('OFF', '#ef4444'); setTimeout(connect, 5000); };
-    ws.onerror = () => { ws.close(); };
-  } catch { setTimeout(connect, 5000); }
+    ws.onclose = () => { connected = false; updateBadge('OFF', '#ef4444'); riprova(); };
+    // Un errore di rete qui NON e' un guasto dell'estensione: e' il server
+    // spento o in riavvio. Si chiude e si riprova, senza allarmare.
+    ws.onerror = () => { try { ws.close(); } catch (_) { /* gia' chiusa */ } };
+  } catch (e) {
+    console.log('[COBRA Bridge] Connessione non riuscita: ' + (e && e.message) + ' — riprovo');
+    riprova();
+  }
 }
 
 function updateBadge(text, color) {
@@ -165,7 +214,7 @@ async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab) throw new Error('No active tab');
   // Se il tab attivo è COBRA, non usarlo per navigazione
-  if (tab.url && tab.url.includes('localhost:3000')) {
+  if (eIlTabDiCobra(tab.url)) {
     _cobraTabId = tab.id;
   }
   return tab;
@@ -200,7 +249,7 @@ async function getWorkTab() {
   try {
     const allTabs = await chrome.tabs.query({});
     for (const t of allTabs) {
-      if (t.url?.includes('localhost:3000')) { _cobraTabId = t.id; break; }
+      if (eIlTabDiCobra(t.url)) { _cobraTabId = t.id; break; }
     }
   } catch { /* impossibile elencare le schede */ }
 
@@ -277,15 +326,166 @@ function eseguiNellaPagina(sorgente, resolveCode, mouseCode, argomenti) {
  * visibile, perché chiede al motore di disegnare la pagina invece di leggere
  * quello che c'è sullo schermo.
  */
-async function catturaConIspettore(tabId, qualita = 70) {
+// Nessuna delle chiamate di cattura promette di rispondere. chrome.debugger.attach
+// resta appeso a tempo indeterminato se la scheda ha già un debugger collegato o
+// se l'utente ha aperto gli strumenti di sviluppo; captureVisibleTab fa lo stesso
+// su una finestra che Chrome ha smesso di disegnare. Senza un tetto, il gestore
+// non risponde mai e il server aspetta invano: nel monitor non compare nulla e
+// non si capisce perché. Un limite di tempo trasforma un blocco muto in un
+// errore leggibile.
+function conLimite(promessa, ms, cosa) {
+  return Promise.race([
+    promessa,
+    new Promise((_, rifiuta) => setTimeout(() => rifiuta(new Error(`${cosa} non ha risposto entro ${ms}ms`)), ms)),
+  ]);
+}
+
+// L'altezza massima di una cattura intera. Una pagina di 40.000 pixel
+// produrrebbe un'immagine che nessuno guarda e che intasa il ponte: dopo
+// 6.000 si taglia, dicendolo.
+const ALTEZZA_MASSIMA_CATTURA = 6000;
+
+
+// ══════════════════════════════════════════
+//  IL CURSORE DI COBRA
+// ══════════════════════════════════════════
+//
+// Luca, 6 agosto 2026: "non si vede il mouse di cobra muoversi e fare gli
+// aggiornamenti. deve esserci un mouse visibile che mostra il movimento
+// durante la navigazione".
+//
+// Aveva ragione e il motivo è più che estetico: senza cursore, guardando
+// l'anteprima non si distingue una pagina su cui COBRA sta lavorando da una
+// pagina ferma, e non si capisce MAI su cosa abbia cliccato. Quando poi il
+// click va sul bottone sbagliato — è successo col banner dei cookie — non
+// c'è modo di accorgersene se non dal risultato finale.
+//
+// Il cursore è un elemento disegnato dentro la pagina, quindi entra nella
+// fotografia: quello che vedi nell'anteprima è dove COBRA ha davvero messo
+// le mani. Si muove con una transizione, così il movimento si vede anche
+// fra due scatti; e quando clicca lascia un cerchio che si allarga.
+//
+// Vive in un contenitore isolato (shadow DOM) per non ereditare il CSS del
+// sito, e non intercetta i click (pointer-events: none): è un disegno, non
+// un ostacolo.
+function disegnaCursore(x, y, azione) {
+  const ID = '__cobra_cursore__';
+  let ospite = document.getElementById(ID);
+  if (!ospite) {
+    ospite = document.createElement('div');
+    ospite.id = ID;
+    ospite.style.cssText = 'position:fixed;left:0;top:0;width:0;height:0;z-index:2147483647;pointer-events:none;';
+    (document.body || document.documentElement).appendChild(ospite);
+    const radice = ospite.attachShadow({ mode: 'open' });
+    radice.innerHTML = `
+      <style>
+        .punta { position:fixed; width:26px; height:26px; margin:-3px 0 0 -3px;
+                 transition: left .45s cubic-bezier(.22,.61,.36,1), top .45s cubic-bezier(.22,.61,.36,1);
+                 pointer-events:none; will-change:left,top; }
+        .punta svg { filter: drop-shadow(0 2px 4px rgba(0,0,0,.5)); }
+        .etichetta { position:fixed; transform:translate(20px,18px); background:#7c3aed; color:#fff;
+                     font:600 11px/1.5 -apple-system,system-ui,sans-serif; padding:2px 8px;
+                     border-radius:10px; white-space:nowrap; pointer-events:none;
+                     transition: left .45s cubic-bezier(.22,.61,.36,1), top .45s cubic-bezier(.22,.61,.36,1); }
+        .onda { position:fixed; width:14px; height:14px; margin:-7px 0 0 -7px; border-radius:50%;
+                border:2px solid #7c3aed; pointer-events:none; animation: cresci .6s ease-out forwards; }
+        @keyframes cresci { from { transform:scale(.3); opacity:1 } to { transform:scale(3.4); opacity:0 } }
+      </style>
+      <div class="punta" id="p">
+        <svg viewBox="0 0 24 24" width="26" height="26">
+          <path d="M5 2 L5 20 L10 15.5 L13 22 L16 20.5 L13 14.5 L19.5 14 Z"
+                fill="#7c3aed" stroke="#fff" stroke-width="1.4" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <div class="etichetta" id="e"></div>`;
+    ospite._radice = radice;
+  }
+  // Si usa il riferimento tenuto da parte, non la proprietà shadowRoot: è lo
+  // stesso oggetto, ma non dipende da come il contenitore è stato aperto.
+  const radice = ospite._radice || ospite.shadowRoot;
+  if (!radice) return { ok: false };
+  const punta = radice.getElementById('p');
+  const etichetta = radice.getElementById('e');
+  punta.style.left = x + 'px';
+  punta.style.top = y + 'px';
+  etichetta.style.left = x + 'px';
+  etichetta.style.top = y + 'px';
+  etichetta.textContent = azione || '';
+  etichetta.style.display = azione ? 'block' : 'none';
+
+  if (azione === 'clic') {
+    const onda = document.createElement('div');
+    onda.className = 'onda';
+    onda.style.left = x + 'px';
+    onda.style.top = y + 'px';
+    radice.appendChild(onda);
+    setTimeout(() => { try { onda.remove(); } catch (_) { /* già andata */ } }, 700);
+  }
+  return { ok: true, x, y };
+}
+
+// Porta il cursore sopra un elemento e lascia il tempo di vederlo arrivare.
+// L'attesa non è un vezzo: senza, la fotografia successiva coglie il cursore
+// ancora al punto di partenza e il movimento non si vede.
+async function muoviCursoreSu(tabId, selettore, azione) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: (sel, disegna, atto) => {
+        const trova = (s) => {
+          try { return document.querySelector(s); } catch (_) { /* selettore non valido */ }
+          return null;
+        };
+        const el = trova(sel);
+        if (!el) return null;
+        const r = el.getBoundingClientRect();
+        // eslint-disable-next-line no-new-func
+        return new Function('return ' + disegna)()(r.left + r.width / 2, r.top + r.height / 2, atto);
+      },
+      args: [String(selettore || ''), disegnaCursore.toString(), azione || ''],
+    });
+    await new Promise(r => setTimeout(r, 500));   // il tempo della transizione
+  } catch (_) { /* il cursore è un di più: non deve mai fermare il lavoro */ }
+}
+
+async function catturaConIspettore(tabId, qualita = 70, intera = true) {
   const bersaglio = { tabId };
   let collegato = false;
   try {
-    await chrome.debugger.attach(bersaglio, '1.3');
+    await conLimite(chrome.debugger.attach(bersaglio, '1.3'), 3000, 'collegamento ispettore');
     collegato = true;
-    const risposta = await chrome.debugger.sendCommand(bersaglio, 'Page.captureScreenshot', {
-      format: 'jpeg', quality: qualita, captureBeyondViewport: false,
-    });
+
+    // ── La pagina intera, non solo la piega ──
+    //
+    // Con captureBeyondViewport:false si fotografava soltanto la parte
+    // visibile: nel monitor la pagina finiva a metà e sotto restava il nero.
+    // Chiedendo le misure del documento e passandole come ritaglio, il motore
+    // disegna anche quello che sta sotto il bordo dello schermo — è la stessa
+    // cosa che fa Chrome con "cattura schermata a pagina intera".
+    let ritaglio = null;
+    if (intera) {
+      try {
+        const misure = await conLimite(
+          chrome.debugger.sendCommand(bersaglio, 'Page.getLayoutMetrics', {}), 3000, 'misure pagina');
+        const c = misure?.cssContentSize || misure?.contentSize;
+        if (c && c.width > 0 && c.height > 0) {
+          ritaglio = {
+            x: 0, y: 0,
+            width: Math.min(c.width, 2000),
+            height: Math.min(c.height, ALTEZZA_MASSIMA_CATTURA),
+            scale: 1,
+          };
+        }
+      } catch { /* senza misure si ripiega sulla piega, meglio che niente */ }
+    }
+
+    const risposta = await conLimite(
+      chrome.debugger.sendCommand(bersaglio, 'Page.captureScreenshot', {
+        format: 'jpeg', quality: qualita,
+        captureBeyondViewport: !!ritaglio,
+        ...(ritaglio ? { clip: ritaglio } : {}),
+      }), 9000, 'cattura ispettore');
     return risposta?.data || null;
   } finally {
     if (collegato) { try { await chrome.debugger.detach(bersaglio); } catch { /* già staccato */ } }
@@ -358,7 +558,7 @@ function resolveElementCode() {
         case 'text': {
           const lower = val.toLowerCase();
           for (const el of document.querySelectorAll('a, button, input[type="submit"], [role="button"], label, span, div, li, td, th, h1, h2, h3, h4, p')) {
-            if ((el.textContent || '').trim().toLowerCase().includes(lower) && el.offsetParent !== null) return el;
+            if ((el.textContent || '').trim().toLowerCase().includes(lower) && ((el.getBoundingClientRect().width || 0) >= 2 && (el.getBoundingClientRect().height || 0) >= 2)) return el;
           }
           // Shadow DOM search
           const found = searchShadowDOM(document, lower);
@@ -370,11 +570,16 @@ function resolveElementCode() {
           const ariaLower = val.toLowerCase().trim();
           // 1. Exact match
           const exact = document.querySelector('[aria-label="' + val + '"]');
-          if (exact && exact.offsetParent !== null) return exact;
+          if (exact) { const _r = exact.getBoundingClientRect(); if (_r.width >= 2 && _r.height >= 2) return exact; }
+          // La visibilità si misura dallo spazio occupato, non da offsetParent:
+          // quello è nullo per TUTTI gli elementi position:fixed, e usarlo come
+          // prova di invisibilità rendeva invisibili a COBRA le intestazioni
+          // fisse, i modali, i pulsanti flottanti e i banner dei cookie — cioè
+          // buona parte di quello che su un sito moderno si deve cliccare.
           // 2. Fuzzy: cerca su tutti gli elementi interattivi + custom components
           const candidates = document.querySelectorAll('input, textarea, button, select, [role="combobox"], [role="textbox"], [role="button"], [role="listbox"], [role="searchbox"], [contenteditable="true"], [aria-label], [placeholder], [title]');
           for (const el of candidates) {
-            if (el.offsetParent === null) continue;
+            { const _r = el.getBoundingClientRect(); if (_r.width < 2 || _r.height < 2) continue; }
             const label = (el.getAttribute('aria-label') || '').toLowerCase();
             const ph = (el.getAttribute('placeholder') || '').toLowerCase();
             const title = (el.getAttribute('title') || '').toLowerCase();
@@ -394,7 +599,7 @@ function resolveElementCode() {
         case 'role': {
           const lower = val.toLowerCase();
           for (const el of document.querySelectorAll('[role="' + lower + '"]')) {
-            if (el.offsetParent !== null) return el;
+            if (((el.getBoundingClientRect().width || 0) >= 2 && (el.getBoundingClientRect().height || 0) >= 2)) return el;
           }
           return null;
         }
@@ -434,7 +639,7 @@ function resolveElementCode() {
         if (node.shadowRoot) {
           // Cerca dentro Shadow DOM
           for (const el of node.shadowRoot.querySelectorAll('*')) {
-            if ((el.textContent || '').trim().toLowerCase().includes(textLower) && el.offsetParent !== null) return el;
+            if ((el.textContent || '').trim().toLowerCase().includes(textLower) && ((el.getBoundingClientRect().width || 0) >= 2 && (el.getBoundingClientRect().height || 0) >= 2)) return el;
           }
           const deep = searchShadowDOM(node.shadowRoot, textLower);
           if (deep) return deep;
@@ -685,33 +890,74 @@ async function executeCommand(command, args) {
         }
         // Prima via: cattura diretta. Veloce, ma Chrome smette di disegnare le
         // finestre completamente coperte e restituisce "image readback failed".
-        try {
-          const dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: 'jpeg', quality: args.quality || 70 });
-          if (dataUrl) return { ok: true, screenshot: dataUrl.split(',')[1], via: 'cattura diretta' };
-        } catch (e) {
-          console.log('[COBRA Bridge] Cattura diretta non riuscita:', e.message);
-        }
-
-        // Seconda via: il protocollo di ispezione, che disegna la pagina anche
-        // se la finestra non è visibile. È l'unico modo per avere l'anteprima
-        // senza portare la finestra in primo piano.
+        const motivi = [];
+        // ── Prima l'ispettore, perché è l'unico che vede la pagina INTERA ──
+        //
+        // Prima veniva provata per prima la cattura diretta, più veloce. Ma
+        // quella fotografa solo ciò che sta a schermo: nel monitor la pagina
+        // finiva a metà e sotto restava il nero, e nessuna delle due vie
+        // avrebbe mai mostrato il resto. Meglio qualche decimo di secondo in
+        // più e vedere il documento per intero.
         if (idScheda && chrome.debugger) {
           try {
-            const immagine = await catturaConIspettore(idScheda, args.quality || 70);
-            if (immagine) return { ok: true, screenshot: immagine, via: 'ispettore' };
+            const immagine = await catturaConIspettore(idScheda, args.quality || 70, true);
+            if (immagine) return { ok: true, screenshot: immagine, via: 'ispettore (pagina intera)' };
+            motivi.push('ispettore: nessuna immagine restituita');
           } catch (e) {
-            return { ok: false, error: `Cattura non riuscita: ${e.message}` };
+            motivi.push(`ispettore: ${e.message}`);
           }
+        } else {
+          motivi.push(chrome.debugger ? 'scheda di lavoro non trovata' : 'ispettore non disponibile');
         }
-        return { ok: false, error: 'Nessuna immagine catturata: la finestra di lavoro non è disegnata e l\'ispettore non è disponibile' };
+
+        // Ripiego: la cattura diretta. Vede solo la piega, ma una mezza
+        // immagine è meglio di nessuna immagine.
+        try {
+          const dataUrl = await conLimite(
+            chrome.tabs.captureVisibleTab(windowId, { format: 'jpeg', quality: args.quality || 70 }),
+            4000, 'cattura diretta');
+          if (dataUrl) return { ok: true, screenshot: dataUrl.split(',')[1], via: 'cattura diretta (solo la parte visibile)' };
+          motivi.push('cattura diretta: nessuna immagine restituita');
+        } catch (e) {
+          motivi.push(`cattura diretta: ${e.message}`);
+          console.log('[COBRA Bridge] Cattura diretta non riuscita:', e.message);
+        }
+        // Si risponde SEMPRE, anche per dire di non essere riusciti: un errore
+        // esplicito si legge nel registro, un'attesa infinita no.
+        return { ok: false, error: `Nessuna immagine catturata — ${motivi.join(' | ')}` };
       }
 
       // ════════════════════════════════════════
       // 3. CLICK — realistico con sequenza eventi completa
       // ════════════════════════════════════════
 
+      // Il cursore su richiesta: serve al server per mostrare dove sta
+      // guardando anche quando non clicca niente — una lettura, un'attesa,
+      // uno scorrimento. Senza, l'anteprima di una pagina su cui si sta
+      // lavorando è identica a quella di una pagina ferma.
+      case 'mostra_cursore': {
+        const tab = await getWorkTab();
+        if (args.selettore) {
+          await muoviCursoreSu(tab.id, args.selettore, args.azione || '');
+          return { ok: true, dove: args.selettore };
+        }
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id }, world: 'MAIN',
+          func: (disegna, x, y, atto) => {
+            // eslint-disable-next-line no-new-func
+            return new Function('return ' + disegna)()(x, y, atto);
+          },
+          args: [disegnaCursore.toString(), Number(args.x) || 40, Number(args.y) || 40, args.azione || ''],
+        });
+        await new Promise(r => setTimeout(r, 450));
+        return { ok: true, x: args.x, y: args.y };
+      }
+
       case 'click': {
         const tab = await getWorkTab();
+        // Il cursore arriva prima del click: così nella fotografia si vede
+        // DOVE COBRA ha messo le mani, non solo cosa è successo dopo.
+        await muoviCursoreSu(tab.id, args.selector, 'clic');
         return await run(tab.id, (sel) => {
           eval(RESOLVE_CODE);
           eval(MOUSE_CODE);
@@ -832,6 +1078,10 @@ async function executeCommand(command, args) {
 
       // Type istantaneo (setValue + react events)
       case 'type': {
+        try {
+          const t = await getWorkTab();
+          await muoviCursoreSu(t.id, args.selector, 'scrivo');
+        } catch (_) { /* il cursore non deve mai bloccare la scrittura */ }
         const tab = await getWorkTab();
         return await run(tab.id, (text, sel, clear) => {
           eval(RESOLVE_CODE);
@@ -930,7 +1180,7 @@ async function executeCommand(command, args) {
             if (!prevented && mapped === 'Tab') {
               // Simula cambio focus
               const focusable = [...document.querySelectorAll('input, select, textarea, button, a[href], [tabindex]')]
-                .filter(e => e.offsetParent !== null && !e.disabled);
+                .filter(e => ((e.getBoundingClientRect().width || 0) >= 2 && (e.getBoundingClientRect().height || 0) >= 2) && !e.disabled);
               const idx = focusable.indexOf(target);
               if (idx >= 0 && idx < focusable.length - 1) focusable[idx + 1].focus();
             }
@@ -1231,7 +1481,7 @@ async function executeCommand(command, args) {
           const lower = value.toLowerCase();
           const options = document.querySelectorAll('[role="option"], [role="listbox"] > *, .option, li[data-value], .select-option, [class*="option"]');
           for (const opt of options) {
-            if (opt.textContent.trim().toLowerCase().includes(lower) && opt.offsetParent !== null) {
+            if (opt.textContent.trim().toLowerCase().includes(lower) && ((opt.getBoundingClientRect().width || 0) >= 2 && (opt.getBoundingClientRect().height || 0) >= 2)) {
               realisticClick(opt);
               return { ok: true, method: 'custom_dropdown', selected: opt.textContent.trim() };
             }
@@ -1461,7 +1711,7 @@ async function executeCommand(command, args) {
           return { ok: true, count: els.length, elements: els.slice(0, 20).map(el => ({
             tag: el.tagName.toLowerCase(), text: el.textContent?.trim().substring(0, 60),
             id: el.id || '', className: el.className || '',
-            visible: el.offsetParent !== null })) };
+            visible: ((el.getBoundingClientRect().width || 0) >= 2 && (el.getBoundingClientRect().height || 0) >= 2) })) };
         }, [args.selector]);
       }
 
@@ -1522,7 +1772,8 @@ async function executeCommand(command, args) {
             switch (condition) {
               case 'hidden': {
                 const el = resolveElement(sel);
-                if (!el || el.offsetParent === null) return { ok: true, waited: Date.now() - start, state: 'hidden' };
+                if (!el) return { ok: true, waited: Date.now() - start, state: 'hidden' };
+                { const _r = el.getBoundingClientRect(); if (_r.width < 2 || _r.height < 2) return { ok: true, waited: Date.now() - start, state: 'hidden' }; }
                 break;
               }
               case 'text': {
@@ -1539,13 +1790,13 @@ async function executeCommand(command, args) {
               }
               case 'clickable': {
                 const el = resolveElement(sel);
-                if (el && el.offsetParent !== null && !el.disabled) return { ok: true, waited: Date.now() - start };
+                if (el && ((el.getBoundingClientRect().width || 0) >= 2 && (el.getBoundingClientRect().height || 0) >= 2) && !el.disabled) return { ok: true, waited: Date.now() - start };
                 break;
               }
               default: {
                 // visible
                 const el = resolveElement(sel);
-                if (el && el.offsetParent !== null) return { ok: true, waited: Date.now() - start, state: 'visible' };
+                if (el && ((el.getBoundingClientRect().width || 0) >= 2 && (el.getBoundingClientRect().height || 0) >= 2)) return { ok: true, waited: Date.now() - start, state: 'visible' };
               }
             }
             await new Promise(r => setTimeout(r, 200));
@@ -1610,6 +1861,174 @@ async function executeCommand(command, args) {
       // ════════════════════════════════════════
       // 17. PAGE UNDERSTANDING (Modulo 2)
       // ════════════════════════════════════════
+
+      // ════════════════════════════════════════
+      // STATO DELLA PAGINA — si chiede, non si indovina
+      // ════════════════════════════════════════
+      //
+      // Contare i secondi e' indovinare. Una pagina sa dire da sola se ha
+      // finito di caricare, se sta ancora scaricando dati, e se c'e' qualcosa
+      // che copre il contenuto. Questi sono fatti, non stime.
+      //
+      // Un ostacolo si riconosce da COSA FA, non da come si chiama: un
+      // elemento che sta davanti a tutto, copre mezzo schermo e blocca lo
+      // scorrimento e' un ostacolo, che sia un banner cookie, una newsletter,
+      // un invito a scaricare l'app o un avviso di eta'.
+      case 'stato_pagina': {
+        const tab = await getWorkTab();
+        return await run(tab.id, () => {
+          const vw = Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0);
+          const vh = Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0);
+          const areaSchermo = Math.max(vw * vh, 1);
+
+          // Un ostacolo e' qualcosa che sta sopra e copre. Si guarda la
+          // posizione, non il nome della classe.
+          const ostacoli = [];
+          const visti = new Set();
+          for (const el of document.querySelectorAll('div,section,aside,dialog,iframe')) {
+            if (visti.has(el)) continue;
+            let st;
+            try { st = getComputedStyle(el); } catch (_) { continue; }
+            const fisso = st.position === 'fixed' || st.position === 'sticky';
+            const modale = el.getAttribute('aria-modal') === 'true' || el.tagName === 'DIALOG';
+            if (!fisso && !modale) continue;
+            if (st.display === 'none' || st.visibility === 'hidden' || parseFloat(st.opacity || '1') < 0.05) continue;
+            const r = el.getBoundingClientRect();
+            const copertura = (r.width * r.height) / areaSchermo;
+            if (copertura < 0.12) continue;                 // troppo piccolo per bloccare
+            if (r.bottom < 0 || r.top > vh) continue;       // fuori schermo
+            const z = parseInt(st.zIndex, 10) || 0;
+            // Le barre di navigazione sono fisse ma non bloccano: si distingue
+            // per la copertura e per la presenza di pulsanti di chiusura.
+            const testo = (el.innerText || '').trim().substring(0, 200);
+            ostacoli.push({
+              tag: el.tagName.toLowerCase(),
+              id: el.id || '', classe: String(el.className || '').substring(0, 60),
+              copertura: Math.round(copertura * 100), z,
+              modale, testo,
+            });
+            visti.add(el);
+          }
+
+          // Lo scorrimento bloccato e' il segno piu' affidabile di un modale
+          const corpo = getComputedStyle(document.body);
+          const scorrimentoBloccato = corpo.overflow === 'hidden' || corpo.position === 'fixed'
+            || getComputedStyle(document.documentElement).overflow === 'hidden';
+
+          const testo = (document.body.innerText || '').trim();
+          return {
+            ok: true,
+            pronta: document.readyState === 'complete',
+            statoDocumento: document.readyState,
+            caratteri: testo.length,
+            // La pagina dichiara lei stessa di stare lavorando
+            dichiaraAttesa: /caricamento|sto cercando|loading|searching|please wait|ricerca in corso|attendere/i.test(testo.substring(0, 3000)),
+            ostacoli,
+            scorrimentoBloccato,
+            bloccata: ostacoli.length > 0 || scorrimentoBloccato,
+            titolo: document.title,
+          };
+        });
+      }
+
+      // Toglie di mezzo cio' che copre il contenuto. Prima si prova a chiudere
+      // come farebbe una persona (pulsante, Esc); se resiste, si rimuove
+      // l'elemento e si ridà lo scorrimento. Un banner che non si lascia
+      // chiudere non deve poter impedire di leggere.
+      case 'sblocca_pagina': {
+        const tab = await getWorkTab();
+        return await run(tab.id, () => {
+          const vw = window.innerWidth || 1, vh = window.innerHeight || 1;
+          const azioni = [];
+
+          const chiusuraTesti = ['accetta','accept','ok','ho capito','got it','continua','continue',
+            'chiudi','close','no grazie','no thanks','dismiss','x','consenti','allow','agree','accetto',
+            'acconsento','prosegui','va bene','capito','accetta tutti','accept all','accetta tutto'];
+
+          // Una cosa è visibile se occupa spazio e non è nascosta.
+          //
+          // Prima si usava "offsetParent === null" per dire "invisibile". Ma
+          // un elemento con position:fixed ha SEMPRE offsetParent nullo — è
+          // così che funziona il posizionamento fisso — e i banner dei cookie
+          // sono fissi per definizione. Quel controllo saltava esattamente i
+          // pulsanti che bisognava premere: su tmwe.it il banner è rimasto lì
+          // dopo tre tentativi, e nel registro si leggeva tre volte "tolgo di
+          // mezzo quello che copre la pagina" mentre non veniva tolto niente.
+          const siVede = (el) => {
+            try {
+              const r = el.getBoundingClientRect();
+              if (r.width < 2 || r.height < 2) return false;
+              const st = getComputedStyle(el);
+              return st.display !== 'none' && st.visibility !== 'hidden' && Number(st.opacity) !== 0;
+            } catch (_) { return false; }
+          };
+
+          // 1. Come farebbe una persona: cercare il pulsante di chiusura
+          const candidati = [...document.querySelectorAll(
+            'button,[role="button"],a[role="button"],input[type="button"],input[type="submit"],[aria-label],[class*="close"],[id*="close"],[class*="accept" i],[id*="accept" i]')];
+          for (const el of candidati) {
+            try {
+              if (!siVede(el)) continue;
+              const et = ((el.innerText || el.value || '') + ' ' + (el.getAttribute('aria-label') || '')).trim().toLowerCase();
+              if (!et || et.length > 40) continue;
+              if (chiusuraTesti.some(t => et === t || et.includes(t))) { el.click(); azioni.push('cliccato:' + et.substring(0, 20)); break; }
+            } catch (_) { /* elemento sparito */ }
+          }
+
+          // 1b. Gli stessi pulsanti dentro i riquadri di consenso annidati.
+          // Molti servizi (OneTrust, Cookiebot, Iubenda) mettono il banner in
+          // un iframe: se è dello stesso sito si può entrare, altrimenti no.
+          for (const fr of document.querySelectorAll('iframe')) {
+            let doc = null;
+            try { doc = fr.contentDocument; } catch (_) { continue; }   // altro dominio: non si entra
+            if (!doc) continue;
+            try {
+              for (const el of doc.querySelectorAll('button,[role="button"],a')) {
+                const et = (el.innerText || '').trim().toLowerCase();
+                if (!et || et.length > 40) continue;
+                if (chiusuraTesti.some(t => et === t || et.includes(t))) {
+                  el.click(); azioni.push('cliccato nel riquadro:' + et.substring(0, 20)); break;
+                }
+              }
+            } catch (_) { /* riquadro non leggibile */ }
+          }
+
+          // 2. Esc: molti modali lo ascoltano
+          try {
+            document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+            azioni.push('esc');
+          } catch (_) { /* niente */ }
+
+          // 3. Se qualcosa copre ancora, si toglie
+          for (const el of document.querySelectorAll('div,section,aside,dialog,iframe')) {
+            let st; try { st = getComputedStyle(el); } catch (_) { continue; }
+            if (st.position !== 'fixed' && st.position !== 'sticky' && el.tagName !== 'DIALOG') continue;
+            if (st.display === 'none' || st.visibility === 'hidden') continue;
+            const r = el.getBoundingClientRect();
+            const copertura = (r.width * r.height) / (vw * vh);
+
+            // Un banner d'angolo non copre un quarto dello schermo: quello di
+            // tmwe.it sta in basso a destra e ne copre circa un decimo. Se però
+            // si chiama "cookie", "consent" o "privacy", quello che è si è
+            // dichiarato da solo, e basta molto meno spazio per toglierlo.
+            const nome = ((el.id || '') + ' ' + (el.className || '')).toString().toLowerCase();
+            const siDichiara = /cookie|consent|gdpr|privacy|onetrust|cookiebot|iubenda|didomi|quantcast/.test(nome);
+            const soglia = siDichiara ? 0.02 : 0.25;
+            if (copertura < soglia) continue;
+            try { el.remove(); azioni.push('rimosso:' + (el.id || el.tagName.toLowerCase())); } catch (_) { /* gia' via */ }
+          }
+
+          // 4. Ridare lo scorrimento, che i modali spengono
+          try {
+            document.body.style.overflow = 'auto';
+            document.body.style.position = 'static';
+            document.documentElement.style.overflow = 'auto';
+            azioni.push('scorrimento ripristinato');
+          } catch (_) { /* niente */ }
+
+          return { ok: true, azioni, caratteri: (document.body.innerText || '').length };
+        });
+      }
 
       case 'get_page_content': {
         const tab = await getWorkTab();
@@ -1700,7 +2119,7 @@ async function executeCommand(command, args) {
         return await run(tab.id, () => {
           const links = [];
           for (const a of document.querySelectorAll('a[href]')) {
-            if (a.offsetParent === null) continue;
+            { const _r = a.getBoundingClientRect(); if (_r.width < 2 || _r.height < 2) continue; }
             links.push({ text: a.textContent.trim().substring(0, 80), href: a.href, target: a.target || '' });
           }
           return { ok: true, links: links.slice(0, 100) };
@@ -1712,7 +2131,7 @@ async function executeCommand(command, args) {
         return await run(tab.id, () => {
           const buttons = [];
           for (const el of document.querySelectorAll('button, [role="button"], input[type="submit"], a.btn, a[class*="button"]')) {
-            if (el.offsetParent === null) continue;
+            { const _r = el.getBoundingClientRect(); if (_r.width < 2 || _r.height < 2) continue; }
             buttons.push({
               text: el.textContent.trim().substring(0, 60), type: el.type || '', disabled: el.disabled || false,
               selector: el.id ? '#' + el.id : 'text:' + el.textContent.trim().substring(0, 30)
@@ -1763,10 +2182,12 @@ async function executeCommand(command, args) {
             return el.tagName.toLowerCase();
           }
           const items = [];
+          const giaVisti = new Set();
           for (const el of document.querySelectorAll('input, select, textarea, button, [role="button"], a[href], [contenteditable="true"]')) {
-            if (el.offsetParent === null) continue;
+            { const _r = el.getBoundingClientRect(); if (_r.width < 2 || _r.height < 2) continue; }
             const rect = el.getBoundingClientRect();
             if (rect.width === 0 && rect.height === 0) continue;
+            giaVisti.add(el);
             items.push({
               tag: el.tagName.toLowerCase(), type: el.type || '', name: el.name || '', id: el.id || '',
               text: el.textContent?.trim().substring(0, 50) || '', placeholder: el.placeholder || '',
@@ -1777,7 +2198,54 @@ async function executeCommand(command, args) {
               selector: buildSelector(el)
             });
           }
-          return { ok: true, url: location.href, title: document.title, elements: items.slice(0, 120) };
+          // ── Seconda passata: i cliccabili che non sono link né pulsanti ──
+          //
+          // Sull'ERP TMWE la prima passata trovava DUE elementi su una pagina
+          // piena di comandi, e la risposta era "non ci sono pulsanti visibili":
+          // vera alla lettera e inservibile. Quel gestionale — come molti
+          // applicativi aziendali di vecchia data — è fatto di <div onclick>,
+          // <td> e immagini: cento comandi reali, zero <a> e zero <button>.
+          //
+          // Si raccoglie quindi anche ciò che è cliccabile di fatto. Per non
+          // riempire l'elenco di rumore sui siti moderni, dove il puntatore a
+          // mano è ovunque, si tiene solo l'elemento più interno di ogni gruppo
+          // e solo se porta un'etichetta breve e leggibile.
+          const cliccabili = [];
+          for (const el of document.querySelectorAll('div,td,span,li,img,nobr,label')) {
+            if (giaVisti.has(el)) continue;
+            { const _r = el.getBoundingClientRect(); if (_r.width < 2 || _r.height < 2) continue; }
+            const rect = el.getBoundingClientRect();
+            if (rect.width < 8 || rect.height < 8) continue;
+
+            const haGestore = !!(el.onclick || el.getAttribute('onclick'));
+            let aMano = false;
+            try { aMano = getComputedStyle(el).cursor === 'pointer'; } catch (_) { /* elemento sparito */ }
+            if (!haGestore && !aMano) continue;
+
+            // Se contiene un altro candidato, il comando vero è quello dentro
+            if (el.querySelector('[onclick],input,button,a[href],select')) continue;
+
+            const testo = (el.innerText || el.textContent || '').trim().replace(/\s+/g, ' ');
+            const etichetta = testo || el.getAttribute('title') || el.getAttribute('alt') || '';
+            if (!etichetta || etichetta.length > 40) continue;
+
+            cliccabili.push({
+              tag: el.tagName.toLowerCase(), type: '', name: '', id: el.id || '',
+              text: etichetta.substring(0, 50), placeholder: '',
+              ariaLabel: el.getAttribute('title') || el.getAttribute('alt') || '',
+              // Il server lo tratta come un pulsante: per chi lo deve usare è
+              // esattamente quello, indipendentemente dal tag scelto nel 2009.
+              role: 'button', cliccabileDiFatto: true,
+              href: '', value: '', disabled: false,
+              rect: { x: Math.round(rect.x), y: Math.round(rect.y), w: Math.round(rect.width), h: Math.round(rect.height) },
+              selector: buildSelector(el)
+            });
+            if (cliccabili.length >= 80) break;
+          }
+
+          return { ok: true, url: location.href, title: document.title,
+                   elements: items.concat(cliccabili).slice(0, 160),
+                   standard: items.length, cliccabiliDiFatto: cliccabili.length };
         }).catch(async (err) => {
           // Retry dopo breve pausa (pagina potrebbe non essere ancora pronta)
           await new Promise(r => setTimeout(r, 1500));
@@ -1785,7 +2253,7 @@ async function executeCommand(command, args) {
             return await run(tab.id, () => {
               const items = [];
               for (const el of document.querySelectorAll('input, select, textarea, button, [role="button"], a[href]')) {
-                if (el.offsetParent === null) continue;
+                { const _r = el.getBoundingClientRect(); if (_r.width < 2 || _r.height < 2) continue; }
                 const r = el.getBoundingClientRect();
                 if (r.width === 0 && r.height === 0) continue;
                 items.push({
@@ -1827,13 +2295,13 @@ async function executeCommand(command, args) {
           return {
             ok: true, url: location.href, title: document.title,
             buttons: [...document.querySelectorAll('button, [role="button"], input[type="submit"], a.btn, a[class*="button"]')]
-              .filter(el => el.offsetParent !== null).slice(0, 25)
+              .filter(el => ((el.getBoundingClientRect().width || 0) >= 2 && (el.getBoundingClientRect().height || 0) >= 2)).slice(0, 25)
               .map(el => ({ text: el.textContent?.trim().slice(0, 50), selector: buildSel(el), disabled: el.disabled || false })),
             inputs: [...document.querySelectorAll('input, textarea, select')]
-              .filter(el => el.offsetParent !== null).slice(0, 25)
+              .filter(el => ((el.getBoundingClientRect().width || 0) >= 2 && (el.getBoundingClientRect().height || 0) >= 2)).slice(0, 25)
               .map(el => ({ type: el.type || el.tagName.toLowerCase(), name: el.name, placeholder: el.placeholder, value: el.value?.slice(0, 30), label: el.labels?.[0]?.textContent?.trim()?.slice(0,40) || '', selector: buildSel(el), required: el.required || false })),
             links: [...document.querySelectorAll('a[href]')]
-              .filter(el => el.offsetParent !== null).slice(0, 30)
+              .filter(el => ((el.getBoundingClientRect().width || 0) >= 2 && (el.getBoundingClientRect().height || 0) >= 2)).slice(0, 30)
               .map(el => ({ text: el.textContent?.trim().slice(0, 50), href: el.href, selector: buildSel(el) })),
             headings: [...document.querySelectorAll('h1, h2, h3')].slice(0, 15)
               .map(el => ({ level: el.tagName, text: el.textContent?.trim().slice(0, 80) })),
@@ -1949,13 +2417,13 @@ async function executeCommand(command, args) {
               }
               case 'element_visible': {
                 const el = document.querySelector(check.selector);
-                results.push({ check: check.type, selector: check.selector, passed: !!(el && el.offsetParent !== null) });
+                results.push({ check: check.type, selector: check.selector, passed: !!(el && ((el.getBoundingClientRect().width || 0) >= 2 && (el.getBoundingClientRect().height || 0) >= 2)) });
                 break;
               }
               case 'no_error': {
                 const errors = [];
                 for (const el of document.querySelectorAll('.error, .alert-danger, [class*="error"], [role="alert"]')) {
-                  if (el.offsetParent !== null && el.textContent.trim()) errors.push(el.textContent.trim().substring(0, 80));
+                  if (((el.getBoundingClientRect().width || 0) >= 2 && (el.getBoundingClientRect().height || 0) >= 2) && el.textContent.trim()) errors.push(el.textContent.trim().substring(0, 80));
                 }
                 results.push({ check: check.type, passed: errors.length === 0, errors });
                 break;
@@ -1963,7 +2431,7 @@ async function executeCommand(command, args) {
               case 'toast': {
                 const toasts = [];
                 for (const el of document.querySelectorAll('[class*="toast"], [class*="notification"], [class*="snackbar"], [role="status"]')) {
-                  if (el.offsetParent !== null) toasts.push(el.textContent.trim().substring(0, 80));
+                  if (((el.getBoundingClientRect().width || 0) >= 2 && (el.getBoundingClientRect().height || 0) >= 2)) toasts.push(el.textContent.trim().substring(0, 80));
                 }
                 results.push({ check: check.type, found: toasts, passed: toasts.length > 0 });
                 break;
@@ -2012,7 +2480,7 @@ async function executeCommand(command, args) {
               const txt = (el.textContent || '').trim().toLowerCase();
               if (txt.length > 80 || txt.length === 0) continue;
               try {
-                if (texts.some(t => txt.includes(t)) && (el.offsetParent !== null || getComputedStyle(el).display !== 'none')) {
+                if (texts.some(t => txt.includes(t)) && (((el.getBoundingClientRect().width || 0) >= 2 && (el.getBoundingClientRect().height || 0) >= 2) || getComputedStyle(el).display !== 'none')) {
                   el.click(); return txt;
                 }
               } catch { /* shadow DOM element without getComputedStyle */ }
@@ -2020,29 +2488,43 @@ async function executeCommand(command, args) {
             return null;
           }
 
-          // 1. Reject (privacy-first)
-          let clicked = findAndClick(rejectTexts);
+          // Si ACCETTA e si va avanti, per scelta dichiarata dell'utente.
+          //
+          // Prima si tentava il rifiuto per primo. Su molti siti il rifiuto
+          // non esiste come pulsante diretto: sta dentro "Preferenze", e il
+          // banner restava aperto a coprire la pagina. Su emirates.com il
+          // risultato era una pagina da 8.578 caratteri letta come vuota.
+          // Un banner che resta aperto non protegge nessuno: impedisce solo
+          // di leggere.
+          const acceptSels = ['#onetrust-accept-btn-handler', '.cmp-accept-all', 'button.fc-cta-consent',
+            '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll', '[data-testid="cookie-accept"]',
+            '#didomi-notice-agree-button', '.iubenda-cs-accept-btn',
+            // Aggiunti dopo averli incontrati sul campo
+            '#onetrust-accept-btn-handler', '#accept-recommended-btn-handler',
+            '.ot-pc-refuse-all-handler ~ button', '#truste-consent-button',
+            '.qc-cmp2-summary-buttons button[mode="primary"]', '#usercentrics-root',
+            'button[data-cky-tag="accept-button"]', '.cc-allow', '.cookie-accept-all',
+            '#cookie-accept', '#acceptCookies', '.js-accept-cookies'];
+          for (const sel of acceptSels) {
+            for (const el of deepQueryAll(document, sel)) {
+              try { if (((el.getBoundingClientRect().width || 0) >= 2 && (el.getBoundingClientRect().height || 0) >= 2) || getComputedStyle(el).display !== 'none') { el.click(); return { ok: true, action: 'accepted_sel', button: sel }; } } catch {}
+            }
+          }
+          let clicked = findAndClick(acceptTexts);
+          if (clicked) return { ok: true, action: 'accepted', button: clicked };
+          // Se non c'e' nulla da accettare, si prova comunque a chiudere:
+          // meglio un rifiuto che un banner che copre la pagina.
+          clicked = findAndClick(rejectTexts);
           if (clicked) return { ok: true, action: 'rejected', button: clicked };
-          // 2. Known reject selectors (also deep)
           const rejectSels = ['#onetrust-reject-all-handler', '.cmp-reject-all', 'button.fc-cta-do-not-consent',
             '[data-testid="cookie-reject"]', '.cookie-reject', '#CybotCookiebotDialogBodyButtonDecline',
             '#didomi-notice-disagree-button', '.iubenda-cs-reject-btn'];
           for (const sel of rejectSels) {
             for (const el of deepQueryAll(document, sel)) {
-              try { if (el.offsetParent !== null || getComputedStyle(el).display !== 'none') { el.click(); return { ok: true, action: 'rejected_sel', button: sel }; } } catch {}
+              try { if (((el.getBoundingClientRect().width || 0) >= 2 && (el.getBoundingClientRect().height || 0) >= 2) || getComputedStyle(el).display !== 'none') { el.click(); return { ok: true, action: 'rejected_sel', button: sel }; } } catch {}
             }
           }
-          // 3. Accept
-          clicked = findAndClick(acceptTexts);
-          if (clicked) return { ok: true, action: 'accepted', button: clicked };
-          const acceptSels = ['#onetrust-accept-btn-handler', '.cmp-accept-all', 'button.fc-cta-consent',
-            '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll', '[data-testid="cookie-accept"]',
-            '#didomi-notice-agree-button', '.iubenda-cs-accept-btn'];
-          for (const sel of acceptSels) {
-            for (const el of deepQueryAll(document, sel)) {
-              try { if (el.offsetParent !== null || getComputedStyle(el).display !== 'none') { el.click(); return { ok: true, action: 'accepted_sel', button: sel }; } } catch {}
-            }
-          }
+          // Ultima risorsa: aprire "Preferenze" e accettare da dentro
           // 4. Manage button (two-step: click manage, then accept inside panel)
           clicked = findAndClick(manageTexts);
           if (clicked) return { ok: true, action: 'manage_clicked', button: clicked, needsSecondStep: true };
@@ -2060,7 +2542,7 @@ async function executeCommand(command, args) {
             for (const el of document.querySelectorAll('button, a[role="button"], [role="button"], span[role="button"], div[role="button"]')) {
               const txt = (el.textContent || '').trim().toLowerCase();
               if (txt.length > 80 || txt.length === 0) continue;
-              if (acceptTexts.some(t => txt.includes(t)) && (el.offsetParent !== null || getComputedStyle(el).display !== 'none')) {
+              if (acceptTexts.some(t => txt.includes(t)) && (((el.getBoundingClientRect().width || 0) >= 2 && (el.getBoundingClientRect().height || 0) >= 2) || getComputedStyle(el).display !== 'none')) {
                 el.click(); return { ok: true, action: 'accepted_after_manage', button: txt };
               }
             }
@@ -2084,14 +2566,14 @@ async function executeCommand(command, args) {
                 for (const el of document.querySelectorAll('button, a, [role="button"]')) {
                   const txt = (el.textContent || '').trim().toLowerCase();
                   if (txt.length > 80 || txt.length === 0) continue;
-                  if (rejectTexts.some(t => txt.includes(t)) && el.offsetParent !== null) {
+                  if (rejectTexts.some(t => txt.includes(t)) && ((el.getBoundingClientRect().width || 0) >= 2 && (el.getBoundingClientRect().height || 0) >= 2)) {
                     el.click(); return { ok: true, action: 'rejected_iframe', button: txt };
                   }
                 }
                 for (const el of document.querySelectorAll('button, a, [role="button"]')) {
                   const txt = (el.textContent || '').trim().toLowerCase();
                   if (txt.length > 80 || txt.length === 0) continue;
-                  if (acceptTexts.some(t => txt.includes(t)) && el.offsetParent !== null) {
+                  if (acceptTexts.some(t => txt.includes(t)) && ((el.getBoundingClientRect().width || 0) >= 2 && (el.getBoundingClientRect().height || 0) >= 2)) {
                     el.click(); return { ok: true, action: 'accepted_iframe', button: txt };
                   }
                 }
@@ -2177,7 +2659,7 @@ async function executeCommand(command, args) {
           for (const sel of closeSels) {
             try {
               for (const el of deepQueryAll(document, sel)) {
-                if (el.offsetParent !== null) {
+                if (((el.getBoundingClientRect().width || 0) >= 2 && (el.getBoundingClientRect().height || 0) >= 2)) {
                   const rect = el.getBoundingClientRect();
                   if (rect.width > 0 && rect.height > 0) {
                     el.click();
@@ -2210,7 +2692,7 @@ async function executeCommand(command, args) {
             for (const el of deepQueryAll(document, 'button, a, [role="button"]')) {
               const txt = (el.textContent || '').trim().toLowerCase();
               if (txt.length > 40 || txt.length === 0) continue;
-              if (closeTexts.some(t => txt.includes(t)) && el.offsetParent !== null) {
+              if (closeTexts.some(t => txt.includes(t)) && ((el.getBoundingClientRect().width || 0) >= 2 && (el.getBoundingClientRect().height || 0) >= 2)) {
                 el.click();
                 return { ok: true, action: 'empty_page_close', button: txt };
               }
@@ -2332,7 +2814,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 
 // Rileva quando un tab naviga a localhost:3000 (registralo come COBRA tab)
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (changeInfo.url && changeInfo.url.includes('localhost:3000')) {
+  if (eIlTabDiCobra(changeInfo.url)) {
     _cobraTabId = tabId;
   }
 });

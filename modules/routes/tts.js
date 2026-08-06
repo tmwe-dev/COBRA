@@ -7,19 +7,42 @@ function register(router, ctx) {
   // ── /api/tts — ElevenLabs TTS ──
   router.post('/api/tts', async (body, res) => {
     try {
-      const { text } = JSON.parse(body);
+      const richiesta = JSON.parse(body);
+      const { text } = richiesta;
       if (!text) { res.writeHead(400); res.end(JSON.stringify({ error: 'No text' })); return; }
       if (!ctx.aiKeys.elevenlabsKey) { res.writeHead(400); res.end(JSON.stringify({ error: 'ElevenLabs API key non configurata' })); return; }
 
       const _ttsStart = Date.now();
-      const voiceId = ctx.aiKeys.elevenlabsVoiceId || COBRA_DEFAULTS.ELEVENLABS_VOICE_ID;
+
+      // La lingua era inchiodata a 'it' e la voce veniva solo dalla
+      // configurazione: se il Collega rispondeva in inglese a un fornitore
+      // vietnamita, la voce leggeva l'inglese con la fonetica italiana.
+      // Adesso chi scrive la frase decide anche come va detta; se non lo
+      // dichiara, valgono le impostazioni di sempre.
+      const vociNote = ctx.session.vociDisponibili || null;
+      let voiceId = ctx.aiKeys.elevenlabsVoiceId || COBRA_DEFAULTS.ELEVENLABS_VOICE_ID;
+      if (richiesta.voce && /^[A-Za-z0-9]{8,40}$/.test(String(richiesta.voce))) {
+        // Se conosciamo l'elenco delle voci dell'account, si accetta solo una
+        // di quelle: un identificativo inventato produrrebbe un errore HTTP
+        // opaco proprio mentre l'utente aspetta di sentire una risposta.
+        if (!vociNote || vociNote.includes(String(richiesta.voce))) voiceId = String(richiesta.voce);
+        else ctx.log(`[TTS] Voce "${richiesta.voce}" non presente nell'account: uso quella predefinita`);
+      }
+
+      // ISO 639-1: due lettere. Tutto il resto si ignora invece di far fallire
+      // la sintesi.
+      let lingua = 'it';
+      if (richiesta.lingua && /^[a-z]{2}$/i.test(String(richiesta.lingua))) {
+        lingua = String(richiesta.lingua).toLowerCase();
+      }
+
       const modelId = ctx.aiKeys.elevenlabsModel || COBRA_DEFAULTS.ELEVENLABS_MODEL;
 
-      ctx.log(`[TTS] Generating speech (${text.length} chars, voice: ${voiceId})...`);
+      ctx.log(`[TTS] Sintesi (${text.length} caratteri, voce ${voiceId}, lingua ${lingua})...`);
       const ttsResp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}?output_format=mp3_44100_128`, {
         method: 'POST',
         headers: { 'xi-api-key': ctx.aiKeys.elevenlabsKey, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: text.substring(0, 5000), model_id: modelId, voice_settings: { stability: 0.5, similarity_boost: 0.75, style: 0, use_speaker_boost: true }, language_code: 'it' }),
+        body: JSON.stringify({ text: text.substring(0, 5000), model_id: modelId, voice_settings: { stability: 0.5, similarity_boost: 0.75, style: 0, use_speaker_boost: true }, language_code: lingua }),
       });
 
       if (!ttsResp.ok) {
@@ -54,6 +77,8 @@ function register(router, ctx) {
       if (!vResp.ok) throw new Error(`HTTP ${vResp.status}`);
       const data = await vResp.json();
       const voices = (data.voices || []).map(v => ({ id: v.voice_id, name: v.name, language: v.labels?.language, gender: v.labels?.gender }));
+      // Si tiene l'elenco per poter rifiutare a monte una voce inesistente
+      ctx.session.vociDisponibili = voices.map(v => v.id);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ voices, current: ctx.aiKeys.elevenlabsVoiceId }));
     } catch (e) {

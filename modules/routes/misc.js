@@ -22,6 +22,51 @@ function register(router, ctx) {
     res.end(JSON.stringify({ token: ctx.BRIDGE_SESSION_TOKEN }));
   });
 
+  // ── Confeziona in un file quello che COBRA ha letto in questo turno ──
+  //
+  // Le pagine lette finivano nel monitor e sparivano: si vedevano scorrere le
+  // ricerche senza poterle portare via. Qui diventano un documento unico, con
+  // l'indirizzo di ogni fonte accanto al suo contenuto — così quello che hai
+  // letto sullo schermo lo puoi tenere, rileggere e girare a qualcun altro.
+  router.post('/api/contenuti/salva', (body, res) => {
+    const rispondi = (stato, dati) => {
+      res.writeHead(stato, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(dati));
+    };
+    try {
+      const cache = ctx.session._cachePagine;
+      const pagine = ctx.session.pagineDelTurno || [];
+      if ((!cache || cache.size === 0) && pagine.length === 0) {
+        return rispondi(200, { ok: false, error: 'In questo turno non è stata letta nessuna pagina.' });
+      }
+
+      const pezzi = ['# Contenuti consultati', '', `Raccolti il ${new Date().toLocaleString('it-IT')}`, ''];
+      let quante = 0;
+      if (cache && typeof cache.forEach === 'function') {
+        cache.forEach((v, chiave) => {
+          quante++;
+          pezzi.push(`## ${v.title || chiave}`, '', `Fonte: ${v.url || chiave}`, '', (v.content || '').trim(), '', '---', '');
+        });
+      }
+      // Le pagine viste ma non finite in cache restano almeno come indirizzo
+      for (const p of pagine) {
+        const url = p.url || p;
+        if (cache && [...cache.values()].some(v => v.url === url)) continue;
+        pezzi.push(`## ${p.title || url}`, '', `Fonte: ${url}`, '', '_(contenuto non conservato)_', '', '---', '');
+      }
+
+      const nome = `contenuti_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.md`;
+      const base = path.resolve(ctx.dataDir, 'files');
+      if (!fs.existsSync(base)) fs.mkdirSync(base, { recursive: true });
+      fs.writeFileSync(path.resolve(base, nome), pezzi.join('\n'));
+      ctx.log(`[Contenuti] Raccolte ${quante} pagine in ${nome}`);
+      return rispondi(200, { ok: true, filename: nome, pagine: quante, url: `/api/files/${encodeURIComponent(nome)}` });
+    } catch (e) {
+      ctx.log(`[Contenuti] Salvataggio non riuscito: ${e.message}`);
+      return rispondi(500, { ok: false, error: e.message });
+    }
+  });
+
   // ── Scarico dei file prodotti da COBRA ──
   // I file venivano scritti su disco ma non c'era modo di ottenerli:
   // "salvalo in un file scaricabile" produceva un file irraggiungibile.

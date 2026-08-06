@@ -1,3 +1,4 @@
+const { fetchConLimite } = require('./fetch-con-limite');
 // modules/ai/openai.js — OpenAI / Groq API provider
 // Source: server.js lines 7213-7298
 
@@ -19,11 +20,11 @@ async function callOpenAI(provider, key, model, systemPrompt, messages, tools, c
     const body = { model, messages: apiMessages, max_tokens: 16000, temperature: 0.5 };
     if (tools) { body.tools = tools; body.tool_choice = 'auto'; }
 
-    const res = await fetch(baseUrl, {
+    const res = await fetchConLimite(baseUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
       body: JSON.stringify(body)
-    });
+    }, 90000, 'OpenAI');
     if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error?.message || `HTTP ${res.status}`); }
     const data = await res.json();
 
@@ -70,11 +71,11 @@ async function callOpenAI(provider, key, model, systemPrompt, messages, tools, c
         + 'riferisci ORA quello che hai raccolto finora, indicando chiaramente cosa manca '
         + 'e perché. Se hai dati reali, riportali. Se non ne hai, dillo apertamente.',
     });
-    const chiusura = await fetch(baseUrl, {
+    const chiusura = await fetchConLimite(baseUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
       body: JSON.stringify({ model, messages: apiMessages, max_tokens: 4000, temperature: 0.5 }),
-    });
+    }, 60000, 'OpenAI (riepilogo)');
     if (chiusura.ok) {
       const d = await chiusura.json();
       const testo = d.choices?.[0]?.message?.content;

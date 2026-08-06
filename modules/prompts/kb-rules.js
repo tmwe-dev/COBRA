@@ -27,7 +27,7 @@ const ALWAYS_LOADED_KB = [
     tags:['voice','output','conversational','always'] },
 
   { id:'monitor_first_navigation', domain:'runtime_policy', title:'Monitor-first: leggi prima, naviga dopo', priority:96, always_load:true,
-    content:'REGOLA NAVIGAZIONE: (1) Per leggere la pagina corrente dell\'utente → screenshot() + read_page(). MAI navigate(). (2) navigate() SOLO per URL NUOVI che l\'utente non sta guardando. (3) Se hai già scrape-ato contenuto e l\'utente chiede download/salva → CREA FILE dai dati in memoria, non ri-scrape-are. (4) Dopo uno scraping riuscito, proponi di salvare: "Ho il contenuto, vuoi che lo salvi in un file?" (5) Il monitor è lo strumento primario. navigate() apre pagine nel browser dell\'utente — usalo con parsimonia.',
+    content:'REGOLA NAVIGAZIONE: (1) Per leggere la pagina corrente dell\'utente → screenshot() + read_page(). MAI navigate(). (2) navigate() SOLO per URL NUOVI che l\'utente non sta guardando. (3) Se hai già scrape-ato contenuto e l\'utente chiede download/salva → CREA FILE dai dati in memoria, non ri-scrape-are. (4) Dopo uno scraping riuscito, proponi di salvare: "Ho il contenuto, vuoi che lo salvi in un file?" (5) navigate() è la via AFFIDABILE per leggere i siti moderni: usala senza timidezza per ogni pagina nuova che serve. La parsimonia vale solo per non riaprire la stessa pagina due volte.',
     tags:['always','navigation','monitor','browse','tools'] },
 
   { id:'process_report_aziende', domain:'workflow', title:'Processo Report Aziende — Prospecting Commerciale', priority:90, always_load:false,

@@ -114,6 +114,24 @@ section('Il gestore rifiuta contenuti non tabellari');
 
 try { fs.rmSync(TMP, { recursive: true, force: true }); } catch { /* pulizia best-effort */ }
 
+
+// ─────────────────────────────────────────
+section('Un foglio con la sola intestazione non e un report');
+// ─────────────────────────────────────────
+{
+  const { righeDaTesto } = require('../modules/utils/xlsx');
+  const soloTestata = righeDaTesto('Voli;Hotel;Escursioni;Prezzi;Link');
+  const conDati = soloTestata.filter(r => r.join('').trim().length > 0).length;
+  ok('una sola riga viene riconosciuta come vuota', conDati <= 1, `righe con dati: ${conDati}`);
+
+  const pieno = righeDaTesto('Voli;Prezzo\nAir Tahiti;5.400 EUR');
+  const conDati2 = pieno.filter(r => r.join('').trim().length > 0).length;
+  ok('con almeno una riga di dati passa', conDati2 > 1, `righe con dati: ${conDati2}`);
+
+  const sorgente = require('fs').readFileSync('modules/tools/handlers/data.js', 'utf8');
+  ok('create_file rifiuta il foglio senza dati', /SCRITTURA RIFIUTATA: c\\'e solo la riga di intestazione|solo la riga di intestazione/.test(sorgente));
+}
+
 console.log('');
 console.log(FAIL === 0
   ? `\x1b[32mRISULTATO: ${PASS} PASS, 0 FAIL\x1b[0m`

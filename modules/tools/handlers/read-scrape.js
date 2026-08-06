@@ -65,6 +65,27 @@ async function scrapeUrl(args, ctx) {
   if (!hd.allowed) return JSON.stringify({ error: hd.reason, rateLimited: true });
   ctx.emitThinking(`Scraping ${url}...`);
   const scraped = await ctx.scrapeUrl(url, { timeout: COBRA_DEFAULTS.FETCH_TIMEOUT });
+
+  // La lettura grezza scarica l'HTML senza eseguirlo: sui siti moderni arriva
+  // il guscio — ed è quello che l'utente vedeva come "pagine bianche", perché
+  // da qui non parte nemmeno lo screenshot per l'anteprima. Se il contenuto è
+  // un guscio e il browser è disponibile, si passa al browser DA SOLI, senza
+  // aspettare che il modello capisca di dover cambiare strumento: la strada
+  // giusta non può dipendere da quale nome di funzione ha scelto.
+  const magro = (scraped.markdown || '').trim().length < 800;
+  if (magro && ctx.isBridgeReady()) {
+    ctx.log(`[scrape_url] Guscio da lettura diretta (${(scraped.markdown || '').length} caratteri): passo al browser per ${url}`);
+    ctx.emitReasoning('La pagina si carica con javascript: la apro nel browser', '🔁');
+    try {
+      const { navigate } = require('./navigate');
+      return await navigate({ url }, ctx);
+    } catch (e) {
+      ctx.log(`[scrape_url] Passaggio al browser fallito (${e.message}): consegno il poco che ho`);
+    }
+  }
+  if (ctx.registroFonti) {
+    try { ctx.registroFonti.registra(url, { caratteri: (scraped.markdown || '').length }); } catch (_) { /* best-effort */ }
+  }
   const title = scraped.metadata?.title || '';
   ctx.session.lastPage = { url: scraped.metadata?.url || url, title, markdown: scraped.markdown, links: scraped.links || [], html: scraped.rawHtml || '' };
   ctx.emitSiteVisit(url, title || url, 'active');

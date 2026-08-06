@@ -36,6 +36,7 @@ const { loadAPIKeys, loadOperatorConfig } = require('./kb/api-keys');
 const ChatMemory = require('./memory/chat-memory');
 const ConversationEngine = require('./memory/conversation');
 const { LearningStore } = require('./memory/learning');
+const { RegistroFonti } = require('./fonti/registro');
 
 // ── 7. AI ──
 const { callAI } = require('./ai/router');
@@ -108,6 +109,25 @@ if (process.env.ANTHROPIC_API_KEY) aiKeys.anthropicKey = process.env.ANTHROPIC_A
 if (process.env.GEMINI_API_KEY) aiKeys.geminiKey = process.env.GEMINI_API_KEY;
 if (process.env.GROQ_API_KEY) aiKeys.groqKey = process.env.GROQ_API_KEY;
 if (process.env.ELEVENLABS_API_KEY) aiKeys.elevenlabsKey = process.env.ELEVENLABS_API_KEY;
+// La casella di posta si rilegge all'avvio: senza questo, salvarla non
+// servirebbe a niente e bisognerebbe reinserirla ad ogni riavvio.
+const _postaSalvata = {};
+if (process.env.MAIL_USER && process.env.MAIL_PASS) {
+  Object.assign(_postaSalvata, {
+    imapHost: process.env.MAIL_IMAP_HOST || '',
+    imapPort: Number(process.env.MAIL_IMAP_PORT || 993),
+    imapUser: process.env.MAIL_USER,
+    imapPass: process.env.MAIL_PASS,
+    host: process.env.MAIL_SMTP_HOST || '',
+    port: Number(process.env.MAIL_SMTP_PORT || 587),
+    user: process.env.MAIL_USER,
+    pass: process.env.MAIL_PASS,
+    from: process.env.MAIL_USER,
+  });
+  console.log(`[Config] Casella di posta ripresa: ${String(process.env.MAIL_USER).replace(/(.{2}).*(@)/, '$1***$2')}`);
+  session.emailConfig = _postaSalvata;
+}
+
 if (process.env.OPENAI_MODEL) aiKeys.openaiModel = process.env.OPENAI_MODEL;
 if (process.env.ANTHROPIC_MODEL) aiKeys.anthropicModel = process.env.ANTHROPIC_MODEL;
 if (process.env.GEMINI_MODEL) aiKeys.geminiModel = process.env.GEMINI_MODEL;
@@ -118,6 +138,9 @@ function _saveMemories() { writeJsonAtomicSync(_memoriesFile, memories); }
 const conversationEngine = new ConversationEngine();
 // Memoria a tre livelli: azioni di sessione, fatti operativi, fatti permanenti
 const learningStore = new LearningStore(dataDir);
+// Dove cercare, imparato dalle letture fatte davvero: Kayak vuoto, Google
+// Voli pieno — scoperto una volta, scritto per sempre.
+const registroFonti = new RegistroFonti(dataDir);
 // Manutenzione periodica: promuove ciò che si conferma, fa decadere ciò che
 // non serve più. Senza, la memoria diventa un archivio piatto dove tutto pesa
 // uguale e il contesto si riempie di dettagli irrilevanti.
@@ -407,7 +430,10 @@ const ctx = {
   // AI + Tools — executeTool wrapped with ctx self-reference
   executeTool: null, // set below after ctx is created
   callAI, digestToolResult,
-  conversationEngine, learningStore, SuperMario, CobraSupervisor,
+  conversationEngine, learningStore, registroFonti, SuperMario, CobraSupervisor,
+  // Il Collega si puo' spegnere senza toccare il codice: se un giorno dovesse
+  // dare problemi, COLLEGA=off riporta il sistema al comportamento diretto.
+  CollegaAttivo: String(process.env.COLLEGA || '').toLowerCase() !== 'off',
   HumanDriver, TokenMeter, ResponseRecorder, estimateTokens,
   // Persistence helpers for tool handlers
   persistTasks: _saveTasks,
@@ -433,23 +459,71 @@ const server = http.createServer(handleRequest);
 wsModule.setupWebSocket(server, ctx);
 
 // Avvia il listen solo se eseguito direttamente (importabile per i test)
+//
+// La porta occupata NON è un errore fatale: è una coda. Stasera COBRA.app e
+// il server del guardiano si sono ammazzati a vicenda per un'ora — ognuno
+// moriva con EADDRINUSE, il guardiano lo rilanciava, e via da capo, con
+// l'utente davanti a "failed to fetch". Un server adulto aspetta il suo
+// turno: riprova ogni tre secondi e lo scrive, così quando l'altro processo
+// muore o viene chiuso, questo prende la porta da solo.
 const _isMain = require.main === module;
-if (_isMain) server.listen(PORT, '127.0.0.1', async () => {
-  console.log(`\n  COBRA v11 — http://127.0.0.1:${PORT} (localhost only)`);
-  console.log(`  Tools: ${COBRA_TOOLS.length} | Handlers: ${Object.keys(allHandlers).length}\n`);
-  await loadAPIKeys();
-  await loadOperatorConfig();
-  await conversationEngine.load();
-  log(`Server ready.`);
+let _tentativiPorta = 0;
+// Il gestore va registrato UNA VOLTA e PRIMA del listen: con server.once()
+// dentro la funzione l'errore sfuggiva all'uncaughtException e il processo
+// moriva comunque. Verificato dal vivo: due server sulla stessa porta.
+server.on('error', (err) => {
+  if (err && err.code === 'EADDRINUSE') {
+    _tentativiPorta++;
+    if (_tentativiPorta === 1 || _tentativiPorta % 10 === 0) {
+      log(`[Avvio] Porta ${PORT} occupata da un altro processo: aspetto il mio turno (tentativo ${_tentativiPorta})`);
+    }
+    setTimeout(() => { try { server.listen(PORT, '127.0.0.1'); } catch (_) { /* si riprova */ } }, 3000);
+    return;
+  }
+  log(`[Server] Errore: ${err && err.message}`);
 });
+
+// Si SONDA la porta prima di occuparla, invece di affidarsi all'evento
+// 'error': verificato dal vivo che l'errore sfugge comunque all'handler e
+// finisce in uncaughtException. Una connessione di prova dice con certezza
+// se qualcuno c'e' gia', e non puo' fallire in modo silenzioso.
+function _portaLibera() {
+  return new Promise((risolvi) => {
+    const sonda = require('net').connect({ port: PORT, host: '127.0.0.1' });
+    const chiudi = (libera) => { try { sonda.destroy(); } catch (_) { /* sonda gia chiusa */ } risolvi(libera); };
+    sonda.once('connect', () => chiudi(false));   // qualcuno risponde: occupata
+    sonda.once('error', () => chiudi(true));      // nessuno risponde: libera
+    setTimeout(() => chiudi(true), 1500);
+  });
+}
+
+async function _avviaConPazienza(tentativo = 0) {
+  if (!(await _portaLibera())) {
+    if (tentativo === 0 || tentativo % 10 === 0) {
+      log(`[Avvio] Porta ${PORT} occupata da un altro processo: aspetto il mio turno (tentativo ${tentativo + 1})`);
+    }
+    setTimeout(() => _avviaConPazienza(tentativo + 1), 3000);
+    return;
+  }
+  server.listen(PORT, '127.0.0.1', async () => {
+    console.log(`\n  COBRA v11 — http://127.0.0.1:${PORT} (localhost only)`);
+    console.log(`  Tools: ${COBRA_TOOLS.length} | Handlers: ${Object.keys(allHandlers).length}\n`);
+    await loadAPIKeys();
+    await loadOperatorConfig();
+    await conversationEngine.load();
+    log(`Server ready.`);
+  });
+}
+if (_isMain) _avviaConPazienza();
 
 // ── Process-level error handling (production hardening) ──
 process.on('uncaughtException', (err) => {
   log(`[FATAL] Uncaught exception: ${err.message}\n${err.stack}`);
   try { fs.appendFileSync(path.join(dataDir, 'crash.log'), `[${new Date().toISOString()}] UNCAUGHT: ${err.message}\n${err.stack}\n\n`); } catch {}
   // Non uccidere il processo per errori non critici
-  if (err.message.includes('EADDRINUSE') || err.message.includes('out of memory')) {
-    console.error('[FATAL] Errore non recuperabile, shutdown.');
+  // EADDRINUSE e' gestito dal listen paziente: qui non deve mai arrivare.
+  if (err.message.includes('out of memory')) {
+    console.error('[FATAL] Memoria esaurita, shutdown.');
     process.exit(1);
   }
   // Per tutti gli altri: log e continua

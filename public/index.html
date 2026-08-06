@@ -153,6 +153,18 @@
       background: rgba(167,139,250,0.1); color: var(--lilac);
       border: 1px solid rgba(167,139,250,0.2);
     }
+    /* Erano tutti dello stesso colore: non si distingueva un servizio pronto
+       da uno senza chiave, e per saperlo bisognava aprire le impostazioni. */
+    .topbar .providers .badge.attivo {
+      background: rgba(52,211,153,0.14); color: #34d399;
+      border-color: rgba(52,211,153,0.45);
+    }
+    .topbar .providers .badge.attivo::before { content: '\25cf'; margin-right: 4px; font-size: 8px; }
+    .topbar .providers .badge.spento {
+      background: rgba(148,163,184,0.08); color: #64748b;
+      border-color: rgba(148,163,184,0.18);
+    }
+    .topbar .providers .badge.spento::before { content: '\25cb'; margin-right: 4px; font-size: 8px; }
 
     /* ── Token Meter ── */
     .token-meter {
@@ -1049,6 +1061,13 @@
 
       <button class="voice-btn active" id="speakerBtn" title="Attiva/disattiva voce">&#x1f50a;</button>
       <input type="range" class="voice-speed" id="voiceSpeed" min="0.5" max="2" step="0.1" value="1" title="Velocita voce" />
+      <!-- Il server ha 250 voci in 16 lingue e nessuno poteva sceglierle:
+           la capacità c'era ed era irraggiungibile. -->
+      <select id="sceltaVoce" title="Voce di COBRA"
+        style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#cbd5e1;
+               border-radius:8px;padding:3px 6px;font-size:11px;max-width:150px;cursor:pointer;">
+        <option value="">Voce: automatica</option>
+      </select>
 
       <div class="token-meter" id="tokenMeter" onclick="toggleTokenDetail()">
         <div class="meter-label"><span class="pct green" id="tokenPct">0%</span> <span id="tokenTotal">0</span></div>
@@ -1112,6 +1131,9 @@
         <div class="mon-dots"><span class="r"></span><span class="y"></span><span class="g"></span></div>
         <div class="mon-url" id="monUrl">Nessuna pagina</div>
         <div class="mon-status" id="monStatus"><span class="pulse"></span><span>Idle</span></div>
+        <button id="btnRiavvia" title="Riavvia COBRA"
+          style="background:none;border:1px solid rgba(255,255,255,.15);color:#9aa;border-radius:6px;
+                 padding:2px 8px;margin-left:8px;cursor:pointer;font-size:12px;">&#x21bb;</button>
       </div>
       <div class="mon-tabs">
         <button class="mon-tab active" data-view="screenshot" id="tabScreenshot">Screenshot</button>
@@ -1799,6 +1821,94 @@
       monOverlayText.textContent = text || 'COBRA sta lavorando...';
     }
 
+    // Riavvio dal pannello: prima ogni modifica al codice costava un giro in
+    // Terminale. Il server esce, il guardiano lo rilancia, e la pagina si
+    // ricollega da sola appena risponde di nuovo.
+    document.getElementById('btnRiavvia')?.addEventListener('click', async () => {
+      const b = document.getElementById('btnRiavvia');
+      b.disabled = true; b.textContent = '...';
+      try {
+        await fetch('/api/riavvia', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ conferma: 'riavvia' }),
+        });
+      } catch (_) { /* il server se ne va mentre risponde: è previsto */ }
+      // Si aspetta che torni a rispondere, poi si ricarica.
+      const attendi = async (tentativo = 0) => {
+        if (tentativo > 30) { b.disabled = false; b.innerHTML = '&#x21bb;'; return; }
+        try {
+          const r = await fetch('/api/status', { cache: 'no-store' });
+          if (r.ok) { location.reload(); return; }
+        } catch (_) { /* non è ancora tornato */ }
+        setTimeout(() => attendi(tentativo + 1), 1000);
+      };
+      setTimeout(() => attendi(), 2000);
+    });
+
+    // ── Le voci di COBRA ──
+    //
+    // Il server ne conosce 250 in 16 lingue (/api/tts/voices) e accetta già il
+    // parametro "voce" nella sintesi: mancava solo il modo di sceglierne una.
+    // La scelta resta anche dopo un riavvio, altrimenti andrebbe rifatta ogni
+    // volta e tanto varrebbe non averla.
+    let voceScelta = localStorage.getItem('cobra_voce') || '';
+    (async () => {
+      const sel = document.getElementById('sceltaVoce');
+      if (!sel) return;
+      try {
+        const dati = await fetch('/api/tts/voices').then(r => r.json());
+        const voci = dati.voices || [];
+        if (!voci.length) return;
+
+        // Prima l'italiano, poi il resto: si cerca quasi sempre la propria lingua.
+        const ordine = { it: 0, en: 1, es: 2, fr: 3, de: 4 };
+        voci.sort((a, b) => (ordine[a.language] ?? 9) - (ordine[b.language] ?? 9)
+          || String(a.name).localeCompare(String(b.name)));
+
+        let linguaCorrente = null;
+        for (const v of voci) {
+          const lingua = v.language || 'altre';
+          if (lingua !== linguaCorrente) {
+            linguaCorrente = lingua;
+            const gruppo = document.createElement('optgroup');
+            gruppo.label = ({ it: 'Italiano', en: 'Inglese', es: 'Spagnolo', fr: 'Francese',
+              de: 'Tedesco', ja: 'Giapponese', zh: 'Cinese', ar: 'Arabo', ru: 'Russo',
+              nl: 'Olandese', tr: 'Turco', hi: 'Hindi', hu: 'Ungherese', bg: 'Bulgaro',
+              th: 'Thai' })[lingua] || 'Altre lingue';
+            gruppo.id = 'gruppo_' + lingua;
+            sel.appendChild(gruppo);
+          }
+          const o = document.createElement('option');
+          o.value = v.id;
+          // I nomi arrivano come "Sarah - Mature, Reassuring, Confident":
+          // in un menu stretto conta il nome, il resto sta nel suggerimento.
+          o.textContent = String(v.name).split(' - ')[0];
+          o.title = v.name;
+          if (v.id === voceScelta) o.selected = true;
+          (sel.querySelector('#gruppo_' + lingua) || sel).appendChild(o);
+        }
+        sel.title = voci.length + ' voci disponibili';
+      } catch (_) { /* senza chiave ElevenLabs il menu resta com'è */ }
+
+      sel.addEventListener('change', async () => {
+        voceScelta = sel.value;
+        localStorage.setItem('cobra_voce', voceScelta);
+        // Si prova subito: scegliere una voce senza sentirla è comprare a scatola chiusa.
+        if (!voceScelta || !speakerOn) return;
+        try {
+          const r = await fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: 'Sono io. Da adesso ti parlo così.', voce: voceScelta }) });
+          if (r.ok) {
+            const b = await r.blob();
+            const a = new Audio(URL.createObjectURL(b));
+            a.playbackRate = voiceSpeed;
+            a.play().catch(() => { /* il browser chiede un gesto: pazienza */ });
+          }
+        } catch (_) { /* la prova è un di più */ }
+      });
+    })();
+
     function setMonitorIdle() {
       monStatus.className = 'mon-status';
       monStatus.innerHTML = '<span class="pulse"></span><span>Idle</span>';
@@ -1983,8 +2093,14 @@
     let _monitorCurrentUrl = null;
 
     function showPage(url, title) {
-      urlInput.value = url || '';
-      monUrl.textContent = url || '';
+      // A fine turno il server manda page_loaded con url vuoto per fermare gli
+      // indicatori di attivita'. Non e' una pagina nuova: e' la fine del lavoro.
+      // Svuotare qui cancellava l'anteprima dell'ultima pagina letta proprio nel
+      // momento in cui serve di piu', cioe' quando si guarda cosa ha trovato.
+      // L'anteprima resta finche' non arriva una pagina diversa.
+      if (!url) { setMonitorIdle(); return; }
+      urlInput.value = url;
+      monUrl.textContent = url;
       updateMonFooter(url, title);
       // Only clear old screenshot if the URL actually changed (new site)
       if (url && url !== _monitorCurrentUrl) {
@@ -2199,7 +2315,38 @@
       };
       box.innerHTML = '<div style="font-size:11px;color:var(--text2);margin-bottom:4px">'
         + 'PAGINE CONSULTATE &middot; apri per proseguire tu</div>'
-        + pagine.map(chip).join('');
+        + pagine.map(chip).join('')
+        // Quello che COBRA ha letto si vedeva scorrere e spariva: senza un
+        // tasto non c'era modo di portarlo via.
+        + '<div style="margin-top:8px">'
+        + '<button class="scarica-contenuti" style="padding:6px 14px;border-radius:8px;'
+        + 'background:var(--accent-gradient);color:#fff;border:none;font-size:12px;'
+        + 'font-weight:500;cursor:pointer">&#x2b07; Scarica i contenuti letti</button>'
+        + '<span class="esito-contenuti" style="margin-left:10px;font-size:11px;color:var(--text2)"></span>'
+        + '</div>';
+
+      const bottone = box.querySelector('.scarica-contenuti');
+      const esito = box.querySelector('.esito-contenuti');
+      bottone.addEventListener('click', async () => {
+        bottone.disabled = true;
+        esito.textContent = 'preparo...';
+        try {
+          const r = await fetch('/api/contenuti/salva', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+          const d = await r.json();
+          if (!d.ok) { esito.textContent = d.error || 'non riuscito'; bottone.disabled = false; return; }
+          esito.textContent = `${d.pagine} pagine`;
+          bottone.outerHTML = `<a href="${d.url}" download="${escapeHtml(d.filename)}" `
+            + 'style="padding:6px 14px;border-radius:8px;background:var(--accent-gradient);'
+            + 'color:#fff;text-decoration:none;font-size:12px;font-weight:500">&#x2b07; '
+            + escapeHtml(d.filename) + '</a>';
+          // Il documento appare anche nella scheda dei file, per rileggerlo
+          mostraFileScaricabile(d.filename);
+        } catch (e) {
+          esito.textContent = 'errore: ' + e.message;
+          bottone.disabled = false;
+        }
+      });
+
       chatMessages.appendChild(box);
       chatMessages.scrollTop = chatMessages.scrollHeight;
     }
@@ -2455,7 +2602,7 @@
       if (!clean || clean.length < 2) return;
       speakerBtn.classList.add('speaking');
       try {
-        const resp = await fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: clean }) });
+        const resp = await fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: clean, ...(voceScelta ? { voce: voceScelta } : {}) }) });
         if (!resp.ok) { speakerBtn.classList.remove('speaking'); return; }
         const blob = await resp.blob();
         const u = URL.createObjectURL(blob);
@@ -2526,7 +2673,13 @@
             break;
           case 'thinking':
             updateThinking(msg.text);
-            setMonitorBusy(msg.text);
+            // Un "thinking" VUOTO è il segnale di fine lavoro, non di lavoro
+            // in corso. Prima chiamava comunque setMonitorBusy(''), e il
+            // pannello restava su "Working" per sempre: bastava una risposta
+            // di sola conversazione — o una domanda del Collega — perché
+            // COBRA sembrasse piantato pur avendo finito.
+            if (msg.text) setMonitorBusy(msg.text);
+            else setMonitorIdle();
             break;
           case 'ai_reasoning':
             addReasoning(msg.text, msg.icon || '&#x1f9e0;');
@@ -2572,6 +2725,13 @@
             break;
           case 'monitor_content':
             showMonitorContent(msg.markdown, msg.url, msg.title);
+            // Molti siti non si lasciano fotografare: la finestra di lavoro non
+            // e' disegnata e la cattura fallisce. Restare sulla scheda immagine
+            // significa fissare un riquadro vuoto mentre il testo della pagina
+            // e' gia' arrivato. Se non c'e' immagine, si mostra quello.
+            if (!monScreenshot.querySelector('img') && msg.markdown && msg.markdown.length > 80) {
+              switchMonitorTab('content');
+            }
             break;
           case 'monitor_file':
             showMonitorFile(msg);
@@ -2801,13 +2961,21 @@
       try {
         const resp = await fetch('/api/status');
         const data = await resp.json();
-        if (data.keys) {
-          providerBadges.innerHTML = data.keys.map(k => `<span class="badge">${k}</span>`).join('');
-          if (data.keys.length === 0) statusText.textContent = 'No API keys';
-        } else if (data.providers) {
-          const keys = Object.entries(data.providers).filter(([,v]) => v).map(([k]) => k);
-          providerBadges.innerHTML = keys.map(k => `<span class="badge">${k}</span>`).join('');
-          if (keys.length === 0 && !_isCloud) statusText.textContent = 'No API keys';
+        // Si mostrano SEMPRE tutti e quattro i servizi: quelli senza chiave
+        // spenti. Prima comparivano solo quelli configurati, quindi un
+        // servizio mancante era invisibile e sembrava semplicemente non
+        // esistere.
+        const TUTTI = ['openai', 'anthropic', 'gemini', 'elevenlabs'];
+        let attive = null;
+        if (data.keys) attive = data.keys;
+        else if (data.providers) attive = Object.entries(data.providers).filter(([, v]) => v).map(([k]) => k);
+        if (attive) {
+          const disegna = (nome, acceso) =>
+            `<span class="badge ${acceso ? 'attivo' : 'spento'}" title="${acceso ? 'chiave configurata' : 'nessuna chiave: apri le impostazioni'}">${nome}</span>`;
+          const extra = attive.filter(k => !TUTTI.includes(k));
+          providerBadges.innerHTML = TUTTI.map(n => disegna(n, attive.includes(n)))
+            .concat(extra.map(n => disegna(n, true))).join('');
+          if (attive.length === 0 && !_isCloud) statusText.textContent = 'No API keys';
         }
         // Update bridge indicator from status (local mode only)
         if (data.bridge) updateBridgeIndicator(data.bridge.connected, data.bridge.capabilities);

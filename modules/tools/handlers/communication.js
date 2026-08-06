@@ -17,6 +17,26 @@ async function prepareLinkedinMessage(args) {
 // ── Human Takeover ──
 async function requestHumanTakeover(args, ctx) {
   const reason = args.reason || 'COBRA richiede il tuo intervento sul browser.';
+
+  // L'intervento umano esiste per le cose che l'AI NON PUÒ fare: password,
+  // pagamenti, verifiche di identità, decisioni che non le competono.
+  //
+  // Successo davvero: il lavoro si è fermato dieci minuti in attesa
+  // dell'operatore con il motivo "Creazione del report finale in formato
+  // Excel" — cioè per fare esattamente il proprio mestiere. L'utente vedeva
+  // tutto fermo senza capire perché. Un motivo che non riguarda credenziali,
+  // pagamenti o autorizzazioni non è un motivo: è una resa travestita.
+  const motiviVeri = /password|credenzial|login|acced|2fa|codice(?:\s+di)?\s+verifica|otp|captcha|pagament|carta|bonifico|autorizza|conferma dell'utente|decisione|firma/i;
+  const resaTravestita = /report|file|excel|documento|creazion|scriv|riassun|cerca|ricerca|analisi/i;
+  if (!motiviVeri.test(reason) || (resaTravestita.test(reason) && !motiviVeri.test(reason))) {
+    ctx.log(`[HumanTakeover] RIFIUTATO: "${reason}" non richiede un umano`);
+    return JSON.stringify({
+      error: 'INTERVENTO UMANO RIFIUTATO: "' + reason + '" è parte del TUO lavoro, non di quello dell\'utente. '
+        + 'L\'intervento umano serve solo per password, pagamenti, codici di verifica o decisioni che non ti competono. '
+        + 'Per il report usa crea_report; per i dati usa navigate e read_page. Continua da solo.',
+    });
+  }
+
   ctx.log(`[HumanTakeover] Requested: ${reason}`);
   ctx.session.humanTakeover = true;
   ctx.wsBroadcast({ type: 'human_takeover_request', reason, instructions: args.instructions || '', url: ctx.getState('activePage')?.url?.() || null, ts: Date.now() });

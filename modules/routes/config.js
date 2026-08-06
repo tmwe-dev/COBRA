@@ -154,8 +154,23 @@ function register(router, ctx) {
   // ── GET /api/config/keys ──
   router.get('/api/config/keys', (body, res) => {
     const active = Object.keys(ctx.aiKeys).filter(k => k.endsWith('Key') && ctx.aiKeys[k]).map(k => k.replace('Key', ''));
+
+    // La finestra mostrava sempre i segnaposto vuoti anche quando le chiavi
+    // c'erano tutte nel .env: sembravano perse ad ogni apertura e si finiva
+    // per reinserirle senza motivo. Si restituisce un'impronta — le ultime
+    // quattro cifre — che basta a riconoscerle senza esporle.
+    const impronte = {};
+    for (const [nome, valore] of Object.entries(ctx.aiKeys)) {
+      if (!nome.endsWith('Key') || !valore) continue;
+      const v = String(valore);
+      impronte[nome.replace('Key', '')] = { presente: true, coda: v.slice(-4), lunghezza: v.length };
+    }
+    const posta = ctx.session.emailConfig || {};
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ providers: active, hasKeys: active.length > 0 }));
+    res.end(JSON.stringify({
+      providers: active, hasKeys: active.length > 0, impronte,
+      posta: posta.imapUser ? { presente: true, indirizzo: posta.imapUser, server: posta.imapHost } : { presente: false },
+    }));
   });
 
   // ── POST /api/config/email ──
@@ -233,7 +248,19 @@ function register(router, ctx) {
         host: scoperta.smtpHost, port: scoperta.smtpPort,
         user: email, pass: password, from: email,
       };
-      ctx.log(`[Email] Casella configurata e verificata: ${ctx.sanitizeForLog(email)} su ${scoperta.imapHost}`);
+      // Fino a ieri la casella viveva solo in memoria: bastava un riavvio e
+      // bisognava reinserire indirizzo e password. Ora si salva accanto alle
+      // chiavi, sulla macchina di Luca, e si rilegge da sola all'avvio.
+      const salvatePosta = salvaChiaviNelEnv({
+        MAIL_USER: email,
+        MAIL_PASS: password,
+        MAIL_IMAP_HOST: scoperta.imapHost,
+        MAIL_IMAP_PORT: String(scoperta.imapPort || 993),
+        MAIL_SMTP_HOST: scoperta.smtpHost || '',
+        MAIL_SMTP_PORT: String(scoperta.smtpPort || 587),
+      }, ctx);
+      ctx.log(`[Email] Casella configurata e verificata: ${ctx.sanitizeForLog(email)} su ${scoperta.imapHost}`
+        + (salvatePosta.length ? ' (salvata: resta dopo il riavvio)' : ' (NON salvata: varrà solo per questa sessione)'));
       return rispondi(200, {
         ok: true,
         provider: scoperta.provider,

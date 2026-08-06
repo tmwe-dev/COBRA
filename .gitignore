@@ -1,18 +1,50 @@
-node_modules/
-.env
-data/audit.jsonl
-data/audit.jsonl.*
-data/*.jsonl
-data/supermario_prompts.jsonl
-*.log
-.DS_Store
-package-lock.json
-.vercel
+# ── Cosa NON finisce nel repository ──
+#
+# Il 6 agosto 2026 il repository aveva come radice l'intera cartella Downloads:
+# 122 file del progetto e 2.539 file che non c'entravano niente — immagini,
+# ritagli di testo, patch di altri progetti, e un ".env.backup" con dentro le
+# chiavi API. Bastava un "git add ." perché finisse tutto su GitHub.
+#
+# Adesso il progetto sta in una cartella sua e qui dentro c'è solo COBRA. Le
+# regole che seguono restano comunque, perché due difese valgono più di una.
 
-# Dati di esecuzione: contengono conversazioni, memorie e dati aziendali reali.
-# Non devono finire nel repository.
-data/*.json
-data/*.json.corrotto.*
-data/audit/
-data/files/
-data/cobra.pid
+# ── Credenziali. Mai, per nessun motivo. ──
+.env
+.env.*
+*.pem
+*.key
+
+# ── Dipendenze: si reinstallano con npm install ──
+node_modules/
+package-lock.json
+
+# ── Dati di esecuzione ──
+# Contengono conversazioni, memorie e dati aziendali reali di Luca.
+#
+# Le regole valgono a QUALSIASI profondità, non solo nella cartella principale:
+# esiste anche modules/data/conversations.json — 15 KB di conversazioni vere —
+# che con il vecchio "data/*.json" sarebbe passato liscio, perché quella forma
+# vale solo per la radice.
+**/data/*.json
+**/data/*.jsonl
+**/data/*.json.corrotto.*
+**/data/audit/
+**/data/files/
+**/data/cobra.pid
+conversations.json
+*.log
+
+# ── Roba di sistema e di servizio ──
+.DS_Store
+.vercel
+*.swp
+*~
+
+# ── Scarti che tendono ad accumularsi ──
+# Se un file finisce qui per sbaglio, meglio che non arrivi al repository.
+*.zip
+*.dmg
+*.pkg
+*.textClipping
+*.backup-*
+*.orig

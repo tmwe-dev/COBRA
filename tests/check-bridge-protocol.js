@@ -109,8 +109,12 @@ ok(`read-scrape.js legge .markdown dal bridge`, /bc\?\.markdown|bc\.markdown/.te
 ok(`read-scrape.js riprova sulle pagine caricate via javascript`,
    /for \(const attesa of/.test(rsSrc),
    'senza attese la prima lettura torna vuota su Google Voli e simili');
-ok(`navigate.js riprova sulle pagine caricate via javascript`,
-   /for \(const attesa of/.test(navSrc));
+ok(`navigate.js rilegge finche' la pagina progredisce`,
+   /new Sorveglianza/.test(navSrc) && /guardia\.segnala\(/.test(navSrc),
+   'senza riletture la prima lettura torna vuota su Google Voli e simili');
+ok(`navigate.js non taglia con un tetto cieco di tempo`,
+   !/TETTO_ATTESA_MS/.test(navSrc),
+   'un tetto fisso tronca una ricerca che sta ancora caricando bene');
 
 console.log('');
 console.log(FAIL === 0

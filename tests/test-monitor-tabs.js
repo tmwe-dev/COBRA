@@ -56,7 +56,10 @@ section('Nessuna scheda portata in primo piano');
 section('L anteprima delle pagine continua a funzionare');
 // ─────────────────────────────────────────
 {
-  const shot = ext.slice(ext.indexOf("case 'screenshot':"), ext.indexOf("case 'screenshot':") + 2600);
+  // La finestra di lettura va fino al case successivo: fissarla a un numero
+  // di caratteri significa che allungando il codice il test comincia a
+  // fallire su cose che ci sono ancora.
+  const shot = ext.slice(ext.indexOf("case 'screenshot':"), ext.indexOf("case 'mostra_cursore':"));
   ok('lo screenshot recupera la scheda persistita', /recuperaWorkTab\(\)/.test(shot),
      'con la variabile azzerata fotograferebbe la scheda sbagliata');
   ok('rende attiva la scheda nella SUA finestra', /tabs\.update\(idScheda, \{ active: true \}\)/.test(shot),
@@ -69,9 +72,14 @@ section('L anteprima delle pagine continua a funzionare');
   ok('ha una seconda via quando la finestra non è disegnata',
      /catturaConIspettore/.test(shot),
      'Chrome non fotografa le finestre coperte: senza alternativa l\'anteprima sparisce');
-  ok('la cattura diretta resta il primo tentativo',
-     shot.indexOf('captureVisibleTab') < shot.indexOf('catturaConIspettore'),
-     'la via leggera va provata per prima');
+  // L'ordine è stato invertito di proposito il 6 agosto: la cattura diretta
+  // è più veloce ma fotografa SOLO la parte visibile, e l'anteprima mostrava
+  // le pagine tagliate a metà. Meglio qualche decimo di secondo in più.
+  ok('l ispettore viene provato per primo, perche vede la pagina intera',
+     shot.indexOf('catturaConIspettore') < shot.indexOf('captureVisibleTab'),
+     'solo l\'ispettore sa fotografare oltre il bordo dello schermo');
+  ok('e la cattura diretta resta come ripiego',
+     shot.indexOf('captureVisibleTab') > 0);
 }
 {
   ok('la cattura tramite ispettore stacca sempre il collegamento',

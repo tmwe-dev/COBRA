@@ -127,6 +127,34 @@ function register(router, ctx) {
   // Research Status — rimosso (ResearchStrategy eliminato nella semplificazione)
 
   // ── Status ──
+  // ── Riavvio dal pannello ──
+  //
+  // Ogni modifica al codice richiede di rilanciare il server, e finora
+  // l'unico modo era che Luca aprisse il Terminale e incollasse un comando.
+  // Su una giornata di lavoro sono decine di interruzioni, ognuna delle
+  // quali spezza il filo del discorso.
+  //
+  // Il processo esce con codice 0; il guardiano che lo tiene in piedi lo
+  // rilancia dopo due secondi, e la porta ormai sa aspettare il proprio turno.
+  //
+  // Sicurezza: le rotte /api/ sono già dietro il controllo del token, e il
+  // server ascolta solo su 127.0.0.1. In più si pretende una conferma
+  // esplicita nel corpo: spegnere il server è una cosa che si fa apposta,
+  // non per sbaglio o per una chiamata partita di rimbalzo.
+  router.post('/api/riavvia', (corpo, res) => {
+    let conferma = null;
+    try { conferma = JSON.parse(corpo || '{}').conferma; } catch (_) { /* corpo non leggibile */ }
+    if (conferma !== 'riavvia') {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ ok: false, errore: 'serve {"conferma":"riavvia"}' }));
+      return;
+    }
+    ctx.log('[Riavvio] Richiesto dal pannello: esco, il guardiano mi rilancia');
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, messaggio: 'Riavvio in corso: fra qualche secondo sono di nuovo qui.' }));
+    setTimeout(() => process.exit(0), 300);
+  });
+
   router.get('/api/status', (b, res) => {
     const conv = ctx.conversationEngine.getActiveConversation();
     const chatMem = conv ? ctx.conversationEngine.chatMemories.get(conv.id) : null;

@@ -105,6 +105,18 @@ async function executeTool(name, args, ctx) {
   // Supervisor tracking
   const loopWarning = ctx.CobraSupervisor.recordToolCall(name, args);
   if (loopWarning) {
+    // Un'interruzione che non lascia traccia non si puo' diagnosticare.
+    // L'utente vede "Interrotto per evitare loop" e nel registro non c'e'
+    // niente: ne' quale delle sette regole ha deciso, ne' su cosa. Da fuori
+    // sembra che il programma si sia fermato per capriccio, e non si sa da
+    // dove ricominciare a guardare.
+    const conteggio = ctx.CobraSupervisor._totalToolCount;
+    ctx.log(`[Supervisore] INTERROTTO alla chiamata ${conteggio}: regola="${loopWarning.warning}" `
+      + `strumento=${name} argomenti=${JSON.stringify(args || {}).substring(0, 160)}`);
+    if (loopWarning.message) ctx.log(`[Supervisore] Motivo: ${loopWarning.message}`);
+    const ultimi = (ctx.CobraSupervisor._toolCallLog || []).slice(-6)
+      .map(t => `${t.tool}(${String(t.args).substring(0, 40)})`).join(' → ');
+    ctx.log(`[Supervisore] Ultimi passi: ${ultimi}`);
     return JSON.stringify({ error: loopWarning.message || `Loop circolare: ${name}`, warning: loopWarning.warning || 'circular_loop', force_stop: loopWarning.warning === 'force_stop' });
   }
 

@@ -2,7 +2,7 @@
 # Batteria di test COBRA. Uso: ./run-tests.sh
 cd "$(dirname "$0")" || exit 1
 FAIL=0
-TESTS="tests/verify-all.js tests/test-tool-pipeline.js tests/check-ctx-methods.js tests/check-bridge-protocol.js tests/test-kb-search.js tests/test-ssrf.js tests/test-security-runtime.js tests/test-data-integrity.js tests/test-learning.js tests/test-imap.js tests/test-mail-autoconfig.js tests/test-monitor-tabs.js tests/test-page-injection.js tests/test-fabrication-guard.js tests/test-process.js tests/test-xlsx.js tests/test-verifica-dati.js"
+TESTS="tests/verify-all.js tests/test-tool-pipeline.js tests/check-ctx-methods.js tests/check-bridge-protocol.js tests/test-kb-search.js tests/test-ssrf.js tests/test-security-runtime.js tests/test-data-integrity.js tests/test-learning.js tests/test-imap.js tests/test-mail-autoconfig.js tests/test-monitor-tabs.js tests/test-page-injection.js tests/test-fabrication-guard.js tests/test-process.js tests/test-xlsx.js tests/test-verifica-dati.js tests/test-limite-ai.js tests/test-incarico.js tests/test-collega.js tests/test-consegna.js tests/test-sorveglianza.js tests/test-fonti-rivista.js tests/test-avvio-porta.js tests/test-ponte-connessione.js tests/test-collega-chiede.js tests/test-collega-algoritmo.js tests/test-giro-a-vuoto.js tests/test-riavvio.js tests/test-strumenti-promessi.js tests/test-piano-stabile.js tests/test-promesse-mantenibili.js tests/test-mani-vuote.js tests/test-numeri-onesti.js tests/test-pagina-giusta.js tests/test-cursore-e-pagina-intera.js tests/test-voce-e-ostacoli.js"
 for t in $TESTS; do
   printf "%-38s " "$(basename $t)"
   OUT=$(timeout 120 node "$t" 2>&1)

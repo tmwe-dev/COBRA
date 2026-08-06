@@ -1,5 +1,7 @@
 // modules/routes/chat.js — /api/chat, /api/chat/abort, /api/chat/clear
 
+const { Collega } = require('../collega/collega');
+const { descriviCriterio } = require('../collega/incarico');
 const { analizzaRisposta, rispostaOnesta, analizzaResa } = require('../security/fabrication-guard');
 
 function register(router, ctx) {
@@ -67,6 +69,13 @@ function register(router, ctx) {
       // e le disponibilità possono essere cambiati, e servire dati vecchi
       // spacciandoli per letti adesso sarebbe peggio che rileggerli.
       ctx.session._cachePagine = new Map();
+      // Stessa cosa per le ricerche: dentro un turno la stessa query dà gli
+      // stessi risultati, e ripeterla è il modo in cui si finisce in loop.
+      ctx.session._cacheRicerche = new Map();
+      // I file prodotti nel turno servono al Collega per verificare il criterio
+      // "file atteso": senza questa traccia, un report creato risulterebbe assente.
+      ctx.session.fileDelTurno = [];
+      ctx.session.righeUltimoFile = null;
       ctx._navDomainCount = {};
 
       // 2-3. Conversation + ChatMemory
@@ -137,6 +146,192 @@ function register(router, ctx) {
       if (intent === 'task') ctx.emitReasoning(`Scope: [${routing.scopes.join(', ')}]`, '🔧');
       ctx.emitThinking(intent === 'task' ? 'Analizzo la richiesta...' : 'Elaboro...');
 
+      // ── 4b. IL COLLEGA ──
+      //
+      // Prima il messaggio andava dritto all'Esecutore e "fatto" era un
+      // giudizio che il modello dava su se stesso. Adesso c'e' un primo
+      // passaggio: qualcuno legge la richiesta, decide se serve davvero
+      // lavorare, e se serve scrive cosa vorra' dire "completo" — in criteri
+      // che verifica il codice, non lui.
+      //
+      // Se il Collega non e' disponibile o inciampa, si prosegue com'era:
+      // questa parte puo' migliorare il lavoro, non deve poterlo impedire.
+      let incaricoCorrente = null;
+      let collega = null;
+      let collegaPassaOltre = false;
+      if (ctx.CollegaAttivo !== false) {
+        try {
+          collega = new Collega(
+            async (sys, messaggi) => {
+              // Il Collega e' il giudizio del sistema: capire il bisogno sotto
+              // la frase, scegliere i criteri, proporre alternative quando la
+              // richiesta esatta non esiste. Sono compiti da modello forte.
+              // Con il modello piccolo usciva un assistente che eseguiva alla
+              // lettera e non proponeva niente — la "poca intelligenza" non era
+              // mancanza di regole, era mancanza di capacita'.
+              const r = await ctx.callAI(sys, messaggi, undefined, { ...ctx, modelTier: 'power' });
+              // Un fornitore caduto restituisce comunque una stringa
+              // ("Errore AI: ..."): senza questo controllo quel testo veniva
+              // consegnato all'utente come se fosse la risposta di un collega.
+              if (!r || r.provider === 'error' || r.provider === 'none' || r.provider === 'budget_exceeded') {
+                throw new Error(r?.content || 'nessuna risposta dal modello');
+              }
+              return r.content || '';
+            },
+            ctx.log
+          );
+          let memoria = ctx.learningStore ? (ctx.learningStore.buildRecallBlock(message) || '') : '';
+
+          // Se al giro scorso il Collega ha chiesto qualcosa, il lavoro che
+          // aveva preparato è ancora sul tavolo. Senza questo richiamo, un
+          // "vai" o un "25.000" tornerebbero a un Collega smemorato, che
+          // ricomincerebbe da capo — ed è esattamente il motivo per cui prima
+          // non conveniva mai chiedere.
+          const inSospeso = ctx.session.incaricoInSospeso;
+          if (inSospeso && (Date.now() - inSospeso.quando) < 30 * 60 * 1000) {
+            memoria += `\n\n# IL LAVORO CHE HAI GIÀ PREPARATO E NON È ANCORA PARTITO\n`
+              + `Su richiesta di Luca: "${inSospeso.richiesta}"\n`
+              + `Obiettivo che avevi scritto: ${inSospeso.obiettivo}\n`
+              + `Gli avevi chiesto: ${inSospeso.domanda}\n`
+              + `Se questo messaggio è la sua risposta — anche solo "vai", "ok", "procedi" o una cifra — `
+              + `NON richiedere niente e NON ricominciare: rispondi con modo "incarico", `
+              + `riprendendo quell'obiettivo con dentro quello che ti ha appena detto.`;
+          } else if (inSospeso) {
+            ctx.session.incaricoInSospeso = null;   // troppo vecchio: non è più quel discorso
+          }
+
+          const ascolto = await collega.ascolta(message, { memoria, storico: chatMem ? chatMem.getAPIMessages().slice(-6) : [] });
+
+          if (ascolto.modo === 'passa_oltre') {
+            // Il Collega non è riuscito a strutturare la risposta: il lavoro
+            // prosegue per la via diretta invece di sparire in una chiacchiera.
+            // Ma alla fine parla comunque LUI: senza questa voce, il risultato
+            // arrivava crudo dall'officina — ed era la freddezza che l'utente
+            // sentiva senza saperla nominare.
+            collegaPassaOltre = true;
+            ctx.log('[Collega] Passo oltre: la richiesta va all\'Esecutore senza incarico');
+          } else if (ascolto.modo === 'proposta' && ascolto.risposta) {
+            // Ha capito il lavoro, l'ha preparato, e prima di bruciare dieci
+            // minuti chiede la cosa che cambia il risultato. Il lavoro resta
+            // in sospeso: non si sveglia l'Esecutore, non si perde niente.
+            ctx.session.incaricoInSospeso = {
+              quando: Date.now(),
+              richiesta: String(message || '').slice(0, 500),
+              obiettivo: ascolto.incarico ? ascolto.incarico.obiettivo : '(non specificato)',
+              domanda: ascolto.risposta.slice(0, 500),
+            };
+            ctx.log(`[Collega] Proposta in attesa di risposta: "${ctx.session.incaricoInSospeso.obiettivo}"`);
+            if (chatMem) chatMem.addMessage('assistant', ascolto.risposta);
+            ctx.conversationEngine.addMessage(conv.id, 'assistant', ascolto.risposta);
+            ctx.CobraSupervisor.completeRequest(ascolto.risposta);
+            _invia(200, { content: ascolto.risposta, provider: 'collega', intent, lingua: ascolto.lingua || 'it', inAttesa: true });
+            ctx.wsBroadcast({ type: 'thinking', text: '' });
+            return;
+          } else if (ascolto.modo === 'conversazione' && ascolto.risposta) {
+            // Il Collega se la cava da solo: non si sveglia l'Esecutore.
+            // E' anche la ragione per cui due agenti non raddoppiano i costi.
+            ctx.log('[Collega] Rispondo senza coinvolgere l\'Esecutore');
+            if (chatMem) chatMem.addMessage('assistant', ascolto.risposta);
+            ctx.conversationEngine.addMessage(conv.id, 'assistant', ascolto.risposta);
+            ctx.CobraSupervisor.completeRequest(ascolto.risposta);
+            _invia(200, { content: ascolto.risposta, provider: 'collega', intent, lingua: ascolto.lingua || 'it' });
+            ctx.wsBroadcast({ type: 'thinking', text: '' });
+            return;
+          }
+
+          if (ascolto.modo === 'incarico' && ascolto.incarico) {
+            ctx.session.incaricoInSospeso = null;   // il lavoro parte: non è più in attesa
+            incaricoCorrente = ascolto.incarico;
+            ctx.log(`[Collega] Incarico: "${incaricoCorrente.obiettivo}" — ${incaricoCorrente.criteri.length} criteri`
+              + (ascolto.senzaVerifica ? ' (NON verificabile)' : ''));
+            ctx.wsBroadcast({
+              type: 'incarico',
+              obiettivo: incaricoCorrente.obiettivo,
+              criteri: incaricoCorrente.criteri.map(c => descriviCriterio(c)),
+              verificabile: !ascolto.senzaVerifica,
+            });
+            if (ascolto.risposta) ctx.emitReasoning(ascolto.risposta, '💬');
+            ctx.session.linguaCorrente = ascolto.lingua || 'it';
+
+            // ── L'incarico decide anche gli strumenti ──
+            //
+            // Non si può pretendere una fonte da chi non ha un browser.
+            //
+            // Successo davvero: "organizzami una vacanza a Bora Bora ... alla
+            // fine preparami un file Excel" è stata classificata scopes=[file]
+            // perché la parola "file" ha vinto sul resto. All'Esecutore sono
+            // arrivati dieci strumenti, nessuno capace di navigare. Ha lavorato
+            // a vuoto, e il criterio "ogni valore viene da una pagina aperta"
+            // gli chiedeva l'impossibile: zero pagine aperte, due giri di
+            // insistenza sprecati, e un file col solo intestazione.
+            //
+            // Se i criteri chiedono fonti, gli strumenti per procurarsele
+            // devono esserci. Questo lo impone il codice, non il modello.
+            // La regola non può dipendere da quali criteri il Collega ha
+            // scelto: la prima volta ha messo "origine_verificabile" e la
+            // seconda no, sulla STESSA richiesta, e nel secondo caso
+            // l'Esecutore è rimasto di nuovo senza browser.
+            //
+            // Un incarico nasce solo quando c'è del lavoro da fare, e il
+            // lavoro quasi sempre comincia guardando qualcosa. Gli strumenti
+            // di ricerca ci sono sempre, tranne quando l'obiettivo parla
+            // apertamente solo di file già presenti sul computer. Averli non
+            // obbliga a usarli; non averli rende impossibile riuscire.
+            //
+            // L'eccezione "solo file locali" guarda le PAROLE dell'obiettivo,
+            // e le parole sbagliano: "Preparare un documento con le tariffe
+            // dei corrieri" contiene "documento" e nessuna delle parole di
+            // ricerca, quindi passerebbe per un lavoro da fare senza browser —
+            // mentre le tariffe stanno su internet. Se poi il Collega ha messo
+            // origine_verificabile, all'Esecutore si chiede una fonte e gli si
+            // suggerisce di aprire le pagine con navigate(), che non ha.
+            //
+            // I criteri battono le parole: se si pretende una fonte, il
+            // browser serve, punto. È lo stesso principio scritto qui sopra.
+            const pretendeFonti = (incaricoCorrente.criteri || [])
+              .some(c => c.tipo === 'origine_verificabile');
+            const soloFileLocali = !pretendeFonti
+              && /\b(file|cartella|documento|foglio)\b/i.test(incaricoCorrente.obiettivo)
+              && !/\b(cerca|trova|voli|hotel|prezz|aziend|fornitor|escursion|confront|verific|leggi (su|il sito))/i.test(incaricoCorrente.obiettivo);
+            if (!soloFileLocali) {
+              const mancanti = ['search', 'browse'].filter(s => !routing.scopes.includes(s));
+              if (mancanti.length) {
+                routing.scopes.push(...mancanti);
+                ctx.log(`[Collega] L'incarico richiede di cercare ma mancavano gli strumenti: `
+                  + `aggiunti gli ambiti [${mancanti.join(', ')}] (erano [${routing.scopes.filter(s => !mancanti.includes(s)).join(', ')}])`);
+                ctx.emitReasoning('Mi servono gli strumenti di ricerca per questo incarico', '🔎');
+              }
+            }
+
+            // ── Chi deve consegnare un file deve avere di che scriverlo ──
+            //
+            // Verificato dal vivo il 6 agosto, richiesta Tokyo. Il Collega
+            // aveva messo il criterio { file_atteso: "html" }, ma all'Esecutore
+            // sono arrivati 19 strumenti fra cui NESSUNO capace di scrivere un
+            // file: crea_report e create_file stanno negli ambiti "data" e
+            // "file", che non erano attivi.
+            //
+            // Il seguito, riga per riga nel log: due insistenze e un cambio di
+            // strada, tutti con la stessa frase — "manca il file .html
+            // richiesto" — ripetuta a un modello che non aveva modo di
+            // produrlo. Tre giri di lavoro spesi a chiedere l'impossibile.
+            //
+            // Come per la ricerca: il criterio decide gli strumenti. Se si
+            // promette un documento, gli strumenti per scriverlo ci sono.
+            const vuoleUnFile = (incaricoCorrente.criteri || []).some(c => c.tipo === 'file_atteso');
+            if (vuoleUnFile && !routing.scopes.includes('file')) {
+              routing.scopes.push('file');
+              ctx.log('[Collega] L\'incarico promette un file ma mancavano gli strumenti per scriverlo: '
+                + 'aggiunto l\'ambito [file]');
+              ctx.emitReasoning('Mi serve di che scrivere il documento', '📝');
+            }
+          }
+        } catch (e) {
+          ctx.log(`[Collega] Passaggio saltato (${e.message}): procedo com'era`);
+          incaricoCorrente = null;
+        }
+      }
+
       // 5. KB search
       try { ctx.session.kbSnippets = await ctx.searchKB(message); } catch { ctx.session.kbSnippets = []; }
 
@@ -161,6 +356,17 @@ function register(router, ctx) {
         } catch (e) { ctx.log(`[Apprendimento] richiamo fallito: ${e.message}`); }
       }
 
+      // L'incarico entra nel prompt dell'Esecutore: obiettivo, criteri, vincoli
+      // e cosa NON fare. E' il contratto fra i due, e dice apertamente che a
+      // verificare i criteri sara' il codice.
+      if (incaricoCorrente) systemPrompt += '\n\n' + incaricoCorrente.perIlPrompt();
+      // Quello che l'esperienza ha gia' insegnato sulle fonti entra nel
+      // prompt: non si riscopre a spese del tempo di Luca.
+      if (ctx.registroFonti) {
+        const blocco = ctx.registroFonti.perIlPrompt();
+        if (blocco) systemPrompt += '\n\n' + blocco;
+      }
+
       // Prompt audit
       ctx.auditPrompt(message, routing, marioResult, taskPlan, ctx.session.kbSnippets);
       if (taskPlan) systemPrompt += '\n\n' + ctx.SuperMario.buildPlanPrompt(taskPlan);
@@ -172,9 +378,165 @@ function register(router, ctx) {
 
       // 8. AI call
       const modelSelection = ctx.SuperMario.selectModel(marioResult.scopes, taskPlan, message, ctx.session);
+
+      // ── Il modello lo decide il LAVORO, non la lunghezza del messaggio ──
+      //
+      // Verificato dal vivo il 6 agosto: alla domanda del Collega, Luca ha
+      // risposto "25.000 in tutto, 4 doppie, date fisse. Vai." — un messaggio
+      // corto, senza parole come "report" o "confronta". Il modello è stato
+      // scelto su QUEL testo: tier standard, cioè gpt-4o-mini. Poi al piccolo
+      // è stato chiesto di coprire due soggetti, verificare le fonti e
+      // produrre un report impaginato. Ha girato in tondo — stessa ricerca
+      // quattro volte — e il Supervisore ha dovuto fermarlo due volte.
+      //
+      // L'incarico dice quanto è difficile il lavoro molto meglio della frase
+      // che l'ha innescato: un "Vai." di quattro lettere può valere mezz'ora
+      // di ricerche. Stessa logica con cui, poco sopra, gli strumenti vengono
+      // aggiunti in base ai criteri e non in base alle parole usate.
+      if (incaricoCorrente && modelSelection.tier !== 'power') {
+        const criteri = incaricoCorrente.criteri || [];
+        const impegnativo = criteri.length >= 3
+          || criteri.some(c => ['origine_verificabile', 'file_atteso', 'soggetti_coperti'].includes(c.tipo));
+        if (impegnativo) {
+          ctx.log(`[Modello] Il messaggio sembrava semplice (${modelSelection.tier}), ma l'incarico chiede `
+            + `${criteri.length} criteri: passo al modello forte`);
+          modelSelection.tier = 'power';
+          modelSelection.reason = `incarico con ${criteri.length} criteri`;
+        }
+      }
+
       ctx.emitReasoning(`Modello: ${modelSelection.tier}`, '🧠');
       const _chatStart = Date.now();
-      const result = await ctx.callAI(systemPrompt, msgs, useTools, { ...ctx, modelTier: modelSelection.tier });
+      let result = await ctx.callAI(systemPrompt, msgs, useTools, { ...ctx, modelTier: modelSelection.tier });
+
+      // ── 8a. IL COLLEGA GIUDICA ──
+      //
+      // Il verdetto non lo da' chi ha fatto il lavoro. I criteri li confronta
+      // il codice col risultato, e se manca qualcosa l'Esecutore torna indietro
+      // sapendo ESATTAMENTE cosa: prima l'insistenza era una spinta cieca
+      // ("prova un'altra strada") data a chi non sapeva cosa mancasse.
+      let valutazioneFinale = null;
+      let insistenzeEsaurite = false;
+      if (collega && incaricoCorrente) {
+        let insistenze = 0;
+        let mancanzePrecedenti = null;   // per capire se un tentativo ha spostato qualcosa
+        let stradeCambiate = 0;
+        for (;;) {
+          const esito = {
+            testo: result.content || '',
+            righe: (ctx.session.righeUltimoFile || null),
+            file: ctx.session.fileDelTurno || [],
+            pagine: ctx.session.pagineDelTurno || [],
+          };
+          const giudizio = collega.giudica(incaricoCorrente, esito, ctx.session, insistenze,
+            mancanzePrecedenti, stradeCambiate);
+          valutazioneFinale = giudizio.valutazione;
+
+          if (giudizio.decisione === 'consegna') {
+            insistenzeEsaurite = !!giudizio.esaurite;
+            if (valutazioneFinale) {
+              ctx.log(`[Collega] Verdetto: ${valutazioneFinale.soddisfatti}/${valutazioneFinale.totale} criteri`
+                + (valutazioneFinale.soddisfatto ? '' : ` — mancano: ${valutazioneFinale.mancanze.join('; ')}`));
+
+              // ── Due giudici non possono dare verdetti opposti ──
+              //
+              // Il motore dei passi e i criteri dell'incarico sono nati in
+              // momenti diversi e non si conoscono. E' successo davvero: il
+              // pannello mostrava "1/3 · interrotto" con il passo 1 in rosso,
+              // mentre i criteri erano soddisfatti 3 su 3 e la risposta
+              // conteneva i tre voli giusti, verificati a mano.
+              //
+              // L'utente vedeva il giudizio pessimista accanto a un lavoro
+              // riuscito, e non aveva modo di sapere quale dei due credere.
+              //
+              // I criteri sono la definizione di "fatto" concordata prima di
+              // cominciare: quella comanda. I passi restano un modo di
+              // organizzare il lavoro, non un secondo verdetto.
+              const proc = ctx.session.processo;
+              if (proc && valutazioneFinale.soddisfatto && (proc.interrotto() || !proc.concluso())) {
+                ctx.log('[Collega] Il motore dei passi dice interrotto ma i criteri sono soddisfatti: '
+                  + 'comanda l\'incarico, allineo quello che vedi');
+                ctx.wsBroadcast({
+                  type: 'processo',
+                  ...proc.riepilogo(),
+                  concluso: true,
+                  interrotto: false,
+                  esitoCriteri: `${valutazioneFinale.soddisfatti}/${valutazioneFinale.totale} criteri soddisfatti`,
+                  nota: 'Alcuni passi non sono stati chiusi uno per uno, ma il risultato rispetta '
+                    + 'tutto quello che era stato chiesto.',
+                });
+              }
+            }
+            break;
+          }
+
+          // ── La strada non porta: se ne cerca un'altra ──
+          //
+          // Prima qui c'era solo "insisti": stessa richiesta, tono più duro.
+          // Quando la cosa chiesta non era ottenibile — prezzi che il sito
+          // mostra solo dopo il login, un hotel che a quelle date non esiste —
+          // insistere produceva due giri identici e una consegna monca.
+          if (giudizio.decisione === 'cambia_strada') {
+            stradeCambiate++;
+            ctx.log(`[Collega] Cambio strada (${stradeCambiate}): ${valutazioneFinale.mancanze.join('; ')}`);
+            const altra = await collega.ripensa(incaricoCorrente, valutazioneFinale, esito);
+            if (!altra) { insistenzeEsaurite = true; break; }
+            ctx.log(`[Collega] Nuova strada: ${altra.obiettivo}`);
+            if (altra.avviso) ctx.emitReasoning(altra.avviso, '🧭');
+            ctx.wsBroadcast({
+              type: 'cambio_strada',
+              obiettivo: altra.obiettivo,
+              avviso: altra.avviso,
+              mancavano: valutazioneFinale.mancanze,
+            });
+            mancanzePrecedenti = valutazioneFinale.mancanze.slice();
+            try {
+              const ripresa = await ctx.callAI(
+                systemPrompt + '\n\n# CAMBIO DI STRADA DECISO DAL COLLEGA\n' + altra.istruzione,
+                [...msgs, { role: 'assistant', content: result.content },
+                 { role: 'user', content: altra.istruzione }],
+                useTools, { ...ctx, modelTier: modelSelection.tier }
+              );
+              if (!ripresa?.content) { insistenzeEsaurite = true; break; }
+              result = { ...ripresa, toolsUsed: [...(result.toolsUsed || []), ...(ripresa.toolsUsed || [])] };
+            } catch (e) {
+              ctx.log(`[Collega] Anche l'altra strada è fallita: ${e.message}`);
+              insistenzeEsaurite = true;
+              break;
+            }
+            continue;
+          }
+
+          insistenze++;
+          mancanzePrecedenti = valutazioneFinale.mancanze.slice();
+          ctx.log(`[Collega] Insisto (${insistenze}/2): ${valutazioneFinale.mancanze.join('; ')}`);
+          ctx.emitReasoning(`Non è completo: ${valutazioneFinale.mancanze[0]}`, '🔁');
+          ctx.wsBroadcast({
+            type: 'verdetto',
+            soddisfatti: valutazioneFinale.soddisfatti,
+            totale: valutazioneFinale.totale,
+            mancanze: valutazioneFinale.mancanze,
+            insistenza: insistenze,
+          });
+          try {
+            const ripresa = await ctx.callAI(
+              systemPrompt + '\n\n# NOTA DEL COLLEGA\n' + giudizio.istruzione,
+              [...msgs, { role: 'assistant', content: result.content },
+               { role: 'user', content: giudizio.istruzione }],
+              useTools, { ...ctx, modelTier: modelSelection.tier }
+            );
+            if (!ripresa?.content) { insistenzeEsaurite = true; break; }
+            result = {
+              ...ripresa,
+              toolsUsed: [...(result.toolsUsed || []), ...(ripresa.toolsUsed || [])],
+            };
+          } catch (e) {
+            ctx.log(`[Collega] Ripresa fallita: ${e.message}`);
+            insistenzeEsaurite = true;
+            break;
+          }
+        }
+      }
 
       // 8b. Guardia anti-invenzione.
       // Un prezzo inventato è peggio di un "non lo so": chi legge non ha modo
@@ -249,8 +611,37 @@ function register(router, ctx) {
         ctx.wsBroadcast({ type: 'pagine_consultate', pagine: consultate.slice(0, 12) });
       }
 
+      // ── 11b. IL COLLEGA RACCONTA ──
+      // Non e' un riassunto di cortesia: e' il momento in cui quello che e'
+      // successo torna in parole, con il verdetto gia' deciso alle spalle.
+      let linguaRisposta = ctx.session.linguaCorrente || 'it';
+      if (collega && (incaricoCorrente || collegaPassaOltre)) {
+        try {
+          const commento = await collega.commenta(incaricoCorrente, valutazioneFinale, {
+            testo: result.content || '',
+            file: ctx.session.fileDelTurno || [],
+            pagine: ctx.session.pagineDelTurno || [],
+          }, { memoria: '', esaurite: insistenzeEsaurite });
+          if (commento.risposta) {
+            result.content = commento.proposta
+              ? `${commento.risposta}\n\n${commento.proposta}`
+              : commento.risposta;
+            linguaRisposta = commento.lingua || linguaRisposta;
+          }
+        } catch (e) {
+          ctx.log(`[Collega] Commento non riuscito (${e.message}): consegno il risultato grezzo`);
+        }
+      }
+
       const meterStatus = ctx.TokenMeter.getStatus();
-      _invia(200, { content: result.content, provider: result.provider, intent, tokens: meterStatus.totalTokens, tokenLevel: meterStatus.level });
+      _invia(200, {
+        content: result.content, provider: result.provider, intent,
+        tokens: meterStatus.totalTokens, tokenLevel: meterStatus.level,
+        lingua: linguaRisposta,
+        verdetto: valutazioneFinale
+          ? { soddisfatti: valutazioneFinale.soddisfatti, totale: valutazioneFinale.totale, mancanze: valutazioneFinale.mancanze }
+          : null,
+      });
       ctx.wsBroadcast({ type: 'thinking', text: '' });
       ctx.wsBroadcast({ type: 'page_loaded', url: '', title: '' });
     } catch (e) {

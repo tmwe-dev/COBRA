@@ -4,8 +4,39 @@
 const { COBRA_DEFAULTS } = require('../../config');
 const { sanitizeScrapedContent } = require('../../security/injection');
 
+// ── La stessa domanda non si fa due volte ──
+//
+// Verificato dal vivo il 6 agosto: nello stesso turno la query "voli Milano
+// Tokyo 14-28 settembre 2026" è stata cercata QUATTRO volte identica, e il
+// Supervisore ha dovuto fermare il lavoro per loop. navigate una cache di
+// turno ce l'aveva già; la ricerca no, e il giro si chiudeva sempre lì:
+// cerca → apri → bloccato → ricerca uguale.
+//
+// Servire il risultato dalla cache non basta: se torna la stessa cosa senza
+// dire niente, il modello rifà la stessa mossa. Va DETTO che è già stata
+// fatta, così quella strada risulta chiusa e se ne cerca un'altra.
+function _chiaveRicerca(query) {
+  return String(query || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
 async function handle(args, ctx) {
   const query = args.query || '';
+
+  if (!ctx.session._cacheRicerche) ctx.session._cacheRicerche = new Map();
+  const chiave = _chiaveRicerca(query);
+  if (chiave && ctx.session._cacheRicerche.has(chiave)) {
+    const primo = ctx.session._cacheRicerche.get(chiave);
+    ctx.log('INFO', `[search] Query già fatta in questo turno, servita dalla cache: "${query}"`);
+    ctx.emitReasoning(`Questa ricerca l'ho già fatta: uso quei risultati`, '♻️');
+    return JSON.stringify({
+      ...primo,
+      giaCercata: true,
+      avvertenza: 'Questa ricerca è già stata fatta in questo turno e i risultati sono gli stessi. '
+        + 'Ripeterla non porta niente di nuovo: usa questi risultati, oppure cambia strada — '
+        + 'una query diversa, una fonte diretta, un altro modo di arrivare al dato.',
+    });
+  }
+
   const hdSearch = await ctx.HumanDriver.checkAndDelay('https://www.google.com/search?q=' + encodeURIComponent(query));
   if (!hdSearch.allowed) return JSON.stringify({ error: hdSearch.reason, rateLimited: true });
   ctx.emitReasoning(`Cerco informazioni su: "${query}"`, '🔍');
@@ -103,7 +134,9 @@ async function handle(args, ctx) {
     pageText = scan.text;
     if (scan.injectionDetected) ctx.log(`[Security/Injection] search pageText: ${scan.warning}`);
   }
-  return JSON.stringify({ ok: true, query, results, count: results.length, source: searchSource || 'none', pageText: results.length < 3 ? pageText : pageText.substring(0, 2000) });
+  const esito = { ok: true, query, results, count: results.length, source: searchSource || 'none', pageText: results.length < 3 ? pageText : pageText.substring(0, 2000) };
+  if (chiave) ctx.session._cacheRicerche.set(chiave, esito);
+  return JSON.stringify(esito);
 }
 
 module.exports = { web_search: handle, google_search: handle };
