@@ -41,14 +41,14 @@ richiesta utente
   └─ SuperMario            classifica l'intento, sceglie gli strumenti e il modello
       └─ prompt assemblato  personalità + regole KB + memoria + fatti appresi
           └─ provider AI    OpenAI, con Anthropic/Gemini/Groq come riserva
-              └─ tool       62 strumenti, eseguiti tramite l'estensione Chrome
+              └─ tool       68 strumenti, eseguiti tramite l'estensione Chrome
                   └─ guardie  rischio, whitelist domini, conferme, anti-loop
 ```
 
 | Cartella | Contenuto |
 |---|---|
 | `modules/ai/` | Provider e router con cascata di riserve |
-| `modules/tools/` | Definizioni dei 62 strumenti e loro esecutori |
+| `modules/tools/` | Definizioni dei 68 strumenti e loro esecutori |
 | `modules/risk/` | Tassonomia del rischio, classificazione URL, conferme |
 | `modules/security/` | SSRF, autenticazione, sanitizzazione, registro di audit |
 | `modules/memory/` | Conversazioni, finestra scorrevole, fatti appresi |
@@ -100,7 +100,7 @@ Per ispezionare o correggere: `GET /api/learning/facts`, `POST /api/learning/for
 ./run-tests.sh
 ```
 
-749 asserzioni in 11 suite. Oltre alla regressione classica, tre suite coprono
+1.618 controlli in 38 suite. Oltre alla regressione classica, tre suite coprono
 le classi di difetto che in passato sono sfuggite alla lettura del codice:
 
 | Suite | Cosa protegge |

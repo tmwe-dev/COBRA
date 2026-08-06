@@ -1,0 +1,73 @@
+# I controlli girano da soli, a ogni push.
+#
+# Un audit esterno del 6 agosto 2026 ha annotato: "i test esistono, il comando
+# esiste, i commit dichiarano che sono verdi, ma GitHub non mostra un gate CI
+# automatico sul commit". Aveva ragione: fino a oggi l'unica prova che la suite
+# fosse verde era che qualcuno l'avesse lanciata e se lo ricordasse.
+#
+# Adesso lo dice GitHub, e lo dice anche quando ce ne dimentichiamo.
+
+name: Controlli
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  suite:
+    name: Suite completa
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Dipendenze
+        run: npm install --no-audit --no-fund
+
+      - name: Sintassi di ogni file
+        run: |
+          # Un errore di sintassi non deve arrivare fino ai test: si vede prima,
+          # e il messaggio dice quale file.
+          find modules cobra-extension api -name '*.js' -print0 \
+            | xargs -0 -n1 node --check
+
+      - name: Suite completa
+        run: bash run-tests.sh
+
+      - name: Nessuna credenziale nel codice
+        run: |
+          # Le chiavi vivono nel .env di Luca e non devono entrare nel repository
+          # per nessuna via. Se una compare qui, il controllo fallisce e si vede
+          # subito, invece di scoprirlo mesi dopo.
+          #
+          # I file di test sono esclusi di proposito: contengono chiavi FINTE
+          # ("sk-1234567890abcdefghijklmn") che servono a verificare che quelle
+          # vere vengano oscurate nei log. Cercarle lì farebbe fallire la CI
+          # per il codice che protegge le chiavi — e a forza di allarmi falsi
+          # si smette di guardare gli allarmi.
+          if grep -rnE 'sk-[A-Za-z0-9]{20,}|sk-ant-[A-Za-z0-9-]{20,}|AIza[A-Za-z0-9_-]{30,}' \
+               --include='*.js' --include='*.json' --include='*.html' \
+               --exclude-dir=tests \
+               modules public cobra-extension api; then
+            echo "Trovata una chiave nel codice: va tolta e ruotata."
+            exit 1
+          fi
+          echo "Nessuna chiave nel codice."
+
+      - name: Nessun dato personale nel repository
+        run: |
+          # Conversazioni, memorie e file prodotti restano sul computer di Luca.
+          if git ls-files | grep -E '(^|/)conversations\.json$|^data/files/|(^|/)\.env$'; then
+            echo "Un file di dati o credenziali risulta tracciato: va tolto con git rm --cached."
+            exit 1
+          fi
+          echo "Nessun dato personale tracciato."

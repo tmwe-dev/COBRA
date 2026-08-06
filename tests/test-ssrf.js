@@ -109,11 +109,26 @@ const ALLOW = [
   // Caso reale: un EAI_AGAIN ha bloccato tre navigazioni di fila e il modello
   // ha spiegato il blocco con una causa inventata. Il guasto di rete non deve
   // travestirsi da limite del programma.
+  //
+  // AGGIORNATO il 6 agosto 2026 dopo un audit esterno. Prima si consentiva
+  // SEMPRE, per chiunque chiamasse. Ma i chiamanti sono di due specie: cinque
+  // fanno una richiesta da QUESTO processo, che sta dentro la rete di Luca —
+  // e lì un dominio che risolve a un indirizzo interno raggiunge il gestionale
+  // o la console del router. Uno solo, navigate, fa aprire la pagina a Chrome,
+  // che risolve per conto suo: negare lì non protegge niente.
+  //
+  // Quindi: dal server si chiude, dal browser si passa.
   for (const guasto of ['getaddrinfo EAI_AGAIN www.google.com', 'ETIMEDOUT', 'DNS timeout']) {
+    const nome = guasto.split(' ')[0];
     dnsMod.lookup = async () => { throw new Error(guasto); };
-    const r = await assertSSRFSafe('https://www.google.com/travel/flights?q=x');
-    ok(`consente se il DNS e' irraggiungibile (${guasto.split(' ')[0]})`, r.safe === true, JSON.stringify(r));
-    ok(`segnala che la verifica e' ridotta (${guasto.split(' ')[0]})`, r.degradato === true, JSON.stringify(r));
+
+    const dalServer = await assertSSRFSafe('https://www.google.com/travel/flights?q=x');
+    ok(`dal server si chiude se il DNS e' irraggiungibile (${nome})`, dalServer.safe === false, JSON.stringify(dalServer));
+    ok(`e si dice perche (${nome})`, /rete interna/.test(dalServer.reason || ''), dalServer.reason);
+
+    const dalBrowser = await assertSSRFSafe('https://www.google.com/travel/flights?q=x', { lato: 'browser' });
+    ok(`dal browser si prosegue (${nome})`, dalBrowser.safe === true, JSON.stringify(dalBrowser));
+    ok(`segnala che la verifica e' ridotta (${nome})`, dalBrowser.degradato === true, JSON.stringify(dalBrowser));
   }
 
   // La difesa vera resta: se il DNS RISPONDE e punta all'interno, si blocca

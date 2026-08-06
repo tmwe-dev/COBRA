@@ -130,7 +130,24 @@ function isSSRFSafe(urlString) {
  *
  * @returns {Promise<{safe: boolean, reason?: string, addresses?: string[]}>}
  */
-async function assertSSRFSafe(urlString, { timeoutMs = 3000 } = {}) {
+/**
+ * @param {string} urlString
+ * @param {object} opz
+ * @param {'server'|'browser'} opz.lato  chi aprirà l'indirizzo.
+ *
+ *   'server'  — la richiesta parte da questo processo, che sta dentro la rete
+ *               di Luca. È il caso pericoloso: un dominio che risolve a un
+ *               indirizzo interno permetterebbe di leggere un gestionale, un
+ *               NAS, la console del router. Se non si riesce a sapere dove
+ *               punta, NON si va. Fail-closed, ed è il valore predefinito:
+ *               chi aggiunge un chiamante domani è protetto senza saperlo.
+ *
+ *   'browser' — la pagina la apre Chrome, che risolve per conto suo e applica
+ *               le proprie protezioni. Negare qui non protegge niente: fermerebbe
+ *               solo il lavoro quando il resolver ha un singhiozzo. Questo caso
+ *               va dichiarato esplicitamente da chi lo usa.
+ */
+async function assertSSRFSafe(urlString, { timeoutMs = 3000, lato = 'server' } = {}) {
   if (!isSSRFSafe(urlString)) {
     return { safe: false, reason: 'Hostname o protocollo non consentito' };
   }
@@ -164,10 +181,21 @@ async function assertSSRFSafe(urlString, { timeoutMs = 3000 } = {}) {
     // conto suo: negare qui non protegge niente e ferma il lavoro.
     const transitorio = /EAI_AGAIN|ETIMEDOUT|ESERVFAIL|DNS timeout|queryA ETIMEOUT/i.test(e.message || '');
     if (transitorio) {
+      // Qui la strada si divide, e prima non si divideva: la stessa risposta
+      // valeva per una richiesta che parte da dentro la rete e per una pagina
+      // aperta da Chrome. Sono due rischi diversi e meritano due risposte.
+      if (lato === 'browser') {
+        return {
+          safe: true,
+          degradato: true,
+          reason: `DNS non raggiungibile (${e.message}): apre Chrome, che risolve per conto suo`,
+        };
+      }
       return {
-        safe: true,
+        safe: false,
         degradato: true,
-        reason: `DNS non raggiungibile (${e.message}): controllo sugli indirizzi non eseguito`,
+        reason: `DNS non raggiungibile (${e.message}): non so dove punta questo indirizzo, `
+          + 'e una richiesta che parte da qui potrebbe finire sulla rete interna. Riprova fra poco.',
       };
     }
     // NXDOMAIN e simili: il dominio non esiste, non c'è nulla da proteggere,

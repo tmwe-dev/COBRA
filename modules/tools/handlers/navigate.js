@@ -68,7 +68,7 @@ async function handle(args, ctx) {
   // SSRF guard
   // Verifica completa con risoluzione DNS: intercetta anche i domini pubblici
   // che puntano alla rete interna (DNS rebinding)
-  const ssrf = await assertSSRFSafe(url);
+  const ssrf = await assertSSRFSafe(url, { lato: 'browser' });   // la pagina la apre Chrome
   if (!ssrf.safe) {
     ctx.log(`[Security/SSRF] navigate BLOCCATO ${url}: ${ssrf.reason}`);
     return JSON.stringify({ error: `URL bloccato: ${ssrf.reason}` });
