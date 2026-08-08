@@ -93,6 +93,75 @@ console.log('\n── Un ponte solo verso il browser ──');
     'nomi che nessuno raccoglie: ' + inventati.join(', '));
 }
 
+// ── 4. Il codice vendorizzato puo' LEGGERE, non puo' AGIRE ──
+//
+// In cobra-extension/esterni/{wa,li}/ ci sono le estensioni del Navigator
+// copiate byte per byte: migliaia di righe che sanno gia' fare cose. Utili,
+// ma scritte prima delle regole di questo progetto — non verificano chi c'e'
+// dall'altra parte, non hanno ritmo umano, e cercano i pulsanti con
+// offsetParent, che sui riquadri `position: fixed` non funziona.
+//
+// L'8 agosto si e' scoperto che bastava passare un INDIRIZZO invece di un
+// nome perche' la scrittura LinkedIn uscisse dal percorso controllato e
+// finisse li'. Una porta di servizio aperta dal formato di un argomento.
+//
+// La riga che si tiene: leggere si', agire no. I comandi che mandano
+// qualcosa fuori — scrivere, invitare — devono stare sul percorso nuovo,
+// quello che passa da Pagine, Mappa e Ritmo.
+{
+  const ext = fs.readFileSync(ESTENSIONE, 'utf8');
+
+  // Per ogni `case '...':` si guarda il pezzo di codice fino al case dopo.
+  const pezzi = [];
+  const trovati = [...ext.matchAll(/case\s+'([a-z_0-9]+)':/g)];
+  for (let i = 0; i < trovati.length; i++) {
+    const da = trovati[i].index;
+    const a = i + 1 < trovati.length ? trovati[i + 1].index : ext.length;
+    pezzi.push({ nome: trovati[i][1], corpo: ext.slice(da, a) });
+  }
+
+  const CHE_AGISCONO = /^(linkedin|whatsapp)_(scrivi|rispondi|collegati|invia)/;
+  const colpevoli = pezzi
+    .filter(p => CHE_AGISCONO.test(p.nome) && /Esterni\.con\(/.test(p.corpo))
+    .map(p => p.nome);
+  ok('nessun comando che AGISCE passa dal codice vendorizzato', colpevoli.length === 0,
+    'agiscono col codice vecchio: ' + colpevoli.join(', '));
+
+  // E chi scrive deve verificare il destinatario: la regola per cui esiste
+  // meta' di questo progetto.
+  for (const nome of ['linkedin_rispondi', 'whatsapp_rispondi', 'linkedin_collegati']) {
+    const p = pezzi.find(x => x.nome === nome);
+    ok(`${nome} verifica chi c'e' prima di agire`,
+      !!p && /non riesco a leggere|non scrivo|non procedo|combacia|conferma/i.test(p.corpo));
+  }
+
+  // Il ritmo umano, che Luca ha imposto come tassativo.
+  for (const nome of ['linkedin_rispondi', 'linkedin_collegati', 'whatsapp_rispondi']) {
+    const p = pezzi.find(x => x.nome === nome);
+    ok(`${nome} rispetta il ritmo umano`, !!p && /Ritmo\./.test(p.corpo));
+  }
+}
+
+// ── 5. Lo stesso lavoro non si fa in due modi ──
+//
+// I comandi che facevano il doppio di un altro sono stati fatti convergere:
+// chi chiedeva il vecchio nome ora arriva sul percorso nuovo. Il controllo
+// verifica che non tornino a essere due implementazioni separate.
+{
+  const ext = fs.readFileSync(ESTENSIONE, 'utf8');
+  const COPPIE = [
+    ['linkedin_posta', 'linkedin_elenco_chat'],
+    ['linkedin_conversazione', 'linkedin_leggi_conversazione'],
+    ['whatsapp_conversazione', 'whatsapp_leggi_conversazione'],
+    ['whatsapp_non_letti', 'whatsapp_elenco_chat'],
+  ];
+  for (const [vecchio, nuovo] of COPPIE) {
+    const m = ext.match(new RegExp(`case\\s+'${vecchio}':([\\s\\S]*?)case\\s+'`));
+    ok(`${vecchio} rimanda a ${nuovo} invece di rifarlo`,
+      !!m && m[1].includes(nuovo), 'ha ancora un\'implementazione sua');
+  }
+}
+
 console.log(`\n╔══════════════════════════════════════════╗`);
 console.log(`║  UN PONTE SOLO: ${pass} PASS, ${fail} FAIL`);
 console.log(`╚══════════════════════════════════════════╝`);

@@ -1237,13 +1237,56 @@ async function executeCommand(command, args) {
       }
 
       case 'whatsapp_non_letti':
-        return await Esterni.con('wa', (m) => m.Actions.readUnreadMessages(), args.modo || 'automatico');
+        // ── I non letti sono una VISTA dell'elenco, non un'altra lettura ──
+        //
+        // Qui c'era Actions.readUnreadMessages(), il lettore del Navigator.
+        // Misurato sul WhatsApp vero: circa 150 righe sbagliate, perche'
+        // cercava role="row" su TUTTA la pagina e prendeva insieme le righe
+        // della barra laterale e le bolle della conversazione aperta. Usciva
+        // roba come contact:"We will do tomorrow" (un messaggio scambiato per
+        // un contatto) e lastMessage:"wds-ic-read" (un'icona scambiata per un
+        // messaggio).
+        //
+        // whatsapp_elenco_chat quel problema non ce l'ha: cerca DENTRO
+        // #pane-side, dove le bolle non arrivano, e conta gia' i non letti riga
+        // per riga. Il difetto non era il selettore, era il perimetro.
+        //
+        // Quindi non si scrive un secondo lettore: si filtra il primo. Una
+        // implementazione sola, due viste — che e' anche il modo di non
+        // ritrovarsi fra un mese con due letture che divergono.
+        {
+          const tutte = await executeCommand('whatsapp_elenco_chat',
+            { quante: Number(args.quante) || 60 });
+          if (!tutte || !tutte.ok) return tutte;
+          const conNonLetti = (tutte.chat || []).filter(c => Number(c.nonLetti) > 0);
+          return {
+            ...tutte,
+            chat: conNonLetti,
+            conversazioni: conNonLetti.length,
+            messaggiNonLetti: conNonLetti.reduce((n, c) => n + Number(c.nonLetti || 0), 0),
+            suQuante: (tutte.chat || []).length,
+          };
+        }
 
+      // Duplicato di whatsapp_leggi_conversazione, che passa da Pagine e Mappa.
       case 'whatsapp_conversazione':
-        return await Esterni.con('wa', (m) => m.Actions.readThread(args.contatto, args.quanti || 30), args.modo || 'automatico');
+        return await executeCommand('whatsapp_leggi_conversazione',
+          { nome: args.contatto || args.nome, quanti: args.quanti || 30 });
 
+      // ── whatsapp_scrivi: rimosso, si passa da whatsapp_rispondi ──
+      //
+      // Delegava a sendWhatsAppMessage, che sceglie la scheda con
+      // existingTabs[0]: la PRIMA scheda WhatsApp trovata. Luca ne tiene due
+      // aperte. Quella prima scheda puo' essere il codice QR, una scheda
+      // sospesa, o una chat diversa da quella giusta — e il messaggio parte
+      // lo stesso. Non verifica chi c'e' dall'altra parte, non ha ritmo.
+      //
+      // whatsapp_rispondi apre la conversazione per nome, LEGGE il nome in
+      // cima e se non riesce a leggerlo NON scrive. E' la stessa regola per
+      // cui esiste questo progetto: meglio non mandare che mandare a uno
+      // sconosciuto.
       case 'whatsapp_scrivi':
-        return await Esterni.con('wa', (m) => m.Actions.sendWhatsAppMessage(args.a, args.testo), args.modo || 'automatico');
+        return { ok: false, motivo: 'strada dismessa: usa whatsapp_rispondi (verifica il destinatario)' };
 
       case 'whatsapp_diagnosi':
         return await Esterni.con('wa', (m) => m.Actions.diagnostic(), args.modo || 'automatico');
@@ -1254,14 +1297,34 @@ async function executeCommand(command, args) {
       case 'linkedin_cerca':
         return await Esterni.con('li', (m) => m.Actions.searchProfile(args.chi), args.modo || 'automatico');
 
+      // Duplicato di linkedin_elenco_chat. Il lettore vecchio, misurato sulla
+      // messaggistica vera il 7 agosto: 26 righe per 12 conversazioni (ogni
+      // persona due volte, la seconda vuota) in 28 secondi. Il nuovo: 10
+      // conversazioni pulite in 0,1 secondi.
       case 'linkedin_posta':
-        return await Esterni.con('li', (m) => m.Actions.readInbox(), args.modo || 'automatico');
+        return await executeCommand('linkedin_elenco_chat',
+          { quante: args.quante || 50 });
 
+      // Duplicato di linkedin_leggi_conversazione.
       case 'linkedin_conversazione':
-        return await Esterni.con('li', (m) => m.Actions.readThread(args.contatto, args.quanti || 30), args.modo || 'automatico');
+        return await executeCommand('linkedin_leggi_conversazione',
+          { nome: args.contatto || args.nome, quanti: args.quanti || 30 });
 
+      // ── linkedin_scrivi: converge su linkedin_rispondi ──
+      //
+      // Delegava a sendLinkedInMessage, che pretende un indirizzo di profilo.
+      // Il codice ha cose buone — controlla lo slug, si rifiuta se la scheda
+      // e' su un'altra conversazione — ma non ha il ritmo umano, non passa
+      // dalla mappa dei selettori, e cerca i pulsanti con offsetParent, che
+      // sui riquadri `position: fixed` li scarta come invisibili.
+      //
+      // Soprattutto: era la porta da cui si usciva dal percorso controllato
+      // semplicemente passando un indirizzo invece di un nome. Adesso
+      // linkedin_rispondi accetta anche `url` e fa lo stesso lavoro con le
+      // verifiche al posto giusto.
       case 'linkedin_scrivi':
-        return await Esterni.con('li', (m) => m.Actions.sendLinkedInMessage(args.url, args.testo), args.modo || 'automatico');
+        return await executeCommand('linkedin_rispondi',
+          { url: args.url, nome: args.nome, testo: args.testo });
 
       case 'linkedin_diagnosi':
         return await Esterni.con('li', (m) => m.Actions.diagnostic(), args.modo || 'automatico');
@@ -1831,8 +1894,64 @@ async function executeCommand(command, args) {
         // curva e ogni tanto scorre. Se il modulo non e' caricato si procede
         // lo stesso: meglio senza ritmo che fermi.
         const chi = String(args.nome || args.a || '').trim();
+        const profilo = String(args.url || args.profilo || '').trim();
         const testo = String(args.testo || '');
-        if (!chi || !testo) return { ok: false, motivo: 'servono il nome e il testo' };
+        if (!testo) return { ok: false, motivo: 'serve il testo' };
+        if (!chi && !profilo) return { ok: false, motivo: 'serve il nome o l\'indirizzo del profilo' };
+
+        // ── Con un indirizzo si parte dal profilo, non dall'elenco chat ──
+        //
+        // Prima questa strada non c'era e il server mandava gli indirizzi al
+        // comando vendorizzato, fuori da ogni verifica. Qui invece si apre il
+        // profilo, si controlla che lo slug sia proprio quello chiesto, si
+        // legge il nome, e da li' si apre la finestra di scrittura: dopodiche'
+        // il testo passa dallo stesso identico percorso del caso "per nome".
+        if (profilo && !chi) {
+          const _pp = await globalThis.Pagine.preparaPagina('linkedin_profilo', { vai: profilo });
+          if (!_pp.ok) return _pp;
+          const t = _pp.scheda;
+          if (globalThis.Ritmo) await globalThis.Ritmo.comeUnaPersona(t.id, 'leggere', async () => {});
+          await new Promise(r => setTimeout(r, 1800));
+
+          const ap = await chrome.scripting.executeScript({
+            target: { tabId: t.id }, args: [profilo],
+            func: async (atteso) => {
+              const attendi = (ms) => new Promise(r => setTimeout(r, ms));
+              const siVede = (el) => {
+                try {
+                  const r = el.getBoundingClientRect();
+                  if (r.width < 2 || r.height < 2) return false;
+                  const st = getComputedStyle(el);
+                  return st.display !== 'none' && st.visibility !== 'hidden' && Number(st.opacity) !== 0;
+                } catch (_) { return false; }
+              };
+              const piatto = (x) => String(x || '').replace(/[-_]/g, ' ')
+                .replace(/\s+\S*\d\S*$/, '').toLowerCase().trim();
+              const mio = (location.pathname.match(/\/in\/([^/]+)/) || [])[1] || '';
+              const suo = (String(atteso).match(/\/in\/([^/?#]+)/) || [])[1] || '';
+              if (piatto(mio) !== piatto(suo)) {
+                return { ok: false, motivo: `sono su un altro profilo (${location.href}): non scrivo` };
+              }
+              const h1 = document.querySelector('h1');
+              const nome = h1 ? h1.innerText.trim() : '';
+              if (!nome) return { ok: false, motivo: 'non riesco a leggere di chi e\' il profilo: non scrivo' };
+
+              const nomeDi = (el) => (el.getAttribute('aria-label') || el.innerText || '').replace(/\s+/g, ' ').trim();
+              const b = [...document.querySelectorAll('button, a[role="button"]')]
+                .filter(siVede).find(x => /^(invia messaggio|message|messaggio)\b/i.test(nomeDi(x)));
+              if (!b) return { ok: false, motivo: `non trovo il pulsante per scrivere a ${nome}` };
+              b.click();
+              await attendi(2500);
+              return { ok: true, nome };
+            },
+          });
+          const a0 = ap?.[0]?.result;
+          if (!a0 || !a0.ok) return a0 || { ok: false, motivo: 'la pagina non ha risposto' };
+          // Da qui in poi la finestra di scrittura e' aperta sul profilo
+          // giusto: si prosegue come per una conversazione aperta.
+          args = { ...args, nome: a0.nome };
+          return await executeCommand('linkedin_rispondi', { nome: a0.nome, testo });
+        }
 
         const _pr = await globalThis.Pagine.preparaPagina('linkedin_messaggi');
         if (!_pr.ok) return _pr;

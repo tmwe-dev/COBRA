@@ -415,6 +415,39 @@ class RegoleInvio {
       }
     }
 
+    // ── 6-bis. LA STESSA COSA ALLA STESSA PERSONA, DUE VOLTE ──
+    //
+    // Il 7 agosto lo stesso messaggio è arrivato a Jose QUATTRO volte: non per
+    // un difetto dell'invio, ma perché il turno veniva rifatto e ogni giro
+    // rimandava. La difesa che esisteva era nell'estensione LinkedIn e durava
+    // 2 secondi — utile contro un doppio click, inutile contro un modello che
+    // riprova dopo cinque.
+    //
+    // La chiave è quella che identifica DAVVERO un invio: canale (questo
+    // registro è già per canale) + destinatario + impronta del testo. La
+    // finestra è un minuto: dentro un minuto lo stesso messaggio alla stessa
+    // persona non è mai voluto — e se lo fosse, basta cambiare una parola o
+    // aspettare.
+    //
+    // Sta qui e non nell'estensione perché qui ci passano TUTTE le strade,
+    // vecchie e nuove, WhatsApp e LinkedIn. Una difesa che vive su un solo
+    // percorso protegge solo quel percorso: è la lezione dell'8 agosto.
+    const RIPETIZIONE_MS = 60 * 1000;
+    const impronta = _impronta(testo);
+    const aPiatto = String(a || '').toLowerCase().trim();
+    const gemello = this.invii.find(i =>
+      i.impronta === impronta
+      && String(i.a || '').toLowerCase().trim() === aPiatto
+      && (adesso.getTime() - i.quando) < RIPETIZIONE_MS);
+    if (gemello) {
+      const quantiSecondi = Math.round((adesso.getTime() - gemello.quando) / 1000);
+      return no(
+        `questo identico messaggio è già partito per ${gemello.a} ${quantiSecondi} secondi fa`,
+        'È già stato mandato: NON riprovare. Se serviva davvero mandarlo due '
+        + 'volte, cambia il testo o aspetta un minuto. Un messaggio doppio '
+        + 'dall\'altra parte si vede, e non si richiama.');
+    }
+
     // ── 7. Non lo stesso testo a più persone ──
     //
     // Questo nel Navigator non c'è (nessun controllo di duplicati su WA/LI), ed

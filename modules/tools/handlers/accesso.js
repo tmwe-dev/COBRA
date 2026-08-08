@@ -484,9 +484,23 @@ async function linkedin_scrivi(args, ctx) {
     //
     // Adesso: se il destinatario e' un nome si usa la conversazione; se e' un
     // profilo vero resta la strada vecchia, che li' ha senso.
+    // ── Anche con un indirizzo di profilo si passa di qui ──
+    //
+    // C'era un bivio: nome → linkedin_rispondi (che apre la conversazione,
+    // LEGGE il nome in cima e se non riesce a leggerlo NON scrive), indirizzo
+    // di profilo → linkedin_scrivi, il comando vendorizzato. Quella seconda
+    // strada non ha ritmo umano e non passa dalla mappa dei selettori.
+    //
+    // Cioe': bastava che il modello scrivesse l'indirizzo invece del nome —
+    // ed e' la cosa piu' naturale quando l'indirizzo ce l'ha — per uscire dal
+    // percorso controllato senza che nessuno se ne accorgesse. Una porta di
+    // servizio aperta dal formato di un argomento.
+    //
+    // Adesso la strada e' una. Se arriva un indirizzo, linkedin_rispondi lo
+    // riceve come `url`: apre il profilo, verifica lo slug, e scrive.
     const eUnProfiloVero = /^https?:\/\/([\w-]+\.)?linkedin\.com\/(in|pub)\//i.test(url);
     const r = eUnProfiloVero
-      ? await ctx.bridgeCommand('linkedin_scrivi', { url, testo, modo })
+      ? await ctx.bridgeCommand('linkedin_rispondi', { url, testo })
       : await ctx.bridgeCommand('linkedin_rispondi', { nome: url, testo });
     const esito = r?.result || r;
 

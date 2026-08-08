@@ -409,5 +409,47 @@ console.log('\n── 13. Attività dirette e attività automatiche ──');
 
 console.log(`\n╔══════════════════════════════════════════╗`);
 console.log(`║  REGOLE INVIO: ${pass} PASS, ${fail} FAIL`);
+
+// ── L'idempotenza: la stessa cosa alla stessa persona, due volte ──
+//
+// Il 7 agosto lo stesso messaggio e' arrivato a Jose quattro volte, perche' il
+// turno veniva rifatto e ogni giro rimandava. La difesa che c'era stava
+// nell'estensione LinkedIn e durava 2 secondi: buona contro un doppio clic,
+// inutile contro un modello che riprova dopo cinque.
+{
+  const fs = require('fs'), os = require('os'), path = require('path');
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'reg-'));
+  const R = new RegoleInvio(tmp, 'linkedin');
+  const testo = 'Cari auguri di Buon Natale da parte del Presidente.';
+
+  ok('il primo invio passa', R.puoScrivere({ a: 'Sara Triassi', testo, conosciuto: true, modo: 'diretto' }).si === true);
+  R.registra({ a: 'Sara Triassi', testo });
+
+  const doppio = R.puoScrivere({ a: 'Sara Triassi', testo, conosciuto: true, modo: 'diretto' });
+  ok('lo stesso testo alla stessa persona entro un minuto NO', doppio.si === false);
+  ok('e il motivo dice quando era partito', /secondi fa/.test(doppio.motivo || ''));
+  ok('e dice di NON riprovare', /NON riprovare/.test(doppio.cosaFare || ''));
+
+  // La punteggiatura non fa di un messaggio un messaggio diverso.
+  const quasi = R.puoScrivere({ a: 'Sara Triassi', testo: testo + '!!!', conosciuto: true, modo: 'diretto' });
+  ok('nemmeno cambiando la punteggiatura', quasi.si === false);
+
+  // Ma un testo davvero diverso, o un'altra persona, devono passare.
+  // (due secondi dopo: la pausa minima di un secondo vale comunque, ed e'
+  // un'altra difesa, non questa)
+  const fraDueSecondi = new Date(Date.now() + 2000);
+  ok('un testo diverso passa',
+     R.puoScrivere({ a: 'Sara Triassi', testo: 'Ciao Sara, ti mando il preventivo.', conosciuto: true, modo: 'diretto', adesso: fraDueSecondi }).si === true);
+  ok('la stessa cosa a un altro passa',
+     R.puoScrivere({ a: 'Gianfranco Cristiano', testo, conosciuto: true, modo: 'diretto', adesso: fraDueSecondi }).si === true);
+
+  // E dopo un minuto non e' piu' un doppione: e' una scelta.
+  const dopo = new Date(Date.now() + 61 * 1000);
+  ok('dopo un minuto si puo\' rimandare',
+     R.puoScrivere({ a: 'Sara Triassi', testo, conosciuto: true, modo: 'diretto', adesso: dopo }).si === true);
+
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
 console.log(`╚══════════════════════════════════════════╝`);
 process.exit(fail ? 1 : 0);
