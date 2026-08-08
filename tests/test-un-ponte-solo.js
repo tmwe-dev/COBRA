@@ -52,9 +52,9 @@ console.log('\n── Un ponte solo verso il browser ──');
 // Non basta non usare il fantasma: bisogna che dall'altra parte del ponte buono
 // ci sia davvero qualcuno che risponde a quel nome.
 {
-  const estensione = fs.readFileSync(ESTENSIONE, 'utf8');
+  const estensione = require('./_estensione').sorgenteEstensione();
   const comandi = new Set(
-    [...estensione.matchAll(/case\s+'([a-z_0-9]+)'/g)].map(m => m[1])
+    require('./_estensione').nomiDeiComandi(estensione)
   );
 
   const SERVONO = [
@@ -73,9 +73,9 @@ console.log('\n── Un ponte solo verso il browser ──');
 // in bridgeCommand non è un guasto, è un comando che nessuno raccoglie —
 // esattamente il difetto di partenza, con un'altra faccia.
 {
-  const estensione = fs.readFileSync(ESTENSIONE, 'utf8');
+  const estensione = require('./_estensione').sorgenteEstensione();
   const comandi = new Set(
-    [...estensione.matchAll(/case\s+'([a-z_0-9]+)'/g)].map(m => m[1])
+    require('./_estensione').nomiDeiComandi(estensione)
   );
   // I comandi generici del ponte (navigate, click, fill_form…) stanno altrove.
   const GENERICI = new Set(['navigate', 'click', 'fill_form', 'screenshot', 'scrape',
@@ -109,11 +109,12 @@ console.log('\n── Un ponte solo verso il browser ──');
 // qualcosa fuori — scrivere, invitare — devono stare sul percorso nuovo,
 // quello che passa da Pagine, Mappa e Ritmo.
 {
-  const ext = fs.readFileSync(ESTENSIONE, 'utf8');
+  const ext = require('./_estensione').sorgenteEstensione();
 
   // Per ogni `case '...':` si guarda il pezzo di codice fino al case dopo.
   const pezzi = [];
-  const trovati = [...ext.matchAll(/case\s+'([a-z_0-9]+)':/g)];
+  const trovati = [...ext.matchAll(/comandi\['([a-z_0-9]+)'\] = async function|^ {6}case '([a-z_0-9]+)':/gm)]
+    .map(m => ({ index: m.index, 1: m[1] || m[2] }));
   for (let i = 0; i < trovati.length; i++) {
     const da = trovati[i].index;
     const a = i + 1 < trovati.length ? trovati[i + 1].index : ext.length;
@@ -148,17 +149,21 @@ console.log('\n── Un ponte solo verso il browser ──');
 // chi chiedeva il vecchio nome ora arriva sul percorso nuovo. Il controllo
 // verifica che non tornino a essere due implementazioni separate.
 {
-  const ext = fs.readFileSync(ESTENSIONE, 'utf8');
+  const ext = require('./_estensione').sorgenteEstensione();
   const COPPIE = [
     ['linkedin_posta', 'linkedin_elenco_chat'],
     ['linkedin_conversazione', 'linkedin_leggi_conversazione'],
     ['whatsapp_conversazione', 'whatsapp_leggi_conversazione'],
     ['whatsapp_non_letti', 'whatsapp_elenco_chat'],
   ];
+  // Si guarda il CORPO del comando, ovunque stia adesso: i comandi sono usciti
+  // da background.js e la vecchia espressione cercava `case 'x':` in un file
+  // che non li contiene piu'.
+  const { corpoDelComando } = require('./_estensione');
   for (const [vecchio, nuovo] of COPPIE) {
-    const m = ext.match(new RegExp(`case\\s+'${vecchio}':([\\s\\S]*?)case\\s+'`));
+    const corpo = corpoDelComando(ext, vecchio) || '';
     ok(`${vecchio} rimanda a ${nuovo} invece di rifarlo`,
-      !!m && m[1].includes(nuovo), 'ha ancora un\'implementazione sua');
+      corpo.includes(nuovo), 'ha ancora un\'implementazione sua');
   }
 }
 

@@ -19,7 +19,7 @@ function ok(nome, cond, dettaglio = '') {
 }
 function sezione(t) { console.log(`\n\x1b[1m-- ${t} --\x1b[0m`); }
 
-const ext = fs.readFileSync('cobra-extension/background.js', 'utf8');
+const ext = require('./_estensione').sorgenteEstensione();
 const srv = fs.readFileSync('modules/server-slim.js', 'utf8');
 
 console.log('\n=== IL PONTE: ESTENSIONE ↔ SERVER ===');

@@ -29,7 +29,7 @@ function ok(nome, cond, dettaglio = '') {
 function sezione(t) { console.log(`\n\x1b[1m-- ${t} --\x1b[0m`); }
 
 const ui = fs.readFileSync('public/index.html', 'utf8');
-const ext = fs.readFileSync('cobra-extension/background.js', 'utf8');
+const ext = require('./_estensione').sorgenteEstensione();
 
 console.log('\n=== LE VOCI SI SCELGONO, I BANNER SI TOLGONO ===');
 

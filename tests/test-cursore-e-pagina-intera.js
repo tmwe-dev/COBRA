@@ -29,7 +29,7 @@ function ok(nome, cond, dettaglio = '') {
 }
 function sezione(t) { console.log(`\n\x1b[1m-- ${t} --\x1b[0m`); }
 
-const ext = fs.readFileSync('cobra-extension/background.js', 'utf8');
+const ext = require('./_estensione').sorgenteEstensione();
 
 console.log('\n=== SI DEVE VEDERE COSA STA FACENDO ===');
 
@@ -77,13 +77,14 @@ sezione('Il cursore arriva prima dell azione, non dopo');
 {
   // Va guardato DENTRO il case 'click', non nel file intero: realisticClick
   // compare anche nella libreria del mouse, molto piu' sopra.
-  const blocco = ext.slice(ext.indexOf("case 'click': {"), ext.indexOf("case 'scroll': {"));
+  // Il comando e' uscito da background.js: si prende il suo corpo dovunque sia.
+  const blocco = require('./_estensione').corpoDelComando(ext, 'click') || '';
   const posCursore = blocco.indexOf("muoviCursoreSu(tab.id, args.selector, 'clic')");
   const posClick = blocco.indexOf('realisticClick(el)');
   ok('sul click il cursore arriva prima', posCursore > 0 && posCursore < posClick,
      `cursore@${posCursore} click@${posClick}`);
   ok('e sulla scrittura', /muoviCursoreSu\(t\.id, args\.selector, 'scrivo'\)/.test(ext));
-  ok('esiste anche il comando per mostrarlo quando non si clicca', /case 'mostra_cursore'/.test(ext));
+  ok('esiste anche il comando per mostrarlo quando non si clicca', require('./_estensione').doveStaIlComando('mostra_cursore') !== null);
   ok('che accetta un elemento', /if \(args\.selettore\)/.test(ext));
   ok('oppure una posizione', /Number\(args\.x\) \|\| 40/.test(ext));
 }

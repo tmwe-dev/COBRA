@@ -18,7 +18,7 @@ function ok(name, cond, detail = '') {
 }
 function section(t) { console.log(`\n\x1b[1m-- ${t} --\x1b[0m`); }
 
-const ext = fs.readFileSync('cobra-extension/background.js', 'utf8');
+const ext = require('./_estensione').sorgenteEstensione();
 
 console.log('\n=== CODICE INIETTATO NELLE PAGINE ===');
 

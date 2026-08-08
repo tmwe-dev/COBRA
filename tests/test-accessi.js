@@ -195,8 +195,8 @@ console.log('\n── 4. Quello che il modello vede, e quello che non vede ─�
 
   // ── 5. Il comando dentro l'estensione ──
   console.log('\n── 5. Il pezzo dentro l\'estensione ──');
-  const est = fs.readFileSync(path.join(__dirname, '..', 'cobra-extension', 'background.js'), 'utf8');
-  ok('il comando compila_accesso esiste', est.includes("case 'compila_accesso'"));
+  const est = require('./_estensione').sorgenteEstensione();
+  ok('il comando compila_accesso esiste', require('./_estensione').doveStaIlComando('compila_accesso') !== null);
   ok('prima guarda se la sessione è ancora valida', /sembraDentro|campoPassword/.test(est));
   ok('usa il setter nativo, per i moduli fatti in React', /getOwnPropertyDescriptor[\s\S]{0,400}compila_accesso|compila_accesso[\s\S]{0,4000}getOwnPropertyDescriptor/.test(est));
   ok('riconosce la richiesta di un codice di verifica', /chiedeCodice/.test(est));
@@ -211,7 +211,7 @@ console.log('\n── 4. Quello che il modello vede, e quello che non vede ─�
   ok('c\'è la sezione degli accessi', pag.includes('Accessi ai sistemi chiusi'));
   ok('WhatsApp NON chiede utente e password nel pannello', !pag.includes("nome: 'WhatsApp'"));
   ok('e il pannello spiega perche', pag.includes('WhatsApp non sta qui'));
-  ok('lo stato della sessione si chiede al modulo del Navigator', est.includes("case 'whatsapp_sessione'"));
+  ok('lo stato della sessione si chiede al modulo del Navigator', require('./_estensione').doveStaIlComando('whatsapp_sessione') !== null);
   ok('NON ci sono piu selettori WhatsApp indovinati da noi', !/canvasGrande|parlaDiQr/.test(est));
   for (const nome of ['DHL', 'UPS', 'TNT', 'FedEx', 'LinkedIn', 'Report aziende', 'WCA']) {
     ok(`${nome} è tra i pronti`, pag.includes(`'${nome}'`) || pag.includes(`nome: '${nome}'`));

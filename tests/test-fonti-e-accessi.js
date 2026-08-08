@@ -34,7 +34,7 @@ function ok(nome, cond, dettaglio = '') {
 function sezione(t) { console.log(`\n\x1b[1m-- ${t} --\x1b[0m`); }
 
 const nav = fs.readFileSync('modules/tools/handlers/navigate.js', 'utf8');
-const ext = fs.readFileSync('cobra-extension/background.js', 'utf8');
+const ext = require('./_estensione').sorgenteEstensione();
 
 console.log('\n=== LA LEZIONE GIUSTA, E NIENTE FIRME AL POSTO DI LUCA ===');
 

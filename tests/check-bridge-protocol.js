@@ -14,7 +14,11 @@ function ok(name, cond, detail = '') {
   else { FAIL++; console.log(`  \x1b[31mx\x1b[0m ${name}${detail ? ' — ' + detail : ''}`); }
 }
 
-const ext = fs.readFileSync(path.join(ROOT, 'cobra-extension', 'background.js'), 'utf8');
+// I comandi sono usciti da background.js: 96 su 99 vivono in
+// esterni/comandi/*.js. Questo controllo verifica il PROTOCOLLO fra server ed
+// estensione — cioe' che ogni comando chiesto esista dall'altra parte — e
+// quella domanda non riguarda un file preciso.
+const ext = require('./_estensione').sorgenteEstensione();
 const srv = fs.readFileSync(path.join(ROOT, 'modules', 'server-slim.js'), 'utf8');
 const conn = fs.readFileSync(path.join(ROOT, 'modules', 'bridge', 'connection.js'), 'utf8');
 const ws = fs.readFileSync(path.join(ROOT, 'modules', 'ws', 'server.js'), 'utf8');
@@ -71,7 +75,7 @@ ok(`server-slim implementa handleExtResult`, /handleExtResult\(msg\)\s*\{[\s\S]{
 // ── Comandi richiesti dagli handler esistono nell'estensione ──
 console.log('');
 console.log('Copertura comandi');
-const extCommands = [...ext.matchAll(/case '([a-z_]+)':/g)].map(m => m[1]);
+const extCommands = require('./_estensione').nomiDeiComandi(ext);
 const handlersDir = path.join(ROOT, 'modules', 'tools', 'handlers');
 const used = new Set();
 for (const f of fs.readdirSync(handlersDir)) {
@@ -89,8 +93,7 @@ console.log('');
 console.log('Campi risposta get_page_content');
 // Il blocco contiene uno switch annidato (case 'h1' ecc.), quindi si usa una
 // finestra fissa e si cerca la return finale che contiene i metadati di pagina.
-const gpcStart = ext.indexOf("case 'get_page_content':");
-const gpcBlock = ext.slice(gpcStart, gpcStart + 9000);
+const gpcBlock = require('./_estensione').corpoDelComando(ext, 'get_page_content') || '';
 const gpcMatch = gpcBlock.match(/return \{ ok: true,[^\n]*title:[^\n]*\}/);
 const gpcReturn = gpcMatch ? gpcMatch[0] : '';
 ok(`estensione restituisce 'markdown'`, /\bmarkdown:/.test(gpcReturn),

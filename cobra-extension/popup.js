@@ -5,8 +5,8 @@ document.getElementById('extVersion').textContent = 'v' + chrome.runtime.getMani
 async function checkStatus() {
   try {
     const [verResp, brResp] = await Promise.all([
-      fetch('http://localhost:3000/api/version'),
-      fetch('http://localhost:3000/api/bridge-status')
+      fetch('http://127.0.0.1:3000/api/version'),
+      fetch('http://127.0.0.1:3000/api/bridge-status')
     ]);
     if (!verResp.ok) throw new Error('Server down');
     const ver = await verResp.json();
@@ -29,7 +29,7 @@ async function checkStatus() {
 }
 
 document.getElementById('openCobra').addEventListener('click', () => {
-  chrome.tabs.create({ url: 'http://localhost:3000' });
+  chrome.tabs.create({ url: 'http://127.0.0.1:3000' });
 });
 
 checkStatus();

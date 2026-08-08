@@ -157,7 +157,7 @@ console.log('\n── 1ter. Nessun filo che torna al Navigator ──');
 
   // Il comando setConfig — l'unica porta da cui entrerebbero url e chiave —
   // non e' raggiungibile: il nostro background.js non lo gestisce.
-  const bg = fs.readFileSync(path.join(estDir, 'background.js'), 'utf8');
+  const bg = require('./_estensione').sorgenteEstensione();
   ok('il nostro background.js non gestisce setConfig', !/case\s*['\"]setConfig['\"]/.test(bg));
 
   // Ogni fetch nei file copiati deve essere protetta da un controllo
@@ -334,10 +334,10 @@ console.log('\n── 3. I nomi in comune puntano a cose diverse ──');
 
   // ── 6. I comandi esistono dentro COBRA ──
   console.log('\n── 5. I comandi sono agganciati a COBRA ──');
-  const bg = fs.readFileSync(path.join(EST, '..', 'background.js'), 'utf8');
+  const bg = require('./_estensione').sorgenteEstensione();
   for (const c of ['whatsapp_sessione', 'whatsapp_non_letti', 'whatsapp_conversazione', 'whatsapp_scrivi',
     'linkedin_profilo', 'linkedin_cerca', 'linkedin_posta', 'linkedin_scrivi', 'stato_moduli_esterni']) {
-    ok(`comando ${c}`, bg.includes(`case '${c}'`));
+    ok(`comando ${c}`, require('./_estensione').doveStaIlComando(c) !== null);
   }
   ok('il ponte viene caricato all\'avvio', /importScripts\('esterni\/ponte\.js'\)/.test(bg));
 

@@ -27,13 +27,18 @@
 const fs = require('fs');
 const path = require('path');
 
-const sorgente = fs.readFileSync(
-  path.join(__dirname, '..', 'cobra-extension', 'background.js'), 'utf8');
+// I comandi sono usciti da background.js: 96 su 99 vivono in
+// esterni/comandi/*.js. La prova guarda il COMPORTAMENTO dell'estensione, non
+// un file preciso — quindi legge tutto.
+const sorgente = require('./_estensione').sorgenteEstensione();
 
 let pass = 0, fail = 0;
 const ok = (n, c, d = '') => { c ? (pass++, console.log(`  ✓ ${n}`)) : (fail++, console.log(`  ✗ ${n}${d ? ' — ' + d : ''}`)); };
 
 function blocco(comando) {
+  const { corpoDelComando } = require('./_estensione');
+  const trovato = corpoDelComando(sorgente, comando);
+  if (trovato !== null) return trovato;
   const i = sorgente.indexOf(`case '${comando}': {`);
   if (i === -1) return null;
   const j = sorgente.indexOf("\n      case '", i + 10);

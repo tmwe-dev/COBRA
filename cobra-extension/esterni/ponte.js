@@ -201,11 +201,26 @@ catch (e) { console.error('[COBRA] mappa.js non caricato:', e.message); }
 // Lo sguardo: guardare la pagina e poterne nominare i pezzi. Va caricato dopo
 // mappa e pagine perche' e' l'ultimo anello — ma non dipende da loro: se uno
 // dei due manca, guardare funziona lo stesso.
+// Il registro dei comandi, e chi ci si registra. Vanno caricati PRIMA di
+// tutto il resto: background.js chiede al registro appena arriva un comando,
+// e un registro vuoto significherebbe cadere nel vecchio switch senza motivo.
+try { importScripts('esterni/registro.js'); }
+catch (e) { console.error('[COBRA] registro.js non caricato:', e.message); }
+
 try { importScripts('esterni/sguardo.js'); }
 catch (e) { console.error('[COBRA] sguardo.js non caricato:', e.message); }
 
 try { importScripts('esterni/pagine.js'); }
 catch (e) { console.error('[COBRA] pagine.js non caricato:', e.message); }
+
+// ── Le aree dei comandi ──
+//
+// Vanno per ultime: usano Pagine, Mappa e Ritmo, che devono esserci gia'.
+for (const area of ['pagina', 'moduli', 'schede', 'ostacoli', 'foto',
+                    'whatsapp', 'linkedin', 'diagnosi']) {
+  try { importScripts(`esterni/comandi/${area}.js`); }
+  catch (e) { console.error(`[COBRA] comandi/${area}.js non caricato:`, e.message); }
+}
 
 // ── La coda ──
 //

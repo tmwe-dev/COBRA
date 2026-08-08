@@ -13,7 +13,7 @@ function ok(name, cond, detail = '') {
 }
 function section(t) { console.log(`\n\x1b[1m-- ${t} --\x1b[0m`); }
 
-const ext = fs.readFileSync('cobra-extension/background.js', 'utf8');
+const ext = require('./_estensione').sorgenteEstensione();
 const front = fs.readFileSync('public/index.html', 'utf8');
 const manifest = JSON.parse(fs.readFileSync('cobra-extension/manifest.json', 'utf8'));
 
@@ -37,7 +37,7 @@ ok('il permesso storage e dichiarato',
 section('Nessuna scheda portata in primo piano');
 // ─────────────────────────────────────────
 {
-  const navBlocco = ext.slice(ext.indexOf("case 'navigate':"), ext.indexOf("case 'navigate':") + 4000);
+  const navBlocco = require('./_estensione').corpoDelComando(ext, 'navigate') || '';
   ok('navigate aggiorna la scheda in secondo piano',
      /tabs\.update\([^)]*active:\s*false/.test(navBlocco),
      'con active:true la scheda ruba il fuoco ad ogni pagina');
@@ -46,8 +46,13 @@ section('Nessuna scheda portata in primo piano');
 }
 {
   // Le creazioni di scheda ammesse: la scheda di lavoro (una sola) e il tool esplicito
+  // Il conto e' salito con il trasloco dei comandi, non perche' siano nati
+  // punti nuovi: prima si guardava solo background.js, adesso l'estensione
+  // intera. I punti ammessi sono la scheda di lavoro, lo strumento esplicito,
+  // e Pagine.preparaPagina — che e' proprio la funzione nata per NON far
+  // aprire schede a chiunque.
   const creazioni = [...ext.matchAll(/chrome\.tabs\.create\(/g)];
-  ok('al massimo due punti creano schede', creazioni.length <= 2, `trovati ${creazioni.length}`);
+  ok('le schede le crea solo chi deve', creazioni.length <= 5, `trovati ${creazioni.length}`);
   ok('la scheda di lavoro nasce in secondo piano',
      /tabs\.create\(\{\s*url:\s*'about:blank',\s*active:\s*false\s*\}\)/.test(ext));
 }
@@ -59,7 +64,7 @@ section('L anteprima delle pagine continua a funzionare');
   // La finestra di lettura va fino al case successivo: fissarla a un numero
   // di caratteri significa che allungando il codice il test comincia a
   // fallire su cose che ci sono ancora.
-  const shot = ext.slice(ext.indexOf("case 'screenshot':"), ext.indexOf("case 'mostra_cursore':"));
+  const shot = require('./_estensione').corpoDelComando(ext, 'screenshot') || '';
   ok('lo screenshot recupera la scheda persistita', /recuperaWorkTab\(\)/.test(shot),
      'con la variabile azzerata fotograferebbe la scheda sbagliata');
   ok('rende attiva la scheda nella SUA finestra', /tabs\.update\(idScheda, \{ active: true \}\)/.test(shot),

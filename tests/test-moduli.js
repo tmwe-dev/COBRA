@@ -35,12 +35,13 @@ function ok(nome, cond, dettaglio = '') {
 }
 function sezione(t) { console.log(`\n\x1b[1m-- ${t} --\x1b[0m`); }
 
-const ext = fs.readFileSync('cobra-extension/background.js', 'utf8');
+const ext = require('./_estensione').sorgenteEstensione();
 const srv = fs.readFileSync('modules/tools/handlers/interaction.js', 'utf8');
 
 // La funzione vera, estratta dall'estensione ed eseguita su un DOM finto.
 function compilatore() {
-  const corpo = ext.match(/case 'compila_campo': \{[\s\S]*?return await run\(tab\.id, (\(sel, valore\) => \{[\s\S]*?\n        \}), \[args\.selettore/);
+  const _c = require('./_estensione').corpoDelComando(ext, 'compila_campo') || '';
+  const corpo = _c.match(/return await run\(tab\.id, (\(sel, valore\) => \{[\s\S]*?\n        \}), \[args\.selettore/);
   return new Function('document', 'HTMLInputElement', 'HTMLTextAreaElement', 'Event',
     'return ' + corpo[1] + ';');
 }
@@ -57,7 +58,8 @@ console.log('\n=== MODULI: GUARDARE, SCRIVERE, VERIFICARE ===');
 
 sezione('Prima di scrivere, si guarda il campo');
 {
-  ok('esiste il comando che compila conoscendo i tipi', /case 'compila_campo'/.test(ext));
+  ok('esiste il comando che compila conoscendo i tipi',
+     require('./_estensione').doveStaIlComando('compila_campo') !== null);
   ok('un campo che non c e viene detto', /campo non trovato/.test(ext));
   ok('uno invisibile pure', /campo presente ma non visibile/.test(ext));
   ok('uno disabilitato spiega perche', /la pagina non permette di compilarlo/.test(ext));
@@ -132,7 +134,7 @@ sezione('Il campo viene RILETTO: si riferisce quello che c e, non quello che si 
 
 sezione('Si puo guardare il modulo prima di toccarlo');
 {
-  ok('esiste il comando nell estensione', /case 'leggi_modulo'/.test(ext));
+  ok('esiste il comando nell estensione', require('./_estensione').doveStaIlComando('leggi_modulo') !== null);
   ok('e lo strumento sul server', /async function leggiModulo/.test(srv));
   ok('legge l etichetta come la vede una persona', /label\[for=/.test(ext));
   ok('anche quando l etichetta contiene il campo', /el\.closest\('label'\)/.test(ext));
