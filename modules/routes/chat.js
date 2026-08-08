@@ -327,9 +327,18 @@ function register(router, ctx) {
               const campi = cr.find(c => c.tipo === 'campi_obbligatori')?.campi || [];
               const soggetti = cr.find(c => c.tipo === 'soggetti_coperti')?.soggetti || [];
               if (quanti > 1 || campi.length > 0 || soggetti.length > 1) {
-                const ripreso = ctx._archivioCantieri.riapri(incaricoCorrente.obiettivo);
+                const lavoro = ctx._archivioCantieri.riapriLavoro(incaricoCorrente.obiettivo);
+                const ripreso = lavoro.cantiere;
                 if (ripreso) {
                   ctx.session.cantiere = ripreso;
+                  // Il piano torna con lui: senza, il modello lo rifa' da capo
+                  // e i passi gia' chiusi tornano in attesa.
+                  if (lavoro.processo) {
+                    ctx.session.processo = lavoro.processo;
+                    const fatti = lavoro.processo.passi.filter(x => x.stato === 'completato').length;
+                    ctx.log(`[Processo] Riaperto il piano: ${fatti}/${lavoro.processo.passi.length} passi gia' chiusi`);
+                    ctx.emitReasoning(`Riprendo il piano: ${fatti} passi su ${lavoro.processo.passi.length} erano gia' fatti`, '📋');
+                  }
                   ctx.log(`[Cantiere] Riaperto quello di prima: ${ripreso.elenco().length} voci già in mano`);
                   ctx.emitReasoning(`Riprendo da dove eravamo: ${ripreso.elenco().length} voci già raccolte`, '🧱');
                 } else {
@@ -819,8 +828,19 @@ function register(router, ctx) {
           ctx._archivioCantieri.chiudi();
           ctx.log(`[Cantiere] Lavoro finito (${r.complete}/${r.attese}): chiudo il cantiere`);
         } else {
-          ctx._archivioCantieri.salva(ctx.session.cantiere);
-          ctx.log(`[Cantiere] Lascio aperto: ${r.voci} voci, ${r.buchi} incomplete — si riprende da qui`);
+          // Si salva il lavoro INTERO: cosa e' stato raccolto (il cantiere),
+          // dove si e' arrivati (il processo) e con quali criteri lo si
+          // giudichera' finito. Salvarne solo una parte significa che alla
+          // ripresa il modello ripianifica da zero, e con un piano nuovo i
+          // passi gia' chiusi tornano "in attesa".
+          ctx._archivioCantieri.salva(
+            ctx.session.cantiere,
+            ctx.session.processo || null,
+            incaricoCorrente ? incaricoCorrente.criteri : null);
+          const _p = ctx.session.processo;
+          ctx.log(`[Cantiere] Lascio aperto: ${r.voci} voci, ${r.buchi} incomplete`
+            + (_p ? ` — piano a ${_p.passi.filter(x => x.stato === 'completato').length}/${_p.passi.length} passi` : '')
+            + ' — si riprende da qui');
         }
       }
 

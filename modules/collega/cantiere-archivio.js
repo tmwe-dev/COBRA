@@ -10,6 +10,7 @@
 
 const path = require('path');
 const { Cantiere } = require('./cantiere');
+const { Processo } = require('../process/engine');
 const { writeJsonAtomicSync, readJsonSafeSync } = require('../utils/atomic-file');
 
 const SCADENZA_MS = 6 * 60 * 60 * 1000;   // sei ore: oltre, i dati non sono più freschi
@@ -19,9 +20,24 @@ class ArchivioCantieri {
     this.file = path.join(dataDir, 'cantiere_aperto.json');
   }
 
-  salva(cantiere) {
-    if (!cantiere) return this.chiudi();
-    try { writeJsonAtomicSync(this.file, cantiere.perIlDisco()); } catch (_) { /* best-effort */ }
+  // ── Un lavoro, non un pezzo di lavoro ──
+  //
+  // Qui si salvava solo il cantiere: COSA era stato raccolto. Ma il Cantiere
+  // e il Processo sono le due meta' della stessa cosa — l'uno dice cosa hai
+  // trovato, l'altro dove sei arrivato — e salvarne una sola significa che
+  // alla ripresa il modello ripianifica da zero: rifa' il piano, e con un
+  // piano nuovo i passi gia' chiusi tornano "in attesa".
+  //
+  // Adesso il file tiene il lavoro intero. Non e' un motore nuovo: e' lo
+  // stesso archivio che gia' c'era, con dentro anche l'altra meta'.
+  salva(cantiere, processo = null, criteri = null) {
+    if (!cantiere && !processo) return this.chiudi();
+    const dati = cantiere ? cantiere.perIlDisco() : { aperto: Date.now(), obiettivo: (processo && processo.obiettivo) || '' };
+    dati.processo = processo && typeof processo.perIlDisco === 'function' ? processo.perIlDisco() : null;
+    // I criteri viaggiano col lavoro: alla ripresa servono per sapere quando
+    // e' finito, e sono il contratto stabilito PRIMA di cominciare.
+    if (criteri) dati.criteri = criteri;
+    try { writeJsonAtomicSync(this.file, dati); } catch (_) { /* best-effort */ }
   }
 
   /**
@@ -40,6 +56,31 @@ class ArchivioCantieri {
     if (obiettivo && dati.obiettivo && !_stessoLavoro(dati.obiettivo, obiettivo)) return null;
 
     return Cantiere.daDisco(dati);
+  }
+
+  /**
+   * Il lavoro intero lasciato a meta': cosa era stato raccolto, dove si era
+   * arrivati, e con quali criteri lo si sarebbe giudicato finito.
+   *
+   * Restituisce sempre un oggetto (mai null) cosi' chi chiama non deve
+   * difendersi: i pezzi mancanti sono null, e null si riconosce.
+   */
+  riapriLavoro(obiettivo) {
+    const dati = readJsonSafeSync(this.file, null);
+    const vuoto = { cantiere: null, processo: null, criteri: null, obiettivo: null };
+    if (!dati) return vuoto;
+    if (Date.now() - (dati.aperto || 0) > SCADENZA_MS) { this.chiudi(); return vuoto; }
+    if (obiettivo && dati.obiettivo && !_stessoLavoro(dati.obiettivo, obiettivo)) return vuoto;
+
+    let processo = null;
+    try { processo = dati.processo ? Processo.daDisco(dati.processo) : null; } catch (_) { processo = null; }
+
+    return {
+      cantiere: Cantiere.daDisco(dati),
+      processo,
+      criteri: dati.criteri || null,
+      obiettivo: dati.obiettivo || null,
+    };
   }
 
   chiudi() {

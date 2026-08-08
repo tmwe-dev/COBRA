@@ -131,7 +131,10 @@ sezione('E il cantiere e agganciato al lavoro vero');
   // Non si azzera piu' a ogni turno: si riapre quello lasciato a meta'.
   // Un lavoro da otto soggetti non sta in un turno, e ributtarlo ogni volta
   // significa non finirlo mai — quattro tentativi di fila lo hanno dimostrato.
-  ok('a ogni turno si riprende quello aperto', /_archivioCantieri\.riapri\(/.test(chat));
+  // La chiamata e' diventata riapriLavoro(): riprende il cantiere E il piano,
+  // che sono le due meta' della stessa cosa. L'intenzione della prova — non si
+  // riparte da zero — e' la stessa, e adesso copre anche i passi.
+  ok('a ogni turno si riprende quello aperto', /_archivioCantieri\.riapriLavoro\(/.test(chat));
   ok('e non lo si butta piu', !/ctx\.session\.cantiere = null;/.test(chat));
   ok('prende le misure dai criteri dell incarico', /new Cantiere\(\{[\s\S]{0,120}campiAttesi: campi/.test(chat));
   ok('i soggetti da coprire ci entrano subito', /for \(const nome of soggetti\)/.test(chat));

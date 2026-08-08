@@ -85,6 +85,71 @@ class Processo {
     });
   }
 
+  // ── Il piano deve sopravvivere al turno ──
+  //
+  // Il Processo era l'unico dei cinque a non avere disco: Cantiere ha
+  // l'archivio, missioni ha il suo file, i tasks pure. Il piano dei passi
+  // moriva a fine turno.
+  //
+  // Il risultato pratico: un lavoro da otto soggetti veniva ripianificato da
+  // zero a ogni ripresa. Il Cantiere ricordava COSA era stato raccolto, ma
+  // nessuno ricordava DOVE si era arrivati nel piano — quindi il modello
+  // rifaceva il piano, e con un piano nuovo i passi gia' fatti tornavano
+  // "in attesa".
+  //
+  // Qui non si aggiunge un motore: si aggiunge una porta sul disco a quello
+  // che c'e' gia'. Lo stato resta questo oggetto, le regole restano le sue.
+
+  /** Tutto quello che serve per ricostruirsi identico. */
+  perIlDisco() {
+    return {
+      id: this.id,
+      obiettivo: this.obiettivo,
+      creatoIl: this.creatoIl,
+      chiusoIl: this.chiusoIl,
+      avvisi: this.avvisi,
+      passi: this.passi,
+    };
+  }
+
+  /**
+   * Si ricostruisce da quello che c'era scritto.
+   *
+   * I passi si rimettono com'erano SENZA ripassare dal costruttore: quello
+   * ripulisce le dipendenze e rimette tutto in "attesa", e ricostruire un
+   * piano a meta' azzerandolo sarebbe peggio che non averlo salvato.
+   */
+  static daDisco(dati) {
+    if (!dati || !Array.isArray(dati.passi)) return null;
+    const p = new Processo(dati.obiettivo || '', []);
+    p.id = dati.id || p.id;
+    p.creatoIl = dati.creatoIl || p.creatoIl;
+    p.chiusoIl = dati.chiusoIl || null;
+    p.avvisi = Array.isArray(dati.avvisi) ? dati.avvisi : [];
+    p.passi = dati.passi.map(x => ({
+      n: Number(x.n),
+      titolo: String(x.titolo || ''),
+      stato: STATI.includes(x.stato) ? x.stato : 'attesa',
+      bloccante: x.bloccante !== false,
+      dipendeDa: Array.isArray(x.dipendeDa) ? x.dipendeDa.map(Number) : [],
+      prova: x.prova || null,
+      motivo: x.motivo || null,
+      iniziatoIl: x.iniziatoIl || null,
+      chiusoIl: x.chiusoIl || null,
+      tentativi: Number(x.tentativi) || 0,
+    }));
+    // Un passo lasciato "in corso" da un turno morto non e' in corso: non c'e'
+    // piu' nessuno che lo sta facendo. Torna in attesa, con il conto dei
+    // tentativi intatto — cosi' si vede che ci si era gia' provati.
+    for (const x of p.passi) {
+      if (x.stato === 'in_corso' || x.stato === 'verifica') {
+        x.stato = 'attesa';
+        x.iniziatoIl = null;
+      }
+    }
+    return p;
+  }
+
   passo(n) { return this.passi.find(p => p.n === Number(n)) || null; }
 
   /** R6 — nessuna transizione fuori da quelle dichiarate. */

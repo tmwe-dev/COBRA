@@ -107,9 +107,12 @@ sezione('Il turno lo salva e lo chiude quando serve');
 {
   const chat = fs.readFileSync('modules/routes/chat.js', 'utf8');
   ok('non si butta piu a inizio turno', !/ctx\.session\.cantiere = null;/.test(chat));
-  ok('si prova a riaprire quello di prima', /_archivioCantieri\.riapri\(/.test(chat));
+  ok('si prova a riaprire quello di prima', /_archivioCantieri\.riapriLavoro\(/.test(chat));
   ok('e Luca lo vede', /Riprendo da dove eravamo/.test(chat));
-  ok('a fine turno si salva', /_archivioCantieri\.salva\(ctx\.session\.cantiere\)/.test(chat));
+  // Si salva il lavoro intero, non piu' il solo cantiere: cosa e' stato
+  // raccolto, dove si e' arrivati, e con quali criteri lo si giudichera'.
+  ok('a fine turno si salva', /_archivioCantieri\.salva\(\s*\n?\s*ctx\.session\.cantiere/.test(chat));
+  ok('e col piano dentro', /ctx\.session\.processo \|\| null/.test(chat));
   ok('e si chiude solo a lavoro finito', /if \(r\.finito\)[\s\S]{0,120}chiudi\(\)/.test(chat));
   ok('col motivo scritto', /si riprende da qui/.test(chat));
 }
