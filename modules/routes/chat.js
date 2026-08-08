@@ -7,6 +7,8 @@ const { ordineDiLavoro, inChiaro, domandaPerLaConoscenza } = require('../collega
 const { tiraLezioni } = require('../memory/tira-lezioni');
 const { descriviCriterio } = require('../collega/incarico');
 const { analizzaRisposta, rispostaOnesta, analizzaResa } = require('../security/fabrication-guard');
+// L'unica porta per dire "fatto": vale per il turno di chat come per un job.
+const { decidi: decidiCompletamento } = require('../collega/completamento');
 
 // Quello che è già sul tavolo, da mettere davanti al modello a ogni ripresa.
 //
@@ -741,6 +743,43 @@ function register(router, ctx) {
           result.fabricationBlocked = true;
         }
       }
+
+      // 8b-bis. Il cancello: chi dice "fatto" non e' chi ha lavorato.
+      //
+      // La guardia sopra difende dai DATI inventati. Questa difende dai
+      // SUCCESSI inventati, che l'8 agosto sono stati quattro in un giorno:
+      // "Il messaggio di auguri e' stato inviato correttamente" mentre non era
+      // partito niente, "linkedin_connect OK" su una richiesta mai arrivata.
+      //
+      // Un dato falso lo si puo' verificare aprendo la fonte. Un successo
+      // falso no: Luca chiude la conversazione convinto che una cosa sia
+      // successa, e lo scopre giorni dopo — o non lo scopre.
+      //
+      // Il verdetto non guarda la frase: guarda i criteri, il cantiere, i file
+      // prodotti e i passi eseguiti. La frase entra come un dato fra gli altri
+      // e vale zero quando gli altri dicono il contrario.
+      const _verdetto = decidiCompletamento({
+        incarico: incaricoCorrente,
+        valutazione: valutazioneFinale,
+        cantiere: ctx.session.cantiere,
+        files: ctx.session.fileDelTurno || [],
+        passi: (result.toolsUsed || []).map((t, i) => ({ step: i + 1, tool: t.name, ok: t.ok })),
+        dettoDalModello: result.content,
+      });
+
+      if (_verdetto.dichiarazioneSmentita) {
+        // Non si riscrive la risposta: si aggiunge la verita' sotto, con le
+        // parole di chi ha guardato le prove. Riscriverla significherebbe
+        // buttare via anche la parte giusta di quello che ha fatto.
+        ctx.log(`[Cancello] Diceva di aver finito ma ${_verdetto.perche}`);
+        ctx.wsBroadcast({ type: 'ai_reasoning',
+          text: `Diceva di aver finito, ma ${_verdetto.perche}`, icon: '🚧' });
+        result.content = String(result.content || '').trimEnd()
+          + '\n\n---\n**Non e\' finito.** ' + _verdetto.perche + ':\n'
+          + _verdetto.mancano.map(m => `- ${m}`).join('\n');
+        result.completamentoNegato = true;
+      }
+      ctx.session._ultimoVerdetto = _verdetto;
 
       // 8c. Insistenza. Se si è arreso dopo pochi tentativi, non si consegna la
       // resa all'utente: gli si fa notare e gli si dà una seconda occasione,

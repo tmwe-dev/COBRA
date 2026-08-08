@@ -116,13 +116,60 @@ sezione('E quando e finito davvero, si consegna');
 sezione('Riconoscere una dichiarazione di successo');
 {
   for (const f of ['Ho completato la ricerca.', 'Operazione completata.', 'Fatto.',
-                   'Il lavoro è terminato.', 'Task completed successfully.', 'Ecco, è pronto.']) {
+                   'Il lavoro è terminato.', 'Task completed successfully.', 'Ecco, è pronto.',
+                   // Le due parole esatte dell'8 agosto, che la prima versione
+                   // di questa formula non riconosceva.
+                   'La richiesta di collegamento è stata inviata correttamente.',
+                   'Messaggio mandato a Sara.', 'Il file è stato creato.']) {
     ok(`riconosce: "${f.slice(0, 32)}"`, _dichiaraDiAverFinito(f) === true);
   }
   for (const f of ['Non sono riuscito ad aprire la pagina.', 'Mancano ancora due città.',
-                   'Il volo parte alle 6:40.']) {
+                   'Il volo parte alle 6:40.',
+                   // L'infinito non e' un fatto compiuto: e' un'offerta.
+                   'Posso inviare il messaggio se confermi.', 'Non riesco a creare il file.']) {
     ok(`e non si confonde con: "${f.slice(0, 32)}"`, _dichiaraDiAverFinito(f) === false);
   }
+}
+
+sezione('Il caso vero dell 8 agosto, dall inizio alla fine');
+{
+  // Cosa e' successo davvero: linkedin_connect e' stato chiamato, e' fallito
+  // (Extension timeout), e COBRA ha risposto "Il messaggio di auguri e' stato
+  // inviato correttamente". Luca ha chiuso la conversazione convinto.
+  const v = decidi({
+    passi: [{ step: 1, tool: 'linkedin_connect', ok: false, motivo: 'richiesta non partita: Extension timeout (25s)' }],
+    dettoDalModello: 'La richiesta di collegamento e stata inviata correttamente.',
+  });
+  ok('un invio fallito non diventa un turno riuscito', v.stato === STATI.MANCA);
+  ok('e la bugia viene registrata come tale', v.dichiarazioneSmentita === true);
+  ok('col motivo che il log aveva e la risposta no',
+     v.mancano.some(m => /Extension timeout/.test(m)));
+
+  // Il verso che conta: una conversazione normale non deve essere toccata.
+  // Se questo si rompe, ogni "ciao" diventa un lavoro incompleto.
+  const chiacchiera = decidi({ dettoDalModello: 'Sono le nove e mezza.' });
+  ok('una chiacchiera resta una chiacchiera', chiacchiera.stato === STATI.COMPLETO);
+  const saluto = decidi({ dettoDalModello: 'Fatto, buona giornata!', passi: [] });
+  ok('e nemmeno un "fatto" detto per educazione la rompe', saluto.stato === STATI.COMPLETO);
+
+  // Un turno con strumenti tutti riusciti: nessun allarme.
+  const bene = decidi({
+    passi: [{ step: 1, tool: 'linkedin_rispondi', ok: true }],
+    dettoDalModello: 'Fatto, mandato a Sara.',
+  });
+  ok('e un lavoro davvero riuscito passa liscio', bene.stato === STATI.COMPLETO);
+}
+
+sezione('Il turno di chat passa dal cancello');
+{
+  const fs = require('fs');
+  const chat = fs.readFileSync('modules/routes/chat.js', 'utf8');
+  ok('chat.js chiede il verdetto', /decidiCompletamento\(\{/.test(chat));
+  ok('gli passa i criteri e il cantiere', /valutazione: valutazioneFinale/.test(chat)
+     && /cantiere: ctx\.session\.cantiere/.test(chat));
+  ok('e anche quello che il modello afferma', /dettoDalModello: result\.content/.test(chat));
+  ok('la smentita viene scritta sotto la risposta', /Non e\\' finito/.test(chat));
+  ok('senza riscrivere quello che aveva fatto di buono', /trimEnd\(\)/.test(chat));
 }
 
 sezione('Non e un sesto motore');

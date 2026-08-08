@@ -63,7 +63,20 @@ const STATI = {
  * modello produce per abitudine linguistica, non perche' abbia guardato.
  * Entrano qui come indizio, mai come prova.
  */
-const _SI_DICHIARA_FATTO = /\b(completat|terminat|finit|conclus|eseguit|fatto|pronto|done|completed)\w*\b/i;
+// I verbi che dichiarano un'azione COMPIUTA. Al participio passato, perche' e'
+// li' che sta la differenza: "ho inviato" e' un fatto, "posso inviare" no,
+// "non sono riuscito a inviare" nemmeno.
+//
+// "inviato" e "mandato" mancavano, e sono le due parole esatte con cui l'8
+// agosto e' stato annunciato un messaggio mai partito: "La richiesta di
+// collegamento e' stata inviata correttamente".
+const _SI_DICHIARA_FATTO = new RegExp([
+  '\\b(?:completat|terminat|finit|conclus|eseguit|effettuat)[oaie]\\b',
+  '\\b(?:inviat|mandat|spedit|trasmess|consegnat)[oaie]\\b',
+  '\\b(?:creat|prodott|generat|salvat|scritt|aggiunt)[oaie]\\b',
+  '\\bfatto\\b', '\\bpronto\\b', '\\be\\W? partit[oa]\\b',
+  '\\b(?:done|completed|sent|created|saved)\\b',
+].join('|'), 'i');
 
 function _dichiaraDiAverFinito(testo) {
   return _SI_DICHIARA_FATTO.test(String(testo || ''));

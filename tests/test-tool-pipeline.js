@@ -213,22 +213,44 @@ function section(t) { console.log(`\n\x1b[1m── ${t} ──\x1b[0m`); }
   {
     const fs = require('fs');
     const auditDir = path.join(process.cwd(), 'data', 'audit');
-    let found = false, recent = false;
-    if (fs.existsSync(auditDir)) {
-      const walk = (d) => {
+
+    // ── Perche' questa prova era instabile ──
+    //
+    // Chiedeva che il file fosse stato toccato negli ultimi 60 secondi. Ma 60
+    // secondi sono un orologio, non un comportamento: quando la suite intera
+    // gira, fra la scrittura e questo controllo puo' passare piu' tempo, e la
+    // prova diventava rossa senza che fosse cambiato niente.
+    //
+    // Un rosso che va e viene e' peggio di nessuna prova: insegna a non
+    // guardare i rossi. Adesso si misura la cosa vera — questo giro ha scritto
+    // sul registro? — segnando la dimensione PRIMA e confrontandola DOPO.
+    const misura = () => {
+      let trovato = false, byte = 0, quanti = 0;
+      if (!fs.existsSync(auditDir)) return { trovato, byte, quanti };
+      const guarda = (d) => {
         for (const f of fs.readdirSync(d)) {
           const fp = path.join(d, f);
-          if (fs.statSync(fp).isDirectory()) walk(fp);
-          else if (f.endsWith('.jsonl')) {
-            found = true;
-            if (Date.now() - fs.statSync(fp).mtimeMs < 60000) recent = true;
-          }
+          if (fs.statSync(fp).isDirectory()) guarda(fp);
+          else if (f.endsWith('.jsonl')) { trovato = true; quanti++; byte += fs.statSync(fp).size; }
         }
       };
-      walk(auditDir);
-    }
-    ok('audit log esiste', found);
-    ok('audit log scritto in questa sessione', recent);
+      guarda(auditDir);
+      return { trovato, byte, quanti };
+    };
+
+    const prima = misura();
+
+    // Si esegue uno strumento vero e si forza lo scarico su disco.
+    await ctx.executeTool('read_page', {});
+    require('../modules/security/audit-log').flushAuditSync();
+    await new Promise(r => setTimeout(r, 150));
+
+    const dopo = misura();
+
+    ok('audit log esiste', dopo.trovato);
+    ok('e questo giro ci ha scritto dentro',
+       dopo.byte > prima.byte || dopo.quanti > prima.quanti,
+       `prima ${prima.byte} byte, dopo ${dopo.byte}`);
   }
 
   // ═══════════════════════════════════════════
