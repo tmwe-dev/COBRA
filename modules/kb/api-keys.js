@@ -19,28 +19,45 @@ const aiKeys = {
 };
 
 /**
- * loadAPIKeys — Carica chiavi API da Supabase o file locale
+ * loadAPIKeys — Carica chiavi API dall'ambiente o dal file locale.
+ *
+ * ══════════════════════════════════════════════════════════════════════
+ * PERCHE' NON SI LEGGONO PIU' DA SUPABASE
+ *
+ * Fino al 7 agosto la prima strategia era una fetch a `config_ai` con la
+ * chiave ANON. Quella chiave sta nel .env, nel codice della webapp e nel
+ * browser di chiunque apra la pagina: chi ce l'aveva poteva leggere in chiaro
+ * le chiavi di OpenAI, Anthropic, Gemini, Groq ed ElevenLabs. Cinque chiavi a
+ * consumo, su un tavolo aperto.
+ *
+ * La cosa che ha deciso la questione e' che NESSUNO le usava. `loadAPIKeys()`
+ * viene chiamata in server-slim.js:581 come `await loadAPIKeys();` — il
+ * risultato non viene assegnato a niente — e l'oggetto `aiKeys` che il server
+ * adopera davvero e' un altro, riempito da process.env alle righe 141-145.
+ * Le chiavi arrivavano da Supabase, entravano in questo oggetto, e restavano
+ * li' a non servire a nulla.
+ *
+ * Erano esposte in cambio di zero. Tolta la fetch, la fonte diventa una sola:
+ * il .env sulla macchina di Luca. La policy di `config_ai` per anon e' stata
+ * rimossa il 7 agosto (migrazione config_ai_le_chiavi_non_escono_piu_con_la_anon):
+ * anche riaggiungendo questa fetch, adesso risponderebbe "permission denied".
+ * ══════════════════════════════════════════════════════════════════════
  */
 async function loadAPIKeys(log) {
-  // STRATEGY 1: Try Supabase remote
-  try {
-    const resp = await fetch(
-      `${SUPABASE_URL}/rest/v1/config_ai?select=provider,modello,api_key&attivo=eq.true`,
-      { headers: { 'apikey': SUPABASE_ANON_KEY, 'Authorization': `Bearer ${SUPABASE_ANON_KEY}` },
-        signal: AbortSignal.timeout(5000) }
-    );
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const rows = await resp.json();
-    const keyMap = { openai: 'openaiKey', anthropic: 'anthropicKey', gemini: 'geminiKey', groq: 'groqKey', elevenlabs: 'elevenlabsKey' };
-    const modelMap = { openai: 'openaiModel', anthropic: 'anthropicModel', gemini: 'geminiModel', groq: 'groqModel', elevenlabs: 'elevenlabsModel' };
-    for (const row of rows) {
-      if (keyMap[row.provider] && row.api_key) aiKeys[keyMap[row.provider]] = row.api_key;
-      if (modelMap[row.provider] && row.modello) aiKeys[modelMap[row.provider]] = row.modello;
-    }
-    if (log) log(`Loaded ${rows.length} API keys from Supabase: ${Object.keys(aiKeys).filter(k => k.endsWith('Key')).map(k => k.replace('Key', '')).join(', ')}`);
+  // STRATEGY 1: l'ambiente. E' la stessa fonte che usa server-slim.js, cosi'
+  // chi legge questo modulo e chi legge il server vedono le stesse chiavi.
+  const daAmbiente = {
+    openaiKey: process.env.OPENAI_API_KEY, anthropicKey: process.env.ANTHROPIC_API_KEY,
+    geminiKey: process.env.GEMINI_API_KEY, groqKey: process.env.GROQ_API_KEY,
+    elevenlabsKey: process.env.ELEVENLABS_API_KEY,
+    openaiModel: process.env.OPENAI_MODEL, anthropicModel: process.env.ANTHROPIC_MODEL,
+    geminiModel: process.env.GEMINI_MODEL,
+  };
+  const prese = Object.entries(daAmbiente).filter(([, v]) => v);
+  for (const [k, v] of prese) aiKeys[k] = v;
+  if (prese.some(([k]) => k.endsWith('Key'))) {
+    if (log) log(`Chiavi API dall'ambiente: ${prese.filter(([k]) => k.endsWith('Key')).map(([k]) => k.replace('Key', '')).join(', ')}`);
     return aiKeys;
-  } catch (e) {
-    if (log) log('Supabase unreachable: ' + e.message + ' — loading from local config...');
   }
 
   // STRATEGY 2: Local config file (keys.json)
