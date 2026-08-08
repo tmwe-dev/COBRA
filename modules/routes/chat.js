@@ -9,6 +9,8 @@ const { descriviCriterio } = require('../collega/incarico');
 const { analizzaRisposta, rispostaOnesta, analizzaResa } = require('../security/fabrication-guard');
 // L'unica porta per dire "fatto": vale per il turno di chat come per un job.
 const { decidi: decidiCompletamento } = require('../collega/completamento');
+// Il Supervisore: guarda il lavoro su disco e dice se va ripreso. Codice, non AI.
+const supervisore = require('../collega/ripresa');
 
 // Quello che è già sul tavolo, da mettere davanti al modello a ogni ripresa.
 //
@@ -109,6 +111,42 @@ function register(router, ctx) {
       const conv = ctx.conversationEngine.getOrCreateActive('Chat');
       ctx.conversationEngine.addMessage(conv.id, 'user', message);
       const chatMem = ctx.conversationEngine.chatMemories.get(conv.id);
+
+      // 3-bis. IL SUPERVISORE — c'e' un lavoro rimasto a meta'?
+      //
+      // Adesso il lavoro sopravvive al turno. Ma sopravvivere non basta:
+      // finora la ripresa dipendeva da Luca, che doveva riscrivere la
+      // richiesta — e riscrivendola otteneva un incarico nuovo, un piano
+      // nuovo, e un modello che ricominciava. Il lavoro c'era su disco e non
+      // lo guardava nessuno.
+      //
+      // Questo controllo e' deterministico: nessun modello viene interpellato.
+      // Un supervisore che chiedesse a un'AI se il lavoro e' finito avrebbe lo
+      // stesso difetto che stiamo curando — direbbe di si'.
+      //
+      // Va PRIMA del Collega, perche' se il lavoro va ripreso non c'e' niente
+      // da reinterpretare: l'obiettivo e i criteri sono gia' stabiliti, e
+      // rifarli da zero e' esattamente il danno.
+      let _ripresa = null;
+      try {
+        const _aperto = ctx._archivioCantieri.riapriLavoro(null);
+        if (_aperto.cantiere || _aperto.processo) {
+          const s = supervisore.guarda(_aperto, message);
+          if (s.riprendere) {
+            _ripresa = s;
+            ctx.session.cantiere = _aperto.cantiere || ctx.session.cantiere;
+            ctx.session.processo = _aperto.processo || ctx.session.processo;
+            ctx.log(`[Supervisore] Riprendo il lavoro aperto — ${s.perche}`);
+            ctx.emitReasoning(`Riprendo il lavoro di prima invece di ricominciare: ${s.verdetto.perche}`, '↩️');
+          } else if (_aperto.obiettivo) {
+            ctx.log(`[Supervisore] Lavoro aperto lasciato dov'e': ${s.perche}`);
+          }
+        }
+      } catch (e) {
+        // Se la ripresa non riesce si lavora come prima: perdere la ripresa
+        // costa un giro, farla male costa il lavoro.
+        ctx.log(`[Supervisore] Ripresa saltata (${e.message}): procedo normalmente`);
+      }
 
       // 4. SuperMario pipeline — route intent
       let routing = ctx.SuperMario.routeIntent(message);
@@ -510,6 +548,15 @@ function register(router, ctx) {
       // e cosa NON fare. E' il contratto fra i due, e dice apertamente che a
       // verificare i criteri sara' il codice.
       if (incaricoCorrente) systemPrompt += '\n\n' + incaricoCorrente.perIlPrompt();
+
+      // Il foglio della ripresa va in cima a tutto il resto: e' la prima cosa
+      // che deve leggere chi riprende, e contiene la riga che conta —
+      // "NON RICOMINCIARE DA CAPO". Senza, il modello vede un obiettivo e una
+      // lista di cose mancanti e rifa' il lavoro dall'inizio.
+      if (_ripresa && _ripresa.pacchetto) {
+        systemPrompt += '\n\n' + _ripresa.pacchetto;
+        ctx.log(`[Supervisore] Pacchetto di ripresa nel prompt (${_ripresa.pacchetto.length} caratteri)`);
+      }
       // Quello che l'esperienza ha gia' insegnato sulle fonti entra nel
       // prompt: non si riscopre a spese del tempo di Luca.
       if (ctx.registroFonti) {
