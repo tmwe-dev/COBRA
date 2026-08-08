@@ -42,10 +42,13 @@ const TOOL_SCOPES = {
   chat: [],
   search: ['google_search', 'navigate', 'read_page', 'scrape_url', 'batch_scrape', 'read_table',
            'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato', 'annota', 'stato_lavoro', 'scrivi_raccolta', 'leggi_manuale'],
-  browse: ['navigate', 'read_page', 'screenshot', 'scroll_page', 'get_page_elements', 'get_page_snapshot', 'read_table',
+  browse: ['cosa_so_del_sito', 'annota_sul_sito', 'usa_procedura', 'elenco_procedure',
+           'navigate', 'read_page', 'screenshot', 'scroll_page', 'get_page_elements', 'get_page_snapshot', 'read_table',
            'detect_block', 'verify_action', 'wait_network_idle', 'request_human_takeover',
            'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato', 'annota', 'stato_lavoro', 'scrivi_raccolta', 'leggi_manuale'],
-  interact: ['accedi', 'siti_con_accesso', 'navigate', 'click_element', 'fill_form', 'inspect_dom_js', 'mutate_dom_js', 'scroll_page', 'screenshot', 'get_page_elements', 'get_page_snapshot', 'read_page',
+  interact: ['cosa_so_del_sito', 'annota_sul_sito', 'impara_procedura', 'usa_procedura',
+             'guarda_pagina', 'agisci',
+             'accedi', 'siti_con_accesso', 'navigate', 'click_element', 'fill_form', 'inspect_dom_js', 'mutate_dom_js', 'scroll_page', 'screenshot', 'get_page_elements', 'get_page_snapshot', 'read_page',
              'hover_element', 'drag_drop', 'upload_file', 'switch_tab', 'wait_for', 'select_option', 'press_key',
              'type_human', 'key_combo', 'select_dropdown', 'set_datepicker', 'clipboard_write',
              'detect_block', 'verify_action', 'wait_network_idle', 'request_human_takeover',
@@ -107,6 +110,7 @@ const TOOL_SCOPES = {
                  // guardare e agire su una pagina qualsiasi: la strada generale
                  'navigate', 'get_page_snapshot', 'get_page_elements', 'read_page',
                  'guarda_pagina', 'agisci',
+                 'cosa_so_del_sito', 'annota_sul_sito', 'usa_procedura', 'impara_procedura',
                  'screenshot', 'leggi_modulo', 'fill_form', 'click_element',
                  'type_human', 'select_option', 'press_key', 'scroll_page', 'wait_for',
                  // leggere va bene da qualunque strada: non fa uscire niente

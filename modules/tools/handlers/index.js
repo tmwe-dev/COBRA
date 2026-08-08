@@ -7,6 +7,7 @@ const readScrape = require('./read-scrape');
 const dom = require('./dom');
 const interaction = require('./interaction');
 const sguardo = require('./sguardo');
+const esperienza = require('./esperienza');
 const browserControl = require('./browser-control');
 const bridgeTools = require('./bridge-tools');
 const data = require('./data');
@@ -27,6 +28,7 @@ const allHandlers = {
   ...dom,
   ...interaction,
   ...sguardo,
+  ...esperienza,
   ...browserControl,
   ...bridgeTools,
   ...data,

@@ -589,6 +589,37 @@ function register(router, ctx) {
       // verificare i criteri sara' il codice.
       if (incaricoCorrente) systemPrompt += '\n\n' + incaricoCorrente.perIlPrompt();
 
+      // ── Quello che si sa gia' del sito e del lavoro ──
+      //
+      // Non serve che il modello si ricordi di chiedere: se e' aperta una
+      // pagina di un sito su cui ci siamo gia' stati, o se la richiesta somiglia
+      // a una procedura imparata, glielo si mette davanti. Uno strumento che
+      // bisogna ricordarsi di chiamare viene chiamato meta' delle volte — e' la
+      // lezione di list_local_files, che in due giorni non e' stato usato mai.
+      try {
+        const { MemoriaSiti } = require('../memory/siti');
+        if (!ctx._memoriaSiti) ctx._memoriaSiti = new MemoriaSiti(ctx.dataDir);
+        const urlOra = ctx.session.lastPage?.url;
+        if (urlOra) {
+          const blocco = ctx._memoriaSiti.perIlPrompt(urlOra);
+          if (blocco) {
+            systemPrompt += '\n\n' + blocco;
+            ctx.log(`[MemoriaSiti] So gia' qualcosa di ${urlOra.slice(0, 40)}`);
+          }
+        }
+      } catch (e) { ctx.log(`[MemoriaSiti] saltata: ${e.message}`); }
+
+      try {
+        const { Procedure } = require('../memory/procedure');
+        if (!ctx._procedure) ctx._procedure = new Procedure(ctx.dataDir);
+        const blocco = ctx._procedure.perIlPrompt(
+          message + ' ' + (incaricoCorrente ? incaricoCorrente.obiettivo : ''));
+        if (blocco) {
+          systemPrompt += '\n\n' + blocco;
+          ctx.emitReasoning('Questa cosa l\'ho gia\' fatta: seguo la procedura invece di riscoprirla', '📖');
+        }
+      } catch (e) { ctx.log(`[Procedure] saltate: ${e.message}`); }
+
       // Il foglio della ripresa va in cima a tutto il resto: e' la prima cosa
       // che deve leggere chi riprende, e contiene la riga che conta —
       // "NON RICOMINCIARE DA CAPO". Senza, il modello vede un obiettivo e una
