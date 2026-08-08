@@ -52,7 +52,12 @@ function ctxFinto(risposte = {}) {
     const r = JSON.parse(await handlers.run_task({ task_id: 't1' }, ctx));
     ok('uno strumento che dice ok:false non e un passo riuscito', r.ok === false);
     ok('e il job NON risulta completato', ctx._task.status !== 'completed', ctx._task.status);
-    ok('e il motivo dice quale passo', /read_page/.test(r.motivo || ''));
+    // Il dettaglio sta in `mancano`, dove il cancello mette una riga per cosa
+    // manca; `motivo` e' il riassunto. L'informazione che serve al modello per
+    // riprendere e' quella dettagliata.
+    ok('e dice quale passo e mancato',
+       JSON.stringify(r.mancano || []).includes('read_page') || /read_page/.test(r.motivo || ''));
+    ok('e gli dice di NON ricominciare da capo', /NON ricominciare/.test(r.cosaFare || ''));
   }
 
   sezione('run_task: una frase non e un lavoro');

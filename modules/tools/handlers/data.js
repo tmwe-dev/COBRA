@@ -253,8 +253,20 @@ async function runTask(args, ctx) {
     }
   }
 
+  // ── Il diritto di dire "fatto" non e' di questo file ──
+  //
+  // Qui c'era `task.status = 'completed'` scritto a mano. Adesso il verdetto
+  // lo emette il cancello, che e' l'unico posto autorizzato: cosi' un job, un
+  // turno di chat e un processo rispondono tutti alla stessa domanda nello
+  // stesso modo, invece di averne tre versioni che divergono.
+  const { decidi, STATI } = require('../../collega/completamento');
+  const verdetto = decidi({
+    passi: results,
+    files: (ctx.session && ctx.session.fileDelTurno) || [],
+    cantiere: ctx.session && ctx.session.cantiere,
+  });
+  const tutto = verdetto.stato === STATI.COMPLETO;
   const falliti = results.filter(r => !r.ok);
-  const tutto = falliti.length === 0;
 
   task.runs = (task.runs || 0) + 1;
   task.lastRun = new Date().toISOString();
@@ -271,9 +283,9 @@ async function runTask(args, ctx) {
     passiFalliti: falliti.length,
     // Il modello legge questa riga e la riferisce a Luca: deve dire la verita'
     // anche quando la verita' e' che meta' del lavoro non e' stata fatta.
-    motivo: tutto ? undefined
-      : `${falliti.length} passi su ${results.length} non sono riusciti: `
-        + falliti.map(f => `#${f.step} ${f.tool || '(nessuno strumento)'}`).join(', '),
+    motivo: tutto ? undefined : verdetto.perche,
+    mancano: tutto ? undefined : verdetto.mancano,
+    cosaFare: tutto ? undefined : verdetto.cosaFare,
     results,
   });
 }
