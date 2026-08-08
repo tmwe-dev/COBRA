@@ -250,8 +250,66 @@
   // cui esiste questo progetto: meglio non mandare che mandare a uno
   // sconosciuto.
 
+  // ── Con un NUMERO si va diritti alla chat ──
+  //
+  // L'8 agosto avevo chiuso questo comando, perche' delegava a
+  // sendWhatsAppMessage che sceglie la scheda con existingTabs[0] — la PRIMA
+  // scheda WhatsApp trovata, che puo' essere il codice QR o una chat diversa.
+  // Era giusto chiuderlo cosi' com'era.
+  //
+  // Ma accesso.js lo chiama ancora quando il destinatario e' un NUMERO, e per
+  // ore mandare un messaggio a un numero e' stato rotto senza che nessuno se
+  // ne accorgesse: nessun test esegue il service worker. E' lo stesso difetto
+  // che ho passato la giornata a curare, fatto da me.
+  //
+  // Con un numero non c'e' ambiguita' possibile: /send?phone= apre QUELLA
+  // chat, e non serve verificare chi c'e' perche' il numero E' l'identita'.
+  // Quindi la strada resta, ma passa da Pagine — che la scheda se la prepara
+  // da sola invece di prendere la prima che trova.
   comandi['whatsapp_scrivi'] = async function (args) {
-        return { ok: false, motivo: 'strada dismessa: usa whatsapp_rispondi (verifica il destinatario)' };
+    const numero = String(args.a || args.numero || '').replace(/[^0-9+]/g, '').replace(/^\+/, '');
+    const testo = String(args.testo || '');
+    if (!numero || numero.length < 7) {
+      return { ok: false, motivo: 'con un nome si passa da whatsapp_rispondi, che verifica il destinatario' };
+    }
+    if (!testo) return { ok: false, motivo: 'serve il testo' };
+
+    const vai = `https://web.whatsapp.com/send?phone=${numero}&text=${encodeURIComponent(testo)}`;
+    const _p = await globalThis.Pagine.preparaPagina('whatsapp_chat', { vai });
+    if (!_p.ok) return _p;
+    const viva = _p.scheda;
+
+    if (globalThis.Ritmo) await globalThis.Ritmo.primaDiScrivere();
+    await new Promise(r => setTimeout(r, 2500));
+
+    const inviato = await chrome.scripting.executeScript({
+      target: { tabId: viva.id },
+      func: async () => {
+        const attendi = (ms) => new Promise(r => setTimeout(r, ms));
+        const siVede = (el) => {
+          try {
+            const r = el.getBoundingClientRect();
+            if (r.width < 2 || r.height < 2) return false;
+            const st = getComputedStyle(el);
+            return st.display !== 'none' && st.visibility !== 'hidden' && Number(st.opacity) !== 0;
+          } catch (_) { return false; }
+        };
+        const nomeDi = (el) => (el.getAttribute('aria-label') || el.innerText || '').trim();
+        // Il pulsante si cerca per significato, non per classe: le classi di
+        // WhatsApp cambiano a ogni rilascio.
+        const cerca = () => [...document.querySelectorAll('button, [role="button"]')]
+          .filter(siVede).find(b => /^(invia|send)\b/i.test(nomeDi(b)));
+        let b = cerca();
+        for (let i = 0; i < 10 && !b; i++) { await attendi(700); b = cerca(); }
+        if (!b) return { ok: false, motivo: 'la chat non si e\' aperta: non trovo il pulsante Invia' };
+        b.click();
+        await attendi(1500);
+        return { ok: true };
+      },
+    });
+    const e = inviato?.[0]?.result;
+    if (!e || !e.ok) return e || { ok: false, motivo: 'la pagina non ha risposto' };
+    return { ok: true, a: numero, conNumero: true };
   };
 
   comandi['whatsapp_diagnosi'] = async function (args) {

@@ -118,7 +118,6 @@ const COBRA_TOOLS = [
   // LinkedIn
   { type:'function', function:{ name:'linkedin_search', description:'Cerca profili LinkedIn. Solo lettura, nessuna azione. Opera in background via estensione.', parameters:{ type:'object', properties:{ query:{ type:'string' } }, required:['query'] } } },
   { type:'function', function:{ name:'linkedin_profile', description:'Estrae dati profilo LinkedIn dato URL. Solo lettura, nessuna azione.', parameters:{ type:'object', properties:{ url:{ type:'string' } }, required:['url'] } } },
-  { type:'function', function:{ name:'linkedin_send_message', description:'INVIA DAVVERO messaggio LinkedIn. Richiede conferma utente. Azione irreversibile.', parameters:{ type:'object', properties:{ url:{ type:'string' }, message:{ type:'string' } }, required:['url','message'] } } },
   // ── Guardare, e poi agire su cio' che si e' visto ──
   //
   // Questi due sostituiscono l'abitudine di inventare selettori CSS. Il modello
@@ -140,7 +139,6 @@ const COBRA_TOOLS = [
   { type:'function', function:{ name:'linkedin_inbox', description:'Legge inbox LinkedIn: conversazioni recenti.', parameters:{ type:'object', properties:{}, required:[] } } },
   { type:'function', function:{ name:'linkedin_read_thread', description:'Apre una conversazione LinkedIn e ne legge i messaggi VERI, con chi ha scritto e quando. Serve il NOME della persona come compare nella messaggistica (es. "Samuel Chen"): la messaggistica di LinkedIn non espone gli indirizzi dei profili, quindi non cercarli e non chiederli. Usalo ogni volta che devi riferire cosa qualcuno ha scritto: linkedin_inbox da\' solo l\'anteprima tagliata. Se il nome corrisponde a piu\' conversazioni si ferma e ti elenca i candidati. Aprire una conversazione la segna come letta.', parameters:{ type:'object', properties:{ nome:{ type:'string', description:'Il nome della persona come compare nella tua messaggistica LinkedIn' }, quanti:{ type:'number', description:'Quanti messaggi leggere, dal piu\' recente (30 se non dici niente)' } }, required:['nome'] } } },
   // WhatsApp
-  { type:'function', function:{ name:'whatsapp_send', description:'INVIA DAVVERO messaggio WhatsApp. Richiede conferma utente. Azione irreversibile.', parameters:{ type:'object', properties:{ phone:{ type:'string' }, text:{ type:'string' } }, required:['phone','text'] } } },
   { type:'function', function:{ name:'whatsapp_unread', description:'Legge messaggi WhatsApp non letti.', parameters:{ type:'object', properties:{}, required:[] } } },
   { type:'function', function:{ name:'whatsapp_read_thread', description:'Apre una chat WhatsApp e ne legge i messaggi. Serve il NOME del contatto come compare nell\'elenco chat. Usalo per riferire cosa qualcuno ha scritto: whatsapp_unread da\' solo l\'anteprima. Aprire una chat la segna come letta.', parameters:{ type:'object', properties:{ contact:{ type:'string', description:'Il nome del contatto come compare nell\'elenco chat' }, maxMessages:{ type:'number', description:'Quanti messaggi leggere (50 se non dici niente)' } }, required:['contact'] } } },
   // Legacy fallback

@@ -167,6 +167,34 @@ console.log('\n── Un ponte solo verso il browser ──');
   }
 }
 
+// ── 6. Ogni comando che il server chiede esiste davvero dall'altra parte ──
+//
+// Il 9 agosto ho chiuso `whatsapp_scrivi` nell'estensione — giustamente,
+// delegava a sendWhatsAppMessage che prende la PRIMA scheda WhatsApp trovata.
+// Ma accesso.js lo chiama ancora quando il destinatario e' un NUMERO, e per
+// ore mandare un messaggio a un numero e' stato rotto senza che nessuno se ne
+// accorgesse: nessun test esegue il service worker.
+//
+// E' lo stesso difetto della giornata — una strada chiusa e un chiamante che
+// non lo sa — fatto da me mentre lo curavo. Questo controllo lo prende.
+{
+  const { doveStaIlComando } = require('./_estensione');
+  const chiesti = new Set();
+  for (const f of fs.readdirSync(CARTELLA).filter(x => x.endsWith('.js'))) {
+    const testo = fs.readFileSync(path.join(CARTELLA, f), 'utf8');
+    for (const m of testo.matchAll(/bridgeCommand\(\s*'([a-z_0-9]+)'/g)) chiesti.add(m[1]);
+  }
+  const morti = [...chiesti].filter(c => {
+    const dove = doveStaIlComando(c);
+    if (!dove) return false;   // gia' coperto dalla prova 3
+    const src = fs.readFileSync(path.join(__dirname, '..', 'cobra-extension', dove), 'utf8');
+    const corpo = require('./_estensione').corpoDelComando(src, c) || '';
+    return /strada dismessa|comando rimosso|non piu' disponibile/i.test(corpo);
+  });
+  ok('nessun comando chiesto e una strada chiusa', morti.length === 0,
+    'il server li chiama ma sono chiusi: ' + morti.join(', '));
+}
+
 console.log(`\n╔══════════════════════════════════════════╗`);
 console.log(`║  UN PONTE SOLO: ${pass} PASS, ${fail} FAIL`);
 console.log(`╚══════════════════════════════════════════╝`);

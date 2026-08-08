@@ -23,7 +23,10 @@ const RUNTIME_CONTRACT = {
   bannedToolPatterns: ['delete_task'],
   writeTools: ['save_to_kb', 'kb_update', 'kb_delete', 'create_file', 'crea_report', 'save_local_file', 'save_memory', 'create_task',
                'prepare_email_draft', 'prepare_whatsapp_message', 'prepare_linkedin_message', 'scrivi_raccolta'],
-  sendTools: ['send_email', 'open_whatsapp', 'open_linkedin', 'linkedin_send_message', 'linkedin_connect', 'whatsapp_send'],
+  // whatsapp_send e linkedin_send_message non ci sono piu': erano la seconda
+  // strada senza regole, e il 7 agosto sono usciti sette messaggi da li'. Un
+  // nome in meno e' meglio di un nome piu' chiaro.
+  sendTools: ['send_email', 'open_whatsapp', 'open_linkedin', 'linkedin_connect'],
   destructiveTools: ['delete_task'],
   readTools: ['processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato',
               'navigate', 'google_search', 'read_page', 'scrape_url', 'screenshot', 'get_page_elements', 'get_page_snapshot',
@@ -36,6 +39,55 @@ const RUNTIME_CONTRACT = {
                   'type_human', 'key_combo', 'select_dropdown', 'set_datepicker', 'clipboard_write', 'request_human_takeover'],
   executeTools: ['run_task'],
 };
+
+// ── UN LAVORO, UNO STRUMENTO ──
+//
+// Prima di questa tabella l'ambito `interact` consegnava 41 strumenti e
+// `communicate` 40, su 85. Dentro c'erano SETTE modi di scrivere in un campo e
+// CINQUE di guardare la pagina.
+//
+// Non e' ricchezza: e' il modo in cui il modello sceglie quello sbagliato. E'
+// gia' successo — il 7 agosto, per rispondere a un messaggio LinkedIn, ha
+// avuto in mano ventisei strumenti e si e' messo a cercare profili, perche'
+// linkedin_search era l'unica cosa che gli restava dopo il primo fallimento.
+//
+// Qui si dichiara, per ogni lavoro, QUALE strumento vince e perche'. I gemelli
+// non spariscono dal codice: restano nell'ambito 'full' e nei flussi interni.
+// Ma al modello, per un lavoro normale, ne arriva uno.
+//
+// La scelta segue una regola sola: vince quello che nomina le cose per
+// SIGNIFICATO invece che per selettore CSS. Un selettore inventato non da'
+// errore — da' zero elementi trovati e un modulo che parte vuoto.
+const GEMELLI = {
+  'guardare la pagina': {
+    vince: 'guarda_pagina',
+    perche: 'restituisce E1..En con ruolo e nome: il modello sceglie fra cose che esistono',
+    perdono: ['get_page_snapshot', 'get_page_elements'],
+  },
+  'cliccare': {
+    vince: 'agisci',
+    perche: 'agisce su un elemento gia\' visto, e manda la sequenza del puntatore',
+    perdono: ['click_element'],
+  },
+  'scrivere in un campo': {
+    vince: 'fill_form',
+    perche: 'pretende che il modulo sia stato letto, e rilegge il campo dopo averlo scritto',
+    perdono: ['type_human', 'select_option', 'key_combo'],
+  },
+  'eseguire javascript': {
+    vince: 'inspect_dom_js',
+    perche: 'sola lettura; mutate_dom_js resta per l\'ambito full',
+    perdono: ['mutate_dom_js'],
+  },
+};
+
+/** Gli strumenti che perdono il confronto: fuori dagli ambiti normali. */
+const _PERDENTI = new Set(Object.values(GEMELLI).flatMap(g => g.perdono));
+
+/** Toglie i gemelli perdenti da un elenco, senza toccare 'full'. */
+function unoPerLavoro(elenco) {
+  return elenco.filter(t => !_PERDENTI.has(t));
+}
 
 // ── TOOL SCOPE — sottoinsiemi per intent ──
 const TOOL_SCOPES = {
@@ -127,6 +179,19 @@ const TOOL_SCOPES = {
                  'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato'],
   full: null, // all tools
 };
+
+// ── La riduzione, applicata ──
+//
+// Si fa QUI e non a mano dentro gli elenchi, perche' a mano si dimentica: gli
+// elenchi si toccano spesso e un gemello rientrerebbe senza che nessuno se ne
+// accorga. Cosi' invece la regola e' una sola e vale per tutti.
+//
+// 'full' resta intatto: e' l'ambito che serve quando si vuole tutto, e i
+// gemelli continuano a esistere per i flussi interni.
+for (const [nome, elenco] of Object.entries(TOOL_SCOPES)) {
+  if (nome === 'full' || !Array.isArray(elenco)) continue;
+  TOOL_SCOPES[nome] = unoPerLavoro(elenco);
+}
 
 // ── TOOL RISK REGISTRY ──
 const TOOL_RISK = {};
@@ -920,6 +985,7 @@ function complete(assemblyResult, response, model, promptTokens, completionToken
 }
 
 module.exports = {
+  GEMELLI, unoPerLavoro,
   // Esportato perche' tests/test-strumenti-raggiungibili.js lo controlla: uno
   // strumento fuori da tutti gli ambiti e' codice che nessuno chiamera' mai.
   TOOL_SCOPES,

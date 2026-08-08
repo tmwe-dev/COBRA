@@ -51,7 +51,15 @@ console.log('\n── La catena completa: handler → schema → rischio → amb
 {
   const senza = conHandler.filter(n => !schemi.includes(n));
   // Alcuni sono alias interni voluti, non strumenti che il modello chiama.
-  const ammessi = ['web_search', 'execute_js', 'read_inbox', 'send_whatsapp', 'send_linkedin'];
+  // Alcuni sono alias interni voluti, non strumenti che il modello chiama.
+  //
+  // whatsapp_send e linkedin_send_message sono stati tolti dagli SCHEMI il
+  // 9 agosto: erano la seconda strada senza regole, quella da cui il 7 agosto
+  // sono usciti sette messaggi fuori conteggio. L'handler resta (risponde
+  // "strada dismessa" a chi lo chiamasse dall'interno) ma il modello non lo
+  // vede piu': un nome in meno e' meglio di un nome piu' chiaro.
+  const ammessi = ['web_search', 'execute_js', 'read_inbox', 'send_whatsapp', 'send_linkedin',
+                   'whatsapp_send', 'linkedin_send_message'];
   const veri = senza.filter(n => !ammessi.includes(n));
   ok(`tutti i ${conHandler.length} handler hanno uno schema`, veri.length === 0,
     'senza schema: ' + veri.join(', '));
@@ -93,7 +101,21 @@ console.log('\n── La catena completa: handler → schema → rischio → amb
   // Una protezione che si puo' aggirare senza saperlo non e' una protezione.
   // Questi restano nel codice per i flussi interni e per l'ambito 'full', ma
   // fuori da 'communicate' non ci arriva piu' nessuno.
+  // ── I gemelli che perdono il confronto ──
+  //
+  // Non si elencano a mano: il motivo lo dichiara GEMELLI in supermario.js, e
+  // quello e' anche il posto che li toglie. Ricopiarli qui sarebbe una seconda
+  // fonte della stessa regola — la malattia dell'8 agosto in un file di prove.
+  const { GEMELLI } = require('../modules/supermario');
+  const GEMELLI_PERDENTI = {};
+  for (const [lavoro, g] of Object.entries(GEMELLI)) {
+    for (const t of g.perdono) {
+      GEMELLI_PERDENTI[t] = `per "${lavoro}" vince ${g.vince}: ${g.perche}`;
+    }
+  }
+
   const TOLTI_APPOSTA = {
+    ...GEMELLI_PERDENTI,
     whatsapp_send: 'sostituito da whatsapp_scrivi: quello ha regole e verifica del destinatario',
     linkedin_send_message: 'sostituito da linkedin_scrivi',
     open_whatsapp: 'apriva solo la pagina, non scrive',
