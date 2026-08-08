@@ -27,7 +27,24 @@ function ok(nome, cond, dettaglio = '') {
 }
 function sezione(t) { console.log(`\n\x1b[1m-- ${t} --\x1b[0m`); }
 
-const P = promptIncarico();
+
+// ── Cosa il Collega puo' RAGGIUNGERE, non solo cosa ha sempre davanti ──
+//
+// Il 6 agosto il prompt del Collega e' passato da 16.570 a 3.563 caratteri:
+// identita', voce, il conto fra chiedere e sprecare, il contratto JSON. Il
+// resto — metodo, criteri, esempi — sta nei manuali di collega/manuali, che
+// si aprono quando servono.
+//
+// Le regole esistono ancora e sono raggiungibili: i controlli guardano
+// l'insieme, perche' e' quello il sapere del Collega.
+function _tuttoIlSapere() {
+  const P = require('../modules/collega/prompt');
+  return [P.promptIncarico(), P.promptValutazione()]
+    .concat(P.elencoManuali().map(n => P.manuale(n)))
+    .join('\n\n');
+}
+
+const P = _tuttoIlSapere();
 const muto = () => {};
 
 console.log('\n=== L ALGORITMO: CAPIRE, VERIFICARE, GIUDICARE, CAMBIARE STRADA ===');

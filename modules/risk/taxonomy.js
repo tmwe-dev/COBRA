@@ -63,6 +63,36 @@ const TOOL_RISK_TAXONOMY = {
   whatsapp_send:         { level:'send', confirm:true, batchable:false, ttl:300, truth:'Invia WhatsApp.' },
   whatsapp_unread:       { level:'read', confirm:false, batchable:true, truth:'Legge WhatsApp non letti.' },
   whatsapp_read_thread:  { level:'read', confirm:false, batchable:true, truth:'Legge thread WhatsApp.' },
+  // ── Gli strumenti aggiunti il 6 agosto 2026 ──
+  //
+  // Erano finiti nel valore predefinito "sconosciuto → distruttivo", e il risultato e' che
+  // COBRA chiedeva il permesso a Luca per PRENDERE UN APPUNTO. Il lavoro si
+  // fermava a ogni annotazione: nel log si legge "BLOCKED scrivi_raccolta
+  // (risk=destructive)" mentre stava solo scrivendo un foglio di calcolo.
+  //
+  // Una svista mia: avevo dichiarato il rischio in supermario.js, che e' un
+  // altro elenco. La classificazione che comanda e' questa.
+  // Entrare in un sistema chiuso e' un'azione vera e va tracciata, ma non e'
+  // distruttiva: si legge, non si cancella. La password non passa mai dal
+  // modello, e le credenziali sono legate al dominio.
+  accedi:          { level:'interact', confirm:false, batchable:false, ttl:null, truth:'Entra in un sito con le credenziali salvate da Luca.' },
+  // Scrivere a una persona non si annulla. Ma NON chiede conferma qui: chi
+  // decide se si puo' mandare e' modules/security/regole-invio.js, che guarda
+  // orario, limiti, pause e destinatario. Mettere anche una conferma
+  // significherebbe chiedere a Luca di riapprovare cose che le regole hanno
+  // gia' valutato meglio di quanto possa fare lui a colpo d'occhio.
+  whatsapp_scrivi: { level:'send', confirm:false, batchable:false, ttl:null, truth:'Manda un messaggio WhatsApp, se le regole anti-blocco lo permettono.' },
+  linkedin_scrivi: { level:'send', confirm:false, batchable:false, ttl:null, truth:'Manda un messaggio LinkedIn, se le regole lo permettono.' },
+  conto_invii:     { level:'read', confirm:false, batchable:true, ttl:null, truth:'Quanti messaggi sono partiti oggi.' },
+  siti_con_accesso:{ level:'read', confirm:false, batchable:true, ttl:null, truth:'Elenca i siti con accesso salvato.' },
+
+  annota:          { level:'read', confirm:false, batchable:true, ttl:null, truth:'Prende un appunto sul lavoro in corso.' },
+  stato_lavoro:    { level:'read', confirm:false, batchable:true, ttl:null, truth:'Rilegge gli appunti presi.' },
+  leggi_modulo:    { level:'read', confirm:false, batchable:true, ttl:null, truth:'Guarda i campi di un modulo.' },
+  leggi_manuale:   { level:'read', confirm:false, batchable:true, ttl:null, truth:'Rilegge le proprie istruzioni.' },
+  scrivi_raccolta: { level:'write_local', confirm:false, batchable:false, ttl:null, truth:'Scrive un file con quello che ha raccolto.' },
+  compila_campo:   { level:'interact', confirm:false, batchable:false, ttl:null, truth:'Scrive in un campo di un modulo.' },
+
   kb_delete:       { level:'destructive', confirm:true, batchable:false, ttl:60, truth:'Cancella entry KB.' },
   delete_task:     { level:'destructive', confirm:true, batchable:false, ttl:60, truth:'Cancella job.' },
   create_task:     { level:'write_local', confirm:false, batchable:true, truth:'Crea job.' },

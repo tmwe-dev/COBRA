@@ -21,6 +21,28 @@ function register(router, ctx) {
       // dichiara, valgono le impostazioni di sempre.
       const vociNote = ctx.session.vociDisponibili || null;
       let voiceId = ctx.aiKeys.elevenlabsVoiceId || COBRA_DEFAULTS.ELEVENLABS_VOICE_ID;
+
+      // ── L'agente scelto nel menu in alto ──
+      //
+      // Mancava, ed era il motivo per cui scegliere COBRA ES non cambiava
+      // niente: il menu scriveva la scelta in ctx._agenteScelto e l'unico a
+      // rileggerla era l'endpoint che la ristampava. Voce e lingua restavano
+      // quelle di sempre. Avevo costruito il selettore e non l'avevo collegato
+      // a nulla.
+      //
+      // Sta prima della voce esplicita: se chi scrive la frase dichiara una
+      // voce, quella vince: e' una scelta piu' vicina al singolo messaggio.
+      if (ctx._agenteScelto) {
+        try {
+          const { quello } = require('../config/agenti');
+          const ag = quello(ctx._agenteScelto);
+          if (ag) {
+            if (ag.voce) voiceId = ag.voce;
+            if (ag.lingua && !richiesta.lingua) richiesta.lingua = ag.lingua;
+          }
+        } catch (_) { /* senza elenco agenti si resta sulla voce predefinita */ }
+      }
+
       if (richiesta.voce && /^[A-Za-z0-9]{8,40}$/.test(String(richiesta.voce))) {
         // Se conosciamo l'elenco delle voci dell'account, si accetta solo una
         // di quelle: un identificativo inventato produrrebbe un errore HTTP

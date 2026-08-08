@@ -88,6 +88,60 @@
       color: var(--text2);
       font-weight: 400;
     }
+    .agente-scelta {
+      display: flex; align-items: center; gap: 6px; margin-left: 8px;
+      padding: 4px 9px; border-radius: 8px; cursor: pointer; font-size: 12px;
+      background: var(--glass); border: 1px solid var(--glass-border);
+      color: var(--text2); transition: all .2s; position: relative; user-select: none;
+    }
+    .agente-scelta:hover { border-color: var(--lilac); color: var(--text); }
+    .agente-scelta .freccia { font-size: 9px; opacity: .6; }
+    .agente-elenco {
+      display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 60;
+      min-width: 300px; padding: 6px; border-radius: 12px;
+      background: var(--bg2, #16161f); border: 1px solid var(--glass-border);
+      box-shadow: 0 12px 32px rgba(0,0,0,.45);
+    }
+    .agente-scelta.aperto .agente-elenco { display: block; }
+    .agente-voce {
+      display: flex; gap: 9px; padding: 9px 10px; border-radius: 9px;
+      cursor: pointer; align-items: flex-start; transition: background .15s;
+    }
+    .agente-voce:hover { background: var(--glass); }
+    .agente-voce.attuale { background: rgba(167,139,250,.14); }
+    .agente-voce .bandiera { font-size: 17px; line-height: 1.2; }
+    .agente-voce .testi { flex: 1; min-width: 0; }
+    .agente-voce .nome { font-size: 12px; font-weight: 600; color: var(--text); }
+    .agente-voce .carattere { font-size: 11px; color: var(--text2); line-height: 1.45; margin-top: 2px; }
+    .agente-voce .quando { font-size: 10.5px; color: var(--text2); opacity: .7; margin-top: 3px; font-style: italic; }
+    /* Un agente che aspetta ancora due clic su ElevenLabs va detto, non
+       nascosto: sceglierlo senza saperlo significa sentirlo parlare nella
+       lingua sbagliata e non capire perche'. */
+    .agente-voce .manca {
+      font-size: 10.5px; color: #f59e0b; margin-top: 4px;
+      display: flex; gap: 4px; align-items: flex-start;
+    }
+
+    .canali { display: flex; gap: 6px; align-items: center; margin-left: 4px; }
+    .canale {
+      width: 26px; height: 26px; border-radius: 7px;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--glass); border: 1px solid var(--glass-border);
+      transition: all .35s ease; cursor: default; position: relative;
+    }
+    .canale svg { width: 15px; height: 15px; fill: var(--text2); opacity: .45; transition: all .35s ease; }
+    /* Spento: grigio, scolorito. Acceso: il colore vero del servizio, e un
+       alone tenue che si vede anche senza guardare direttamente. */
+    .canale.acceso { border-color: transparent; }
+    .canale.acceso svg { opacity: 1; }
+    #canaleWa.acceso { background: rgba(37,211,102,.16); box-shadow: 0 0 0 1px rgba(37,211,102,.35); }
+    #canaleWa.acceso svg { fill: #25D366; }
+    #canaleLi.acceso { background: rgba(10,102,194,.18); box-shadow: 0 0 0 1px rgba(10,102,194,.4); }
+    #canaleLi.acceso svg { fill: #4aa3ec; }
+    /* In attesa: la scheda c'è ma non si è dentro (QR, login, caricamento). */
+    .canale.attesa { border-color: rgba(245,158,11,.45); }
+    .canale.attesa svg { fill: #f59e0b; opacity: .8; }
+
     .topbar .dot {
       width: 7px; height: 7px;
       border-radius: 50%;
@@ -1050,6 +1104,20 @@
         <span class="bridge-icon">🔌</span>
         <span class="bridge-label" id="bridgeLabel">Extension: offline</span>
       </div>
+      <div class="canali" id="canali">
+        <div class="canale" id="canaleWa" title="WhatsApp">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2 22l5.25-1.38a9.9 9.9 0 0 0 4.79 1.22h.01c5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.82 9.82 0 0 0 12.04 2zm0 18.15h-.01a8.2 8.2 0 0 1-4.19-1.15l-.3-.18-3.12.82.83-3.04-.2-.31a8.19 8.19 0 0 1-1.26-4.38c0-4.54 3.7-8.23 8.25-8.23a8.2 8.2 0 0 1 8.24 8.24c0 4.54-3.7 8.23-8.24 8.23zm4.52-6.16c-.25-.12-1.47-.72-1.69-.81-.23-.08-.39-.12-.56.13-.16.24-.64.8-.78.97-.14.16-.29.18-.54.06-.25-.12-1.05-.39-1.99-1.23-.74-.66-1.23-1.47-1.38-1.72-.14-.25-.01-.38.11-.5.11-.11.25-.29.37-.43.13-.15.17-.25.25-.41.08-.17.04-.31-.02-.43-.06-.12-.56-1.34-.76-1.84-.2-.48-.4-.42-.56-.43h-.48c-.16 0-.43.06-.65.31-.22.25-.85.83-.85 2.03s.87 2.35.99 2.51c.12.16 1.71 2.61 4.14 3.66.58.25 1.03.4 1.38.51.58.19 1.11.16 1.53.1.47-.07 1.47-.6 1.67-1.18.21-.58.21-1.07.15-1.18-.06-.11-.22-.17-.47-.29z"/></svg>
+        </div>
+        <div class="canale" id="canaleLi" title="LinkedIn">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14zM8.34 18.34V9.94H5.55v8.4h2.79zM6.94 8.79a1.62 1.62 0 1 0 0-3.24 1.62 1.62 0 0 0 0 3.24zm11.4 9.55v-4.6c0-2.45-1.31-3.59-3.06-3.59-1.41 0-2.04.78-2.39 1.32v-1.13H10.1c.04.79 0 8.4 0 8.4h2.79v-4.69c0-.25.02-.5.09-.68.2-.5.66-1.02 1.42-1.02 1 0 1.4.76 1.4 1.88v4.51h2.79z"/></svg>
+        </div>
+      </div>
+      <div class="agente-scelta" id="agenteScelta" title="Con chi stai parlando">
+        <span id="agenteBandiera">🇮🇹</span>
+        <span id="agenteNome">COBRA</span>
+        <span class="freccia">▾</span>
+        <div class="agente-elenco" id="agenteElenco"></div>
+      </div>
       <button class="config-btn" onclick="toggleConfig()" title="Configura API Keys">&#x2699;</button>
 
       <div class="url-bar">
@@ -1210,6 +1278,40 @@
         <div class="btn-row">
           <button class="btn-save" id="btnMailSetup" onclick="setupMail()">Collega casella</button>
         </div>
+      </div>
+
+      <div style="margin-top:22px;padding-top:18px;border-top:1px solid var(--glass-border)">
+        <h3 style="margin-bottom:6px">&#x1F511; Accessi ai sistemi chiusi</h3>
+        <div style="font-size:11px;color:var(--text2);margin-bottom:10px;line-height:1.5">
+          I siti dove serve entrare per lavorare. La password viene cifrata sul tuo
+          computer e <b>non passa mai dal modello</b>: COBRA chiede di entrare su un
+          dominio, il codice compila i campi.
+        </div>
+
+        <div id="accessiPronti" style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px"></div>
+
+        <div style="font-size:11px;color:var(--text2);margin-bottom:12px;line-height:1.5;
+                    padding:8px 10px;background:var(--glass);border-radius:8px">
+          <b>WhatsApp non sta qui</b>, e non e un errore: WhatsApp Web non ha
+          utente e password, si aggancia al telefono. Aprilo una volta in questo
+          Chrome e inquadra il QR &mdash; da li in poi COBRA lavora sulla sessione
+          che resta aperta, senza bisogno di credenziali.
+        </div>
+
+        <label>Indirizzo della pagina di accesso</label>
+        <input type="text" id="accUrl" placeholder="https://www.ups.com/lasso/login">
+        <label>Utente</label>
+        <input type="text" id="accUtente" placeholder="nome@azienda.it o codice cliente" autocomplete="off">
+        <label>Password</label>
+        <input type="password" id="accPassword" placeholder="password" autocomplete="new-password">
+        <label>Nota (a cosa serve)</label>
+        <input type="text" id="accNote" placeholder="fatture e tracking">
+        <div class="status-msg" id="accStatus" style="line-height:1.5"></div>
+        <div class="btn-row">
+          <button class="btn-save" onclick="salvaAccesso()">Aggiungi accesso</button>
+        </div>
+
+        <div id="accElenco" style="margin-top:14px;font-size:11px"></div>
       </div>
     </div>
   </div>
@@ -1711,7 +1813,13 @@
       const id = msg.id;
       const riskColors = { destructive:'#ef4444', send:'#f59e0b', send_prepare:'#fb923c', write_kb:'#a78bfa' };
       const color = riskColors[msg.risk] || '#f59e0b';
-      addBubble('system', `⏳ Azione in attesa di conferma:\n\n${msg.summary}\n\nRischio: ${msg.risk.toUpperCase()}`);
+      // Si mostra la spiegazione in italiano, non il nome tecnico e il JSON:
+      // chi legge deve poter DECIDERE, non indovinare.
+      const titolo = msg.titolo || `Azione in attesa: ${msg.tool || ''}`;
+      const righe = [`⏳ ${titolo}`];
+      if (msg.dettaglio) righe.push('', msg.dettaglio);
+      if (msg.perche) righe.push('', `Perché te lo chiedo: ${msg.perche}`);
+      addBubble('system', righe.join('\n'));
 
       // Create inline widget in chat
       const widget = document.createElement('div');
@@ -2296,7 +2404,12 @@
     }
 
     // ── Config ──
-    function toggleConfig() { document.getElementById('configOverlay').classList.toggle('open'); }
+    function toggleConfig() {
+      const o = document.getElementById('configOverlay');
+      o.classList.toggle('open');
+      // Gli accessi si leggono solo quando il pannello si apre davvero.
+      if (o.classList.contains('open')) { disegnaAccessiPronti(); caricaAccessi(); }
+    }
 
     // ── Pagine consultate ──
     // Ogni pagina che COBRA ha aperto diventa un collegamento: da lì l'utente
@@ -2514,6 +2627,211 @@
         document.getElementById('cfgStatus').textContent = 'Errore: ' + e.message;
         document.getElementById('cfgStatus').style.color = 'var(--red)';
       }
+    }
+
+    // ── Con chi stai parlando ──
+    //
+    // Quattro teste, un cervello solo. Cambiare agente cambia lingua, voce e
+    // carattere — non cambia chi decide: tutti chiamano lo stesso COBRA che
+    // gira su questo computer.
+    let _agenti = [], _agenteScelto = null;
+
+    async function caricaAgenti() {
+      try {
+        const d = await fetch('/api/agenti').then(r => r.json());
+        _agenti = d.agenti || [];
+        _agenteScelto = d.scelto || (_agenti.find(a => a.predefinito) || _agenti[0] || {}).id;
+        disegnaAgenti();
+      } catch (_) { /* pannello aperto senza server */ }
+    }
+
+    function disegnaAgenti() {
+      const box = document.getElementById('agenteElenco');
+      const attuale = _agenti.find(a => a.id === _agenteScelto) || _agenti[0];
+      if (!attuale) return;
+      document.getElementById('agenteBandiera').textContent = attuale.bandiera;
+      document.getElementById('agenteNome').textContent = attuale.nome;
+
+      box.innerHTML = _agenti.map(a => `
+        <div class="agente-voce ${a.id === _agenteScelto ? 'attuale' : ''}" data-id="${a.id}">
+          <span class="bandiera">${a.bandiera}</span>
+          <div class="testi">
+            <div class="nome">${a.nome} <span style="font-weight:400;opacity:.6">· ${a.nomeVoce}</span></div>
+            <div class="carattere">${a.carattere}</div>
+            <div class="quando">${a.quandoUsarlo}</div>
+            ${a.daSistemare ? `<div class="manca">⚠ <span>${a.daSistemare}</span></div>` : ''}
+          </div>
+        </div>`).join('');
+
+      box.querySelectorAll('.agente-voce').forEach(el => {
+        el.onclick = async (e) => {
+          e.stopPropagation();
+          const id = el.dataset.id;
+          _agenteScelto = id;
+          document.getElementById('agenteScelta').classList.remove('aperto');
+          disegnaAgenti();
+          try {
+            await fetch('/api/agenti/scegli', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id }),
+            });
+          } catch (_) { /* la scelta resta comunque visibile */ }
+        };
+      });
+    }
+
+    document.getElementById('agenteScelta').addEventListener('click', (e) => {
+      e.stopPropagation();
+      document.getElementById('agenteScelta').classList.toggle('aperto');
+    });
+    document.addEventListener('click', () => {
+      document.getElementById('agenteScelta').classList.remove('aperto');
+    });
+    caricaAgenti();
+
+    // ── I badge di WhatsApp e LinkedIn ──
+    //
+    // Si chiede ogni trenta secondi, e la richiesta e' PASSIVA: non tocca le
+    // pagine, non inietta niente, non manda una sola richiesta a WhatsApp o
+    // LinkedIn. Legge solo cose che Chrome ha gia' in casa — l'elenco delle
+    // schede, il cookie di sessione di LinkedIn — piu' la memoria dell'ultimo
+    // lavoro vero.
+    //
+    // La prima versione leggeva il DOM ogni venti secondi. Nessuna richiesta di
+    // rete, ma comunque uno script iniettato di continuo in una pagina che non
+    // lo aveva chiesto, per accendere una spia. Su una cosa decorativa il costo
+    // giusto e' zero.
+    //
+    // Tre stati, non due: spento (nessuna scheda), in attesa (la scheda c'e'
+    // ma non si e' dentro: QR, accesso, caricamento), acceso. La distinzione
+    // conta, perche' "non c'e' la scheda" e "c'e' ma devi entrare tu" chiedono
+    // due cose diverse a Luca.
+    async function aggiornaCanali() {
+      let dati;
+      try { dati = await fetch('/api/canali').then(r => r.json()); }
+      catch (_) { return; }
+
+      const dipingi = (id, stato, nome) => {
+        const el = document.getElementById(id);
+        if (!el || !stato) return;
+        el.classList.toggle('acceso', !!stato.connesso);
+        el.classList.toggle('attesa', !stato.connesso && !!stato.scheda);
+        // Il titolo dice anche COME lo sa e quanto e' vecchia l'informazione.
+        // Un badge che afferma "collegato" senza dire da quando afferma piu'
+        // di quello che sa.
+        const parti = [];
+        parti.push(stato.connesso ? `${nome}: collegato` : `${nome}: ${stato.perche || 'non collegato'}`);
+        if (stato.nonLetti) parti.push(`${stato.nonLetti} non letti`);
+        if (stato.ultimoLavoro) parti.push(`ultimo lavoro ${stato.ultimoLavoro}`);
+        if (stato.come) parti.push(stato.come);
+        el.title = parti.join(' · ');
+      };
+      dipingi('canaleWa', dati.whatsapp, 'WhatsApp');
+      dipingi('canaleLi', dati.linkedin, 'LinkedIn');
+    }
+    aggiornaCanali();
+    setInterval(aggiornaCanali, 30000);
+
+    // ── Accessi ai sistemi chiusi ──
+    //
+    // I sette che servono davvero, con l'indirizzo giusto della pagina di
+    // accesso: quello sbagliato e' il primo motivo per cui un accesso
+    // automatico non riesce.
+    const ACCESSI_PRONTI = [
+      { nome: 'DHL',      url: 'https://mydhl.express.dhl/it/it/auth/login.html', note: 'spedizioni, tracking, fatture' },
+      { nome: 'UPS',      url: 'https://www.ups.com/lasso/login?loc=it_IT',       note: 'spedizioni, fatture, resi' },
+      { nome: 'TNT',      url: 'https://www.tnt.it/login.html',                   note: 'spedizioni e fatture' },
+      { nome: 'FedEx',    url: 'https://www.fedex.com/login/web/jsp/login.jsp',   note: 'spedizioni e fatture' },
+      { nome: 'LinkedIn', url: 'https://www.linkedin.com/login',                  note: 'aziende, contatti, persone' },
+      // Questi due indirizzi vengono dal Navigator, dove funzionano gia'.
+      { nome: 'Report aziende', url: 'https://ecommerce2.reportaziende.it/login3/', note: 'visure, bilanci, prospect' },
+      { nome: 'WCA',      url: 'https://www.wcaworld.com/Account/Login',          note: 'directory soci e blacklist' },
+    ];
+
+    function disegnaAccessiPronti() {
+      const box = document.getElementById('accessiPronti');
+      if (!box) return;
+      box.innerHTML = '';
+      for (const a of ACCESSI_PRONTI) {
+        const b = document.createElement('button');
+        b.className = 'btn-cancel';
+        b.style.cssText = 'padding:5px 11px;font-size:11px';
+        b.textContent = a.nome;
+        b.onclick = () => {
+          document.getElementById('accUrl').value = a.url;
+          document.getElementById('accNote').value = a.note;
+          document.getElementById('accUtente').focus();
+          const s = document.getElementById('accStatus');
+          s.style.color = 'var(--text2)';
+          s.textContent = a.url ? '' : 'Metti tu l\'indirizzo della banca dati che usi.';
+        };
+        box.appendChild(b);
+      }
+    }
+
+    async function caricaAccessi() {
+      try {
+        const d = await fetch('/api/accessi').then(r => r.json());
+        const box = document.getElementById('accElenco');
+        if (!box) return;
+        if (!d.configurato) {
+          box.innerHTML = '<div style="color:var(--red);line-height:1.5">' + (d.nota || '') + '</div>';
+          return;
+        }
+        if (!d.accessi.length) { box.innerHTML = '<div style="color:var(--text2)">Nessun accesso ancora.</div>'; return; }
+        box.innerHTML = d.accessi.map(a =>
+          '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--glass-border)">'
+          + '<span style="flex:1"><b>' + a.dominio + '</b> &middot; ' + a.utente
+          + (a.note ? ' <span style="color:var(--text2)">(' + a.note + ')</span>' : '')
+          + (a.usata ? ' <span style="color:var(--text2)">&mdash; usato ' + a.usata + ' volte</span>' : '')
+          + '</span>'
+          + '<button class="btn-cancel" style="padding:3px 9px;font-size:11px" '
+          + 'onclick="togliAccesso(\'' + a.dominio + '\')">Togli</button></div>'
+        ).join('');
+      } catch (_) { /* pannello chiuso o server fermo */ }
+    }
+
+    async function salvaAccesso() {
+      const s = document.getElementById('accStatus');
+      const dati = {
+        url: document.getElementById('accUrl').value.trim(),
+        utente: document.getElementById('accUtente').value.trim(),
+        password: document.getElementById('accPassword').value,
+        note: document.getElementById('accNote').value.trim(),
+      };
+      if (!dati.url || !dati.utente || !dati.password) {
+        s.style.color = 'var(--red)';
+        s.textContent = 'Servono indirizzo, utente e password.';
+        return;
+      }
+      try {
+        const r = await fetch('/api/accessi', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dati),
+        }).then(x => x.json());
+        if (r.ok) {
+          s.style.color = 'var(--green)';
+          s.textContent = 'Salvato: ' + r.dominio + '. La password e cifrata sul disco.';
+          // Il campo si svuota subito: non resta a schermo.
+          document.getElementById('accPassword').value = '';
+          document.getElementById('accUtente').value = '';
+          document.getElementById('accUrl').value = '';
+          document.getElementById('accNote').value = '';
+          caricaAccessi();
+        } else {
+          s.style.color = 'var(--red)';
+          s.textContent = r.motivo || 'Non salvato.';
+        }
+      } catch (e) {
+        s.style.color = 'var(--red)';
+        s.textContent = 'Errore: ' + e.message;
+      }
+    }
+
+    async function togliAccesso(dominio) {
+      await fetch('/api/accessi/togli', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dominio }),
+      });
+      caricaAccessi();
     }
 
     // ── Export ──
@@ -2826,13 +3144,14 @@
             }
             window.addEventListener('message', onExtResponse);
 
-            // Timeout 25s
+            // Quanto aspettare lo dice il server (msg.timeoutMs); 25s se tace.
+            const _attesa = Number(msg.timeoutMs) > 0 ? Number(msg.timeoutMs) : 25000;
             _extTimeout = setTimeout(() => {
               window.removeEventListener('message', onExtResponse);
               if (ws && ws.readyState === 1) {
-                ws.send(JSON.stringify({ type: 'ext_result', requestId: reqId, channel, response: { success: false, error: 'Extension timeout (25s)', errorCode: 'TIMEOUT' } }));
+                ws.send(JSON.stringify({ type: 'ext_result', requestId: reqId, channel, response: { success: false, error: 'Extension timeout (' + Math.round(_attesa/1000) + 's)', errorCode: 'TIMEOUT' } }));
               }
-            }, 25000);
+            }, _attesa);
 
             // Invia il postMessage all'estensione
             const payload = { direction, action: msg.action, requestId: reqId };

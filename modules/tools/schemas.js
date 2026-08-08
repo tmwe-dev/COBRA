@@ -12,6 +12,12 @@ const COBRA_TOOLS = [
   { type:'function', function:{ name:'inspect_dom_js', description:'Esegue JavaScript in MODALITÀ LETTURA nella pagina. NO fetch, NO submit, NO click.', parameters:{ type:'object', properties:{ code:{ type:'string', description:'Codice JavaScript read-only' } }, required:['code'] } } },
   { type:'function', function:{ name:'mutate_dom_js', description:'Esegue JavaScript che MODIFICA DOM/form/stato. RICHIEDE CONFERMA.', parameters:{ type:'object', properties:{ code:{ type:'string', description:'Codice JavaScript mutativo' } }, required:['code'] } } },
   { type:'function', function:{ name:'click_element', description:'Clicca su un elemento. Supporta selettore CSS o testo con prefisso text:.', parameters:{ type:'object', properties:{ selector:{ type:'string', description:'Selettore CSS o "text:testo visibile"' } }, required:['selector'] } } },
+  { type: 'function', function: { name: 'leggi_modulo',
+    description: 'Guarda com\'e fatto un modulo PRIMA di compilarlo: elenco dei campi con etichetta, tipo, '
+      + 'se sono obbligatori, il valore che hanno adesso, e per gli elenchi a tendina quali opzioni esistono. '
+      + 'Usalo sempre prima di fill_form su un modulo che non conosci: senza, i selettori sono indovinati e '
+      + 'un elenco a tendina non si compila quasi mai al primo colpo.',
+    parameters: { type: 'object', properties: {} } } },
   { type:'function', function:{ name:'fill_form', description:'Compila campi di un form. Supporta input, textarea, select, checkbox, radio.', parameters:{ type:'object', properties:{ fields:{ type:'string', description:'JSON {"selettore_CSS": "valore"}' } }, required:['fields'] } } },
   { type:'function', function:{ name:'get_page_elements', description:'Mappa degli elementi interattivi sulla pagina. CHIAMALO SEMPRE prima di interagire.', parameters:{ type:'object', properties:{ filter:{ type:'string', description:'buttons, links, inputs, forms, all' } }, required:[] } } },
   { type:'function', function:{ name:'screenshot', description:'Cattura screenshot della pagina corrente. USALO SPESSO per verificare.', parameters:{ type:'object', properties:{}, required:[] } } },
@@ -25,6 +31,73 @@ const COBRA_TOOLS = [
   { type:'function', function:{ name:'list_tasks', description:'Elenca tutti i job salvati.', parameters:{ type:'object', properties:{}, required:[] } } },
   { type:'function', function:{ name:'delete_task', description:'Elimina un job salvato.', parameters:{ type:'object', properties:{ task_id:{ type:'number' } }, required:['task_id'] } } },
   { type:'function', function:{ name:'save_memory', description:'Salva un ricordo/nota nella memoria persistente.', parameters:{ type:'object', properties:{ title:{ type:'string' }, content:{ type:'string' }, tags:{ type:'string' } }, required:['title','content'] } } },
+  { type: 'function', function: { name: 'leggi_manuale',
+    description: 'Apre uno dei manuali elencati nell\'indice: ricerca, navigazione, raccolta, processi, voce. '
+      + 'Usalo quando stai per fare una cosa e vuoi le regole precise invece di andare a memoria.',
+    parameters: { type: 'object', properties: {
+      nome: { type: 'string', description: 'Il nome del manuale, es. ricerca' },
+    }, required: ['nome'] } } },
+  { type: 'function', function: { name: 'whatsapp_scrivi',
+    description: 'Manda un messaggio WhatsApp. Le regole che evitano di far bloccare il numero '
+      + '(orari, limiti, pause, mai due volte alla stessa persona, mai a chi non ti conosce) le '
+      + 'applica il programma, non tu: se ti blocca ti dice quale regola e\' definitivo, '
+      + 'non insistere e riferiscilo a Luca. Prima di mandare verifico anche CHI e\': se il nome '
+      + 'corrisponde a piu\' contatti mi fermo e chiedo.',
+    parameters: { type: 'object', properties: {
+      a: { type: 'string', description: 'Numero, oppure nome del contatto. Il numero e\' sempre piu\' sicuro.' },
+      testo: { type: 'string', description: 'Il messaggio' },
+      conosciuto: { type: 'boolean', description: 'true SOLO se questa persona ha gia\' scritto a Luca o e\' in rubrica. Su WhatsApp scrivere per primi a uno sconosciuto fa sospendere il numero: in dubbio lascia false.' },
+      confermato: { type: 'boolean', description: 'true SOLO dopo che LUCA ti ha detto quale persona e\'. Mai di tua iniziativa: serve a saltare la verifica del destinatario.' },
+    }, required: ['a', 'testo'] } } },
+  { type: 'function', function: { name: 'linkedin_scrivi',
+    description: 'Manda un messaggio LinkedIn a un profilo. Serve l\'indirizzo (linkedin.com/in/...) '
+      + 'e un testo sotto i 300 caratteri. I limiti (50 al giorno, 3 all\'ora, 9-19 nei feriali, pause) '
+      + 'li applica il programma.',
+    parameters: { type: 'object', properties: {
+      url: { type: 'string', description: 'Il NOME della persona come compare nella tua messaggistica (es. "Samuel Chen"), oppure l\'indirizzo del profilo se ce l\'hai. Il nome basta: la messaggistica di LinkedIn non espone i profili, quindi non cercarli.' },
+      testo: { type: 'string', description: 'Il messaggio, massimo 300 caratteri' },
+      confermato: { type: 'boolean', description: 'true SOLO dopo che LUCA ti ha detto quale persona e\'. Mai di tua iniziativa.' },
+    }, required: ['url', 'testo'] } } },
+  { type: 'function', function: { name: 'conto_invii',
+    description: 'Quanti messaggi sono partiti oggi e quanto manca al limite. Usalo prima di '
+      + 'promettere a Luca una serie di invii.',
+    parameters: { type: 'object', properties: {} } } },
+  { type: 'function', function: { name: 'accedi',
+    description: 'Entra in un sito che richiede l\'accesso (portali corrieri, banche dati, gestionali). '
+      + 'Usalo quando una pagina ti chiede di autenticarti. NON ti serve sapere la password: la gestisce il '
+      + 'sistema, tu dici solo su quale sito entrare. Se per quel sito non c\'e un accesso salvato te lo dico, '
+      + 'e allora riferiscilo a Luca invece di provare a indovinare.',
+    parameters: { type: 'object', properties: {
+      sito: { type: 'string', description: 'Il sito, es. ups.com' },
+    }, required: ['sito'] } } },
+  { type: 'function', function: { name: 'siti_con_accesso',
+    description: 'Su quali sistemi chiusi puoi entrare. Usalo se non sai se hai le chiavi di un portale.',
+    parameters: { type: 'object', properties: {} } } },
+  { type: 'function', function: { name: 'annota',
+    description: 'Posa sul tavolo una cosa che hai appena trovato, PRIMA di passare alla successiva. '
+      + 'Serve per i lavori su piu soggetti (aziende, voli, hotel, fornitori, articoli): quello che annoti '
+      + 'resta anche se il lavoro si interrompe o riparte, quello che tieni solo in testa si perde. '
+      + 'Chiamandolo due volte sullo stesso nome NON crei un doppione: completi la voce che c\'e gia, '
+      + 'che e il caso normale (il nome lo trovi sull\'elenco, la email sul sito).',
+    parameters: { type: 'object', properties: {
+      nome: { type: 'string', description: 'Il soggetto: nome azienda, compagnia aerea, hotel, titolo articolo' },
+      // Dichiarato come testo e non come oggetto libero: un "object" senza
+      // properties viene rifiutato da Gemini, e lo strumento sparirebbe per
+      // uno dei tre fornitori senza che nessuno se ne accorga. Il gestore
+      // accetta entrambe le forme, quindi non si perde niente.
+      campi: { type: 'string', description: 'I dati trovati, in JSON. Es: {"citta":"Milano","email":"info@x.it","sito":"https://x.it"}' },
+      fonte: { type: 'string', description: 'La pagina da cui viene il dato' },
+    }, required: ['nome', 'campi'] } } },
+  { type: 'function', function: { name: 'scrivi_raccolta',
+    description: 'Scrive il file (xlsx o csv) prendendo i dati da quello che hai annotato, non da quello '
+      + 'che ricordi. Usalo al posto di create_file quando hai raccolto piu soggetti con annota: cosi il '
+      + 'file contiene TUTTE le voci, anche quelle trovate all\'inizio del lavoro.',
+    parameters: { type: 'object', properties: {
+      filename: { type: 'string', description: 'Nome del file, es. aziende_packaging.xlsx' },
+    }, required: ['filename'] } } },
+  { type: 'function', function: { name: 'stato_lavoro',
+    description: 'Cosa hai gia raccolto e cosa manca ancora. Usalo se non ricordi a che punto sei.',
+    parameters: { type: 'object', properties: {} } } },
   { type:'function', function:{ name:'crea_report', description:'Crea il report impaginato (stile rivista, si salva in PDF dalla stampa). OBBLIGATORIO per ogni consegna finale di ricerche e confronti. La raccomandazione con il perche e ALMENO 2 risultati concreti sono richiesti dal codice.', parameters:{ type:'object', properties:{ filename:{ type:'string', description:'nome file senza estensione' }, spec:{ type:'string', description:'JSON: {titolo, sottotitolo, raccomandazione:{consiglio,perche}, sezioni:[{titolo, commento, carte:[{nome,dettaglio,prezzo,valuta,nota,link,migliore}], immagine:{src,didascalia}}]}' } }, required:['filename','spec'] } } },
   { type:'function', function:{ name:'batch_scrape', description:'Scrapea più URL in parallelo.', parameters:{ type:'object', properties:{ urls:{ type:'string', description:'JSON array di URL' } }, required:['urls'] } } },
   { type:'function', function:{ name:'list_local_files', description:'Elenca i file nella cartella connessa.', parameters:{ type:'object', properties:{ path:{ type:'string' }, pattern:{ type:'string' } }, required:[] } } },
@@ -46,13 +119,13 @@ const COBRA_TOOLS = [
   { type:'function', function:{ name:'linkedin_search', description:'Cerca profili LinkedIn. Solo lettura, nessuna azione. Opera in background via estensione.', parameters:{ type:'object', properties:{ query:{ type:'string' } }, required:['query'] } } },
   { type:'function', function:{ name:'linkedin_profile', description:'Estrae dati profilo LinkedIn dato URL. Solo lettura, nessuna azione.', parameters:{ type:'object', properties:{ url:{ type:'string' } }, required:['url'] } } },
   { type:'function', function:{ name:'linkedin_send_message', description:'INVIA DAVVERO messaggio LinkedIn. Richiede conferma utente. Azione irreversibile.', parameters:{ type:'object', properties:{ url:{ type:'string' }, message:{ type:'string' } }, required:['url','message'] } } },
-  { type:'function', function:{ name:'linkedin_connect', description:'INVIA DAVVERO richiesta collegamento LinkedIn. Richiede conferma utente. Azione irreversibile.', parameters:{ type:'object', properties:{ url:{ type:'string' }, note:{ type:'string' } }, required:['url'] } } },
+  { type:'function', function:{ name:'linkedin_connect', description:'Invia richiesta di collegamento LinkedIn, con nota facoltativa. CHIAMALO: se serve conferma la chiede il programma, fermando la chiamata e mostrando il riquadro a Luca. Non chiederla tu al posto suo e non annunciare che lo faresti: o lo chiami, o dici cosa ti manca.', parameters:{ type:'object', properties:{ url:{ type:'string' }, note:{ type:'string' } }, required:['url'] } } },
   { type:'function', function:{ name:'linkedin_inbox', description:'Legge inbox LinkedIn: conversazioni recenti.', parameters:{ type:'object', properties:{}, required:[] } } },
-  { type:'function', function:{ name:'linkedin_read_thread', description:'Legge messaggi di una conversazione LinkedIn.', parameters:{ type:'object', properties:{ threadUrl:{ type:'string' } }, required:['threadUrl'] } } },
+  { type:'function', function:{ name:'linkedin_read_thread', description:'Apre una conversazione LinkedIn e ne legge i messaggi VERI, con chi ha scritto e quando. Serve il NOME della persona come compare nella messaggistica (es. "Samuel Chen"): la messaggistica di LinkedIn non espone gli indirizzi dei profili, quindi non cercarli e non chiederli. Usalo ogni volta che devi riferire cosa qualcuno ha scritto: linkedin_inbox da\' solo l\'anteprima tagliata. Se il nome corrisponde a piu\' conversazioni si ferma e ti elenca i candidati. Aprire una conversazione la segna come letta.', parameters:{ type:'object', properties:{ nome:{ type:'string', description:'Il nome della persona come compare nella tua messaggistica LinkedIn' }, quanti:{ type:'number', description:'Quanti messaggi leggere, dal piu\' recente (30 se non dici niente)' } }, required:['nome'] } } },
   // WhatsApp
   { type:'function', function:{ name:'whatsapp_send', description:'INVIA DAVVERO messaggio WhatsApp. Richiede conferma utente. Azione irreversibile.', parameters:{ type:'object', properties:{ phone:{ type:'string' }, text:{ type:'string' } }, required:['phone','text'] } } },
   { type:'function', function:{ name:'whatsapp_unread', description:'Legge messaggi WhatsApp non letti.', parameters:{ type:'object', properties:{}, required:[] } } },
-  { type:'function', function:{ name:'whatsapp_read_thread', description:'Legge messaggi di una chat WhatsApp.', parameters:{ type:'object', properties:{ contact:{ type:'string' }, maxMessages:{ type:'number' } }, required:['contact'] } } },
+  { type:'function', function:{ name:'whatsapp_read_thread', description:'Apre una chat WhatsApp e ne legge i messaggi. Serve il NOME del contatto come compare nell\'elenco chat. Usalo per riferire cosa qualcuno ha scritto: whatsapp_unread da\' solo l\'anteprima. Aprire una chat la segna come letta.', parameters:{ type:'object', properties:{ contact:{ type:'string', description:'Il nome del contatto come compare nell\'elenco chat' }, maxMessages:{ type:'number', description:'Quanti messaggi leggere (50 se non dici niente)' } }, required:['contact'] } } },
   // Legacy fallback
   { type:'function', function:{ name:'open_whatsapp', description:'[FALLBACK] Apre WhatsApp Web con testo precompilato.', parameters:{ type:'object', properties:{ phone:{ type:'string' }, text:{ type:'string' } }, required:['phone','text'] } } },
   { type:'function', function:{ name:'prepare_whatsapp_message', description:'Prepara testo WhatsApp in memoria. Non invia.', parameters:{ type:'object', properties:{ phone:{ type:'string' }, text:{ type:'string' } }, required:['phone','text'] } } },

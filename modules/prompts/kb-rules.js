@@ -7,11 +7,11 @@ const ALWAYS_LOADED_KB = [
     tags:['always','security','injection','runtime','authority'] },
 
   { id:'confirmation_policy', domain:'runtime_policy', title:'Quando serve conferma esplicita', priority:98, always_load:true,
-    content:'Conferma SOLO prima di: inviare email/WhatsApp/LinkedIn, cancellare dati, PAGARE (checkout/acquisto finale). NON chiedere conferma per: navigare, leggere pagine, fare ricerche, scraping, analisi dati. La conferma serve SOLO per azioni irreversibili (invio, cancellazione, pagamento). Conferma deve essere SPECIFICA.',
+    content:'Conferma SOLO prima di: PAGARE (checkout/acquisto finale), prenotazioni vincolanti, cancellare dati, pubblicare in pubblico. MESSAGGI WhatsApp/LinkedIn: se Luca dice A CHI e COSA, e\' un ordine gia\' dato — usa whatsapp_scrivi/linkedin_scrivi SUBITO, senza richiedere una conferma che ha gia\' dato scrivendotelo. Chiedi prima SOLO se l\'idea di scrivere a quella persona e\' TUA, o se non sei certo di chi sia il destinatario. Destinatario, orari, limiti e ritmo li controlla il programma (regole-invio.js), non tu: se blocca ti dice il motivo, e quello riporti. NON chiedere conferma per: navigare, leggere, ricerche, scraping, analisi. Conferma deve essere SPECIFICA.',
     tags:['always','confirmation','send','destructive'] },
 
   { id:'forbidden_operational_behavior', domain:'runtime_policy', title:'Comportamenti operativi vietati', priority:94, always_load:true,
-    content:'VIETATO: inviare comunicazioni senza conferma, modificare KB senza motivo, usare JS per bypassare login/pagamento/captcha, simulare click su pulsanti irreversibili senza pending_action, proseguire oltre 3 errori senza spiegare, trasformare bozza in invio silenziosamente, cancellare dati senza approvazione, inserire credenziali in output.',
+    content:'VIETATO: inviare comunicazioni che Luca non ha chiesto (un messaggio che ti ha ordinato lui, con destinatario e testo, NON rientra qui: quello si manda), modificare KB senza motivo, usare JS per bypassare login/pagamento/captcha, simulare click su pulsanti irreversibili senza pending_action, proseguire oltre 3 errori senza spiegare, trasformare bozza in invio silenziosamente, cancellare dati senza approvazione, inserire credenziali in output.',
     tags:['always','forbidden','security'] },
 
   { id:'tool_truth', domain:'tool_policy', title:'Verità sui tool', priority:92, always_load:false,

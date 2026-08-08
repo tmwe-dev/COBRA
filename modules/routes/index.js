@@ -51,6 +51,7 @@ function setupRoutes(ctx) {
   require('./pending').register(router, ctx);
   require('./monitoring').register(router, ctx);
   require('./misc').register(router, ctx);
+  require('./consulta').register(router, ctx);
 
   return function handleRequest(req, res) {
     try {
@@ -65,7 +66,25 @@ function setupRoutes(ctx) {
 
     // Auth check on /api/
     const pathname = new URL(req.url, 'http://localhost').pathname;
-    if (pathname.startsWith('/api/') && !ctx.isAuthenticatedRequest(req)) {
+    // ── L'unica porta che si difende da sola ──
+    //
+    // Il controllo qui sotto lascia passare chi chiama da localhost senza
+    // origin — cioe' Luca, il suo browser, i suoi curl. Va benissimo per tutto
+    // il resto, ma /api/cobra-consulta deve poter rispondere ai server di
+    // ElevenLabs, che localhost non sono.
+    //
+    // Quindi quella rotta si esclude qui e si controlla da se', con un token
+    // suo (COBRA_VOCE_TOKEN) separato da quello di COBRA. Due motivi:
+    //
+    //   - se il tunnel va chiuso, si butta un token solo e il resto non si tocca
+    //   - da li' si puo' soltanto parlare, cioe' fare le stesse cose che Luca
+    //     farebbe scrivendo nel pannello: nessun altro comando e' raggiungibile
+    //
+    // Se COBRA_VOCE_TOKEN non e' nel .env, quella rotta risponde 503 a chiunque:
+    // finche' Luca non decide di aprire, non e' aperta.
+    const _laVoce = pathname.startsWith('/api/cobra-consulta');
+
+    if (pathname.startsWith('/api/') && !_laVoce && !ctx.isAuthenticatedRequest(req)) {
       ctx.log(`[Security] Unauthorized: ${req.method} ${pathname}`);
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Unauthorized. Provide X-Cobra-Token header.' }));
@@ -80,7 +99,7 @@ function setupRoutes(ctx) {
         let body = '', size = 0;
         req.on('data', chunk => { size += chunk.length; if (size > MAX_BODY_SIZE) { req.destroy(); return; } body += chunk; });
         req.on('end', () => {
-          try { handler(body, res, pathname); }
+          try { handler(body, res, pathname, req); }
           catch (e) {
             ctx.log(`[Route] Handler error: ${e.message}`);
             if (!res.headersSent) { res.writeHead(500, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ error: e.message })); }
@@ -91,7 +110,7 @@ function setupRoutes(ctx) {
           if (!res.headersSent) { res.writeHead(400); res.end('Bad request'); }
         });
       } else {
-        handler('', res, pathname);
+        handler('', res, pathname, req);
       }
       return;
     }

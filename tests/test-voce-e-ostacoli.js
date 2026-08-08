@@ -71,7 +71,12 @@ sezione('Il difetto che lasciava i banner a schermo');
   ok('il motivo resta scritto per chi legge domani', /position:fixed ha SEMPRE offsetParent nullo/.test(ext));
 
   // La regola vera, eseguita su un elemento fisso come quelli dei banner
-  const corpo = ext.match(/const siVede = \(el\) => \{[\s\S]*?\n          \};/)[0];
+  // L'estrazione si ferma sulla FINE della funzione, non su una certa
+  // indentazione: la regola vive in piu' punti dell'estensione (il risolutore
+  // degli elementi, il pulsante "Collegati", il riquadro della nota) e non
+  // tutti stanno annidati allo stesso livello. Legandosi agli spazi, la prova
+  // si portava dentro mezzo file e falliva per un motivo che non c'entrava.
+  const corpo = ext.match(/const siVede = \(el\) => \{[\s\S]*?catch \(_\) \{ return false; \}\s*\};/)[0];
   const siVede = new Function('getComputedStyle', corpo + ' return siVede;')(
     (el) => el._stile || { display: 'block', visibility: 'visible', opacity: '1' });
   const bottoneFisso = { offsetParent: null, getBoundingClientRect: () => ({ width: 90, height: 32 }) };

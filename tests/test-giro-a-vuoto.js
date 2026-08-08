@@ -32,13 +32,18 @@ console.log('\n=== IL TURNO CHE GIRAVA A VUOTO ===');
 
 sezione('Il modello lo decide il lavoro, non la lunghezza del messaggio');
 {
+  // La scelta del modello non sta piu' sparsa nel turno: e' una deduzione
+  // dell'ordine di lavoro, in un posto solo. Il rattoppo e' stato tolto
+  // apposta il 7 agosto, quando i sette comandanti sono diventati uno.
   const c = fs.readFileSync('modules/routes/chat.js', 'utf8');
-  ok('l incarico puo alzare il modello', /modelSelection\.tier = 'power'/.test(c));
-  ok('conta il numero di criteri', /criteri\.length >= 3/.test(c));
+  const cmd = fs.readFileSync('modules/collega/comando.js', 'utf8');
+  ok('l incarico decide il modello', /function modelloPer/.test(cmd));
+  ok('conta il numero di criteri', /criteri\.length >= 3/.test(cmd));
   ok('e conta anche il tipo di criterio impegnativo',
-     /'origine_verificabile', 'file_atteso', 'soggetti_coperti'/.test(c));
-  ok('la scelta viene spiegata nel log', /ma l'incarico chiede/.test(c));
-  ok('e il motivo resta scritto', /incarico con \$\{criteri\.length\} criteri/.test(c));
+     /'origine_verificabile', 'file_atteso', 'soggetti_coperti', 'campi_obbligatori'/.test(cmd));
+  ok('col motivo scritto', /NON si guarda la lunghezza del messaggio/.test(cmd));
+  ok('e il turno obbedisce invece di rattoppare',
+     /ctx\._ordineDiLavoro\s*\n?\s*\? \{ tier: ctx\._ordineDiLavoro\.tier/.test(c));
 
   // Il tier "standard" non è una via di mezzo: è lo stesso modello del "lite"
   const sm = fs.readFileSync('modules/supermario.js', 'utf8');

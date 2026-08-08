@@ -87,7 +87,41 @@ const dataDir = path.join(baseDir, 'data');
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
 const serverLogs = [];
-function log(msg) { const ts = new Date().toISOString(); const entry = `[${ts}] ${msg}`; console.log(entry); serverLogs.push(entry); if (serverLogs.length > 500) serverLogs.shift(); }
+
+// ── Scrivere un log non deve poter rompere il server ──
+//
+// Il 7 agosto crash.log pesava 3,1 GB: centinaia di migliaia di "Error: write
+// EIO", tutti identici, tutti nati qui.
+//
+// Succede quando il server sopravvive al Terminale che l'ha avviato — con
+// screen o nohup e' la norma. Il socket dello standard output muore, console.log
+// solleva EIO, l'eccezione risale, viene registrata come crash, e la
+// registrazione passa di nuovo da console.log. Un log che fallisce genera un
+// errore che si tenta di loggare, che fallisce. Nessuno se ne accorge finche'
+// non mancano tre giga sul disco.
+//
+// La cura e' banale e mancava: se la console non c'e' piu', si smette di
+// usarla. Il registro in memoria resta, e /api/log continua a funzionare.
+let _consoleMorta = false;
+function log(msg) {
+  const entry = `[${new Date().toISOString()}] ${msg}`;
+  serverLogs.push(entry);
+  if (serverLogs.length > 500) serverLogs.shift();
+  if (_consoleMorta) return;
+  try {
+    console.log(entry);
+  } catch (e) {
+    // EIO/EPIPE = chi ascoltava se n'e' andato. Da qui in poi si scrive solo
+    // in memoria. Non si prova a segnalarlo: segnalarlo vorrebbe dire
+    // scrivere sulla console, ed e' esattamente cio' che ha appena fallito.
+    if (e && (e.code === 'EIO' || e.code === 'EPIPE')) _consoleMorta = true;
+  }
+}
+
+// Stessa ragione: senza questi, un EPIPE sullo stdout diventa un'eccezione non
+// gestita e il processo muore quando chiudi il Terminale.
+process.stdout.on('error', (e) => { if (e && (e.code === 'EIO' || e.code === 'EPIPE')) _consoleMorta = true; });
+process.stderr.on('error', () => { _consoleMorta = true; });
 
 // ── Paywall domains persistent set ──
 const _paywallFile = path.join(dataDir, 'paywall_domains.json');
@@ -252,6 +286,7 @@ function auditPrompt(message, routing, marioResult) {
 registerHandlers(allHandlers);
 
 // ── Bridge command via WS server infrastructure ──
+const { attesaPer } = require('./bridge/connection');
 let _bridgeCmdId = 0;
 function _bridgeCmd(command, args = {}) {
   if (!wsModule.isBridgeReady()) throw new Error('Bridge not ready');
@@ -259,10 +294,16 @@ function _bridgeCmd(command, args = {}) {
   const pending = wsModule.getBridgePending();
   return new Promise((resolve, reject) => {
     const id = ++_bridgeCmdId;
+    // L'attesa dipende dal comando: vedi modules/bridge/connection.js.
+    // ATTENZIONE: questa e' la copia VIVA di bridgeCommand. Quella in
+    // bridge/connection.js esiste ma non viene usata da qui — il 7 agosto ho
+    // corretto solo quella e il timeout e' rimasto identico, facendo sembrare
+    // che la modifica non avesse effetto.
+    const quanto = attesaPer(command);
     const timeout = setTimeout(() => {
       pending.delete(id);
-      reject(new Error(`Bridge command timeout: ${command}`));
-    }, 15000);
+      reject(new Error(`Bridge command timeout: ${command} (dopo ${quanto / 1000}s)`));
+    }, quanto);
     pending.set(id, (result) => {
       clearTimeout(timeout);
       resolve(result);
@@ -320,7 +361,13 @@ function _extRelay(channel, action, args = {}, timeoutMs = 25000) {
       clearTimeout(timer);
       resolve(response || { success: false, error: 'Risposta vuota dall\'estensione' });
     });
-    wsModule.wsBroadcast({ type: 'ext_command', requestId, channel, action, args });
+    // Il tempo lo decide CHI CHIAMA, e va detto anche alla pagina: il ponte
+    // nel browser aveva 25 secondi fissi per qualunque comando, e
+    // sendConnectionRequest ne vuole di piu' — apre il profilo, attende il
+    // caricamento, cerca il pulsante, apre il riquadro della nota. L'8 agosto
+    // l'invito a Brandon Dvorak e' morto li' due volte: "Extension timeout
+    // (25s)", mentre il server aspettava paziente per altri cinque.
+    wsModule.wsBroadcast({ type: 'ext_command', requestId, channel, action, args, timeoutMs });
     log(`[ExtRelay] → ${channel}.${action} (${requestId})`);
   });
 }
@@ -439,9 +486,32 @@ const ctx = {
   persistTasks: _saveTasks,
   persistMemories: _saveMemories,
   // Extension relay result — risolve la promise di _extRelay
+  // CHI SI ARRENDE PER PRIMO NON DECIDE PER TUTTI
+  //
+  // Il comando va in broadcast a OGNI pagina collegata. Se ce n'e' piu' di
+  // una — una finestra dimenticata, COBRA.app, una scheda con la cache
+  // vecchia — ognuna fa partire il proprio conto alla rovescia, e la prima
+  // che scade manda "TIMEOUT". Quel messaggio chiudeva la pratica: la
+  // risposta vera, che stava arrivando, trovava la porta chiusa e finiva
+  // "orfana".
+  //
+  // L'8 agosto, invito a Brandon Dvorak: quattro tentativi, sempre "Extension
+  // timeout (25s)" anche dopo aver portato l'attesa a 90 secondi. Il risultato
+  // buono arrivava puntuale venti secondi dopo, ogni volta scartato. Avevo
+  // alzato il tempo alla pagina giusta mentre a rispondere era un'altra.
+  //
+  // Adesso il tempo lo tiene UNA sola sveglia, quella del server. La resa di
+  // un client e' un'opinione, non un fatto: si annota e si continua ad
+  // aspettare. Se non risponde nessuno, scatta il timer di _extRelay.
   handleExtResult(msg) {
     const cb = _extPending.get(msg.requestId);
     if (!cb) { log(`[ExtRelay] Risultato orfano per ${msg.requestId}`); return; }
+
+    if (msg.response && msg.response.errorCode === 'TIMEOUT') {
+      log(`[ExtRelay] Una pagina si e' arresa su ${msg.requestId}: aspetto le altre`);
+      return;
+    }
+
     _extPending.delete(msg.requestId);
     log(`[ExtRelay] ← ${msg.channel} (${msg.requestId})`);
     cb(msg.response);

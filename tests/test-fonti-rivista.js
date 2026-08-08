@@ -9,6 +9,7 @@ process.chdir(path.resolve(__dirname, '..'));
 
 const { RegistroFonti } = require('../modules/fonti/registro');
 const { componiRivista } = require('../modules/output/rivista');
+const manuali = require('../modules/prompts/manuali');
 
 let PASS = 0, FAIL = 0;
 function ok(nome, cond, dettaglio = '') {
@@ -148,9 +149,13 @@ sezione('Il collegamento c e davvero');
   ok('navigate alimenta il registro', /registroFonti\.registra/.test(nav));
   const chat = fs.readFileSync('modules/routes/chat.js', 'utf8');
   ok('il registro entra nel prompt', /registroFonti\.perIlPrompt/.test(chat));
-  const core = require('fs').readFileSync('modules/prompts/cobra-core.js', 'utf8');
-  ok('la ricognizione e la fase zero', /RICOGNIZIONE/.test(core));
-  ok('con la scelta esplicita fra insistere e accontentarsi', /accontentarti e proseguire/.test(core));
+  // Le regole di ricerca sono uscite dal prompt fisso e stanno nel manuale
+  // "ricerca": arriva quando si cerca, non su ogni singolo messaggio.
+  const ricerca = manuali.manuale('ricerca') || '';
+  ok('la ricognizione e la fase zero', /RICOGNIZIONE/.test(ricerca));
+  ok('con la scelta esplicita fra insistere e accontentarsi', /accontentarti e proseguire/.test(ricerca));
+  ok('e il manuale arriva a chi cerca',
+     manuali.pertinenti({ messaggio: 'cerca i voli', scopes: ['search'] }).some(m => m.nome === 'ricerca'));
 }
 
 

@@ -1,4 +1,5 @@
 const { fetchConLimite } = require('./fetch-con-limite');
+const { esitoRiuscito } = require('../utils/esito');
 // modules/ai/openai.js — OpenAI / Groq API provider
 // Source: server.js lines 7213-7298
 
@@ -44,7 +45,7 @@ async function callOpenAI(provider, key, model, systemPrompt, messages, tools, c
         try { args = JSON.parse(tc.function.arguments); } catch { /* malformed JSON from AI */ }
         wsBroadcast({ type: 'tool_start', tool: tc.function.name });
         const rawResult = await executeTool(tc.function.name, args);
-        const ok = !rawResult.includes('"error"');
+        const ok = esitoRiuscito(rawResult);
         const result = digestToolResult(tc.function.name, rawResult);
         wsBroadcast({ type: 'tool_done', tool: tc.function.name, ok });
         _toolsUsed.push({ name: tc.function.name, args, ok });

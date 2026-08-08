@@ -1,4 +1,5 @@
 const { fetchConLimite } = require('./fetch-con-limite');
+const { esitoRiuscito } = require('../utils/esito');
 // modules/ai/gemini.js — Google Gemini API provider
 // Source: server.js lines 7382-7452
 
@@ -45,7 +46,7 @@ async function callGemini(key, model, systemPrompt, messages, tools, ctx) {
         if (totalToolCalls > COBRA_DEFAULTS.MAX_TOTAL_TOOL_CALLS) return { text: 'Limite operazioni raggiunto.', toolsUsed: _toolsUsed };
         wsBroadcast({ type: 'tool_start', tool: fc.functionCall.name });
         const rawResult = await executeTool(fc.functionCall.name, fc.functionCall.args || {});
-        const ok = !rawResult.includes('"error"');
+        const ok = esitoRiuscito(rawResult);
         const result = digestToolResult(fc.functionCall.name, rawResult);
         wsBroadcast({ type: 'tool_done', tool: fc.functionCall.name, ok });
         _toolsUsed.push({ name: fc.functionCall.name, args: fc.functionCall.args || {}, ok });

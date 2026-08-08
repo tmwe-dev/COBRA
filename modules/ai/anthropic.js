@@ -1,4 +1,5 @@
 const { fetchConLimite } = require('./fetch-con-limite');
+const { esitoRiuscito } = require('../utils/esito');
 // modules/ai/anthropic.js — Anthropic Claude API provider
 // Source: server.js lines 7301-7379
 
@@ -43,7 +44,7 @@ async function callAnthropic(key, model, systemPrompt, messages, tools, ctx) {
         if (totalToolCalls > COBRA_DEFAULTS.MAX_TOTAL_TOOL_CALLS) return { text: 'Limite operazioni raggiunto.', toolsUsed: _toolsUsed };
         wsBroadcast({ type: 'tool_start', tool: tu.name });
         const rawResult = await executeTool(tu.name, tu.input || {});
-        const ok = !rawResult.includes('"error"');
+        const ok = esitoRiuscito(rawResult);
         const result = digestToolResult(tu.name, rawResult);
         wsBroadcast({ type: 'tool_done', tool: tu.name, ok });
         _toolsUsed.push({ name: tu.name, args: tu.input || {}, ok });

@@ -1,8 +1,25 @@
 // modules/routes/chat.js — /api/chat, /api/chat/abort, /api/chat/clear
 
 const { Collega } = require('../collega/collega');
+const { Cantiere } = require('../collega/cantiere');
+const { ArchivioCantieri } = require('../collega/cantiere-archivio');
+const { ordineDiLavoro, inChiaro } = require('../collega/comando');
+const { tiraLezioni } = require('../memory/tira-lezioni');
 const { descriviCriterio } = require('../collega/incarico');
 const { analizzaRisposta, rispostaOnesta, analizzaResa } = require('../security/fabrication-guard');
+
+// Quello che è già sul tavolo, da mettere davanti al modello a ogni ripresa.
+//
+// È il pezzo che fa la differenza fra insistere e ricominciare: senza, la
+// nota del Collega dice "manca questo" a qualcuno che non ricorda più cosa
+// aveva già fatto, e che quindi rifà tutto da capo. Con otto soggetti da
+// raccogliere, rifare da capo significa non arrivare mai in fondo.
+function _bloccoCantiere(ctx) {
+  const c = ctx.session && ctx.session.cantiere;
+  if (!c) return '';
+  const blocco = c.perIlPrompt();
+  return blocco ? '\n\n' + blocco : '';
+}
 
 function register(router, ctx) {
   // ── /api/chat — main chat endpoint ──
@@ -76,6 +93,14 @@ function register(router, ctx) {
       // "file atteso": senza questa traccia, un report creato risulterebbe assente.
       ctx.session.fileDelTurno = [];
       ctx.session.righeUltimoFile = null;
+      // Il cantiere NON si butta a fine turno: un lavoro da otto soggetti non
+      // sta in un turno, e ributtarlo ogni volta significa non finirlo mai.
+      // Si riapre quello lasciato a metà, se si sta ancora parlando della
+      // stessa cosa; altrimenti lo si chiude e se ne apre uno nuovo.
+      if (!ctx._archivioCantieri) ctx._archivioCantieri = new ArchivioCantieri(ctx.dataDir);
+      ctx._ordineDiLavoro = null;   // nasce dall'incarico, se ci sarà un incarico
+      ctx.session._letturePerLezioni = [];
+      ctx.session._ostacoliPerLezioni = [];
       ctx._navDomainCount = {};
 
       // 2-3. Conversation + ChatMemory
@@ -105,10 +130,39 @@ function register(router, ctx) {
 
       // Pre-routing: whitelist + booking downgrade
       if (!routing.continued && (opLevel === 'write' || opLevel === 'prepare') && routing.scopes.includes('browse')) {
-        if (/\b(prenota|book|reserv|bigliett|prenotazione|hotel|albergo|treno|traghett|noleggi|affit|volo|voli|flight|check.?in)\b/i.test(message.toLowerCase())) {
+        // ── Cercare non è prenotare ──
+        //
+        // Questa regola nasce giusta: impedire che una richiesta di viaggio
+        // finisca per premere "Conferma prenotazione". Ma guardava il DOMINIO
+        // invece dell'INTENZIONE: bastava la parola "volo" o "hotel" per
+        // togliere di mano gli strumenti di interazione.
+        //
+        // Verificato a schermo il 6 agosto. Richiesta: "compila il modulo di
+        // ricerca su Google Voli, da Milano a Tokyo". Nel log:
+        //   [SuperMario] Sola lettura: esclusi fill_form, type_human
+        // COBRA ha aperto Google Voli, non ha potuto scrivere una parola nei
+        // campi, e ha chiuso con 1 criterio su 6. Non per incapacità: gli era
+        // stato tolto lo strumento.
+        //
+        // Su qualunque ricerca di viaggio — che è metà del lavoro di Luca —
+        // il modulo di ricerca era inaccessibile per costruzione.
+        //
+        // Quindi si guarda cosa vuole fare, non di cosa parla: prenotare,
+        // acquistare, confermare, pagare. Il resto — cercare, confrontare,
+        // compilare un modulo di RICERCA — è lettura, e va lasciato lavorare.
+        // Le azioni davvero irreversibili restano protette dove devono
+        // stare: la classificazione del rischio e la conferma esplicita.
+        // Due trappole, trovate entrambe dal test:
+        //   - i prefissi vogliono \w* in coda, non \b: "acquist\b" non trova
+        //     "acquista", perché dopo "acquist" la parola continua. Lasciava
+        //     passare proprio il caso da fermare.
+        //   - ma \w* troppo largo pesca parole innocenti: "pag\w*" fermava
+        //     "paganesimo". Per il verbo pagare servono le forme vere.
+        const vuolePrenotare = /\b(prenot\w*|acquist\w*|compr[ao]\w*|pag(?:a|are|ato|ata|herò|hero|hi|hiamo)|pagament\w*|conferma l'?ordine|book now|purchase|checkout|check.?out|emett\w*|biglietteria)\b/i;
+        if (vuolePrenotare.test(message.toLowerCase())) {
           routing.operationLevel = 'read';
           routing.scopes = routing.scopes.filter(s => s !== 'interact');
-          ctx.emitReasoning('Richiesta booking → modalità lettura', '📖');
+          ctx.emitReasoning('Qui si parla di prenotare: mi fermo alla lettura', '📖');
         }
         const currentUrl = ctx.session.lastPage?.url;
         if (currentUrl && !ctx.isDomainWhitelisted(currentUrl)) {
@@ -157,6 +211,22 @@ function register(router, ctx) {
       // Se il Collega non e' disponibile o inciampa, si prosegue com'era:
       // questa parte puo' migliorare il lavoro, non deve poterlo impedire.
       let incaricoCorrente = null;
+
+      // ── Il diario: si apre qui, si chiude in fondo ──
+      //
+      // Una missione e' un LAVORO, non un turno. "Ciao" non e' una missione:
+      // se si registrasse ogni scambio si tornerebbe al response_log, che ha
+      // tutto ed e' illeggibile.
+      //
+      // Il diario esiste perche' Luca ha chiesto tre volte "si ricorda quando
+      // ha sbagliato?" e la risposta era no. Le quattro memorie che c'erano
+      // tenevano fatti sparsi, non lavori — e le "lezioni" erano cinque righe
+      // identiche che dicevano la stessa cosa con un numero diverso.
+      let _missione = null;
+      try {
+        const { Missioni } = require('../memory/missioni');
+        if (!ctx._missioni) ctx._missioni = new Missioni(ctx.dataDir);
+      } catch (_) { /* il diario e' una comodita', non una condizione */ }
       let collega = null;
       let collegaPassaOltre = false;
       if (ctx.CollegaAttivo !== false) {
@@ -242,6 +312,38 @@ function register(router, ctx) {
           if (ascolto.modo === 'incarico' && ascolto.incarico) {
             ctx.session.incaricoInSospeso = null;   // il lavoro parte: non è più in attesa
             incaricoCorrente = ascolto.incarico;
+
+            // ── Si apre il cantiere, con le misure prese dall'incarico ──
+            //
+            // I criteri dicono già quanti soggetti servono e quali campi:
+            // elementi_minimi dà il numero, campi_obbligatori le colonne,
+            // soggetti_coperti i nomi da trattare per forza. Da lì il cantiere
+            // sa cosa aspettarsi e può dire, giro dopo giro, cosa manca.
+            {
+              const cr = incaricoCorrente.criteri || [];
+              const quanti = cr.find(c => c.tipo === 'elementi_minimi')?.quanti || 0;
+              const campi = cr.find(c => c.tipo === 'campi_obbligatori')?.campi || [];
+              const soggetti = cr.find(c => c.tipo === 'soggetti_coperti')?.soggetti || [];
+              if (quanti > 1 || campi.length > 0 || soggetti.length > 1) {
+                const ripreso = ctx._archivioCantieri.riapri(incaricoCorrente.obiettivo);
+                if (ripreso) {
+                  ctx.session.cantiere = ripreso;
+                  ctx.log(`[Cantiere] Riaperto quello di prima: ${ripreso.elenco().length} voci già in mano`);
+                  ctx.emitReasoning(`Riprendo da dove eravamo: ${ripreso.elenco().length} voci già raccolte`, '🧱');
+                } else {
+                  ctx.session.cantiere = new Cantiere({
+                    campiAttesi: campi,
+                    quanteVoci: Math.max(quanti, soggetti.length),
+                  });
+                  ctx.session.cantiere.obiettivo = incaricoCorrente.obiettivo;
+                  ctx.session.cantiere.aperto = Date.now();
+                  for (const nome of soggetti) ctx.session.cantiere.annota(nome, {}, '');
+                }
+                ctx.log(`[Cantiere] Aperto: ${Math.max(quanti, soggetti.length) || '?'} voci, `
+                  + `campi [${campi.join(', ') || 'liberi'}]`);
+                ctx.emitReasoning('Apro il cantiere: poso ogni cosa che trovo, appena la trovo', '🧱');
+              }
+            }
             ctx.log(`[Collega] Incarico: "${incaricoCorrente.obiettivo}" — ${incaricoCorrente.criteri.length} criteri`
               + (ascolto.senzaVerifica ? ' (NON verificabile)' : ''));
             ctx.wsBroadcast({
@@ -252,6 +354,22 @@ function register(router, ctx) {
             });
             if (ascolto.risposta) ctx.emitReasoning(ascolto.risposta, '💬');
             ctx.session.linguaCorrente = ascolto.lingua || 'it';
+
+            // ── UN COMANDANTE SOLO: l'incarico ──
+            //
+            // Prima decidevano in sette, e i primi tre lo facevano PRIMA di
+            // sapere cosa servisse: routeIntent guardava le parole del
+            // messaggio, selectModel la sua lunghezza. Poi il turno rattoppava
+            // in sei punti diversi.
+            //
+            // Adesso il Collega capisce e scrive l'incarico; da lì discendono
+            // ambiti, strumenti e modello, per deduzione, in un posto solo.
+            const ordine = ordineDiLavoro(incaricoCorrente);
+            routing.scopes = ordine.ambiti;
+            routing.operationLevel = 'read';
+            ctx._ordineDiLavoro = ordine;
+            ctx.log(`[Comando] ${inChiaro(ordine)} Modello: ${ordine.tier}.`);
+            ctx.emitReasoning(inChiaro(ordine), '🎯');
 
             // ── L'incarico decide anche gli strumenti ──
             //
@@ -340,6 +458,17 @@ function register(router, ctx) {
         ? { url: ctx.session.lastPage.url, title: ctx.session.lastPage.title, snippet: (ctx.session.lastPage.markdown || '').substring(0, 500) }
         : (ctx.toolHistory.length > 0 ? ctx.toolHistory[ctx.toolHistory.length - 1] : null);
       const conversationHistory = chatMem ? chatMem.getAPIMessages() : [];
+      // ── Si apre la missione ──
+      //
+      // Solo se e' un LAVORO: intent 'chat' vuol dire due parole scambiate, e
+      // registrarle riempirebbe il diario di niente. La distinzione la fa gia'
+      // il routing, non serve rifarla qui.
+      if (ctx._missioni && intent !== 'chat') {
+        try {
+          _missione = ctx._missioni.apri(message, { ambiti: routing.scopes, modello: null });
+        } catch (_) { /* si prosegue senza diario */ }
+      }
+
       const marioResult = await ctx.SuperMario.assemble({ intent, scopes: routing.scopes, operationLevel: routing.operationLevel || 'read', userMessage: message, conversationHistory, lastToolResult, voiceMode, allTools: ctx.COBRA_TOOLS });
       let systemPrompt = marioResult.systemPrompt;
       const useTools = marioResult.tools.length > 0 ? marioResult.tools : undefined;
@@ -367,6 +496,21 @@ function register(router, ctx) {
         if (blocco) systemPrompt += '\n\n' + blocco;
       }
 
+      // E quello che ha imparato lavorando: strade che hanno funzionato,
+      // ostacoli gia' visti, moduli gia' compilati.
+      if (ctx._lezioni || ctx.dataDir) {
+        try {
+          const { Lezioni } = require('../memory/lezioni');
+          if (!ctx._lezioni) ctx._lezioni = new Lezioni(ctx.dataDir);
+          const domini = [...new Set((ctx.session.pagineDelTurno || [])
+            .map(p => { try { return new URL(p.url || p).hostname.replace(/^www\./, ''); } catch { return ''; } })
+            .filter(Boolean))];
+          const blocco = ctx._lezioni.perIlPrompt({
+            obiettivo: incaricoCorrente ? incaricoCorrente.obiettivo : message, domini });
+          if (blocco) { systemPrompt += '\n\n' + blocco; ctx.log('[Lezioni] richiamate quelle pertinenti'); }
+        } catch (e) { ctx.log(`[Lezioni] richiamo fallito: ${e.message}`); }
+      }
+
       // Prompt audit
       ctx.auditPrompt(message, routing, marioResult, taskPlan, ctx.session.kbSnippets);
       if (taskPlan) systemPrompt += '\n\n' + ctx.SuperMario.buildPlanPrompt(taskPlan);
@@ -377,37 +521,20 @@ function register(router, ctx) {
       if (repetitionWarning) { systemPrompt += '\n\n' + repetitionWarning; ctx.log('Repetition detected'); }
 
       // 8. AI call
-      const modelSelection = ctx.SuperMario.selectModel(marioResult.scopes, taskPlan, message, ctx.session);
-
-      // ── Il modello lo decide il LAVORO, non la lunghezza del messaggio ──
-      //
-      // Verificato dal vivo il 6 agosto: alla domanda del Collega, Luca ha
-      // risposto "25.000 in tutto, 4 doppie, date fisse. Vai." — un messaggio
-      // corto, senza parole come "report" o "confronta". Il modello è stato
-      // scelto su QUEL testo: tier standard, cioè gpt-4o-mini. Poi al piccolo
-      // è stato chiesto di coprire due soggetti, verificare le fonti e
-      // produrre un report impaginato. Ha girato in tondo — stessa ricerca
-      // quattro volte — e il Supervisore ha dovuto fermarlo due volte.
-      //
-      // L'incarico dice quanto è difficile il lavoro molto meglio della frase
-      // che l'ha innescato: un "Vai." di quattro lettere può valere mezz'ora
-      // di ricerche. Stessa logica con cui, poco sopra, gli strumenti vengono
-      // aggiunti in base ai criteri e non in base alle parole usate.
-      if (incaricoCorrente && modelSelection.tier !== 'power') {
-        const criteri = incaricoCorrente.criteri || [];
-        const impegnativo = criteri.length >= 3
-          || criteri.some(c => ['origine_verificabile', 'file_atteso', 'soggetti_coperti'].includes(c.tipo));
-        if (impegnativo) {
-          ctx.log(`[Modello] Il messaggio sembrava semplice (${modelSelection.tier}), ma l'incarico chiede `
-            + `${criteri.length} criteri: passo al modello forte`);
-          modelSelection.tier = 'power';
-          modelSelection.reason = `incarico con ${criteri.length} criteri`;
-        }
-      }
+      // Il modello lo decide l'ordine di lavoro quando c'e' un incarico.
+      // Senza incarico — chiacchiera, domanda secca — resta il vecchio
+      // criterio, che li' va benissimo.
+      const modelSelection = ctx._ordineDiLavoro
+        ? { tier: ctx._ordineDiLavoro.tier, reason: 'ordine di lavoro' }
+        : ctx.SuperMario.selectModel(marioResult.scopes, taskPlan, message, ctx.session);
 
       ctx.emitReasoning(`Modello: ${modelSelection.tier}`, '🧠');
       const _chatStart = Date.now();
-      let result = await ctx.callAI(systemPrompt, msgs, useTools, { ...ctx, modelTier: modelSelection.tier });
+      // Il cantiere va davanti al modello dal PRIMO giro, non solo quando si
+      // insiste: altrimenti la prima passata — quella che apre dieci pagine —
+      // la fa senza sapere che deve posare quello che trova.
+      let result = await ctx.callAI(systemPrompt + _bloccoCantiere(ctx), msgs, useTools,
+        { ...ctx, modelTier: modelSelection.tier });
 
       // ── 8a. IL COLLEGA GIUDICA ──
       //
@@ -421,7 +548,54 @@ function register(router, ctx) {
         let insistenze = 0;
         let mancanzePrecedenti = null;   // per capire se un tentativo ha spostato qualcosa
         let stradeCambiate = 0;
-        for (;;) {
+        // ── Un messaggio partito non si ripete MAI ──
+        //
+        // Il 7 agosto Luca ha visto quattro "✓ whatsapp_send" per una sola
+        // richiesta: lo stesso messaggio e' arrivato a Jose quattro volte. Non
+        // era un difetto dell'invio — era questo ciclo. Il Collega giudicava il
+        // turno contro criteri che parlavano di intestazione, data e fonti (un
+        // report, non un messaggio), lo trovava incompleto, e faceva riprovare.
+        // L'Esecutore, per "completare", rimandava.
+        //
+        // Insistere e' giusto su una ricerca: rifare una ricerca non costa
+        // niente a nessuno. Su un invio e' un'altra cosa — dall'altra parte
+        // c'e' una persona che riceve quattro volte lo stesso messaggio, e
+        // quello non si richiama. Se in questo turno e' partito qualcosa, si
+        // consegna com'e': eventuali mancanze si riferiscono al resto del
+        // lavoro e si dicono a Luca, non si correggono rimandando.
+        const _INVII = ['whatsapp_scrivi', 'linkedin_scrivi', 'whatsapp_send',
+          'linkedin_send_message', 'linkedin_connect', 'send_email'];
+        // CHIAMATO non vuol dire PARTITO.
+        //
+        // L'8 agosto, richiesta di collegamento a Brandon Dvorak: l'estensione
+        // ci ha messo 25 secondi, il relay ha rinunciato al secondo 25, il
+        // risultato e' tornato 5 millisecondi dopo ed e' finito orfano.
+        // linkedin_connect ha risposto {ok:false, "Timeout"} — cioe' NON e'
+        // partito niente, il pulsante "Collegati" e' ancora sul profilo.
+        //
+        // Ma questo controllo guardava solo il NOME dello strumento usato, non
+        // il suo esito: ha visto "linkedin_connect" nell'elenco e ha concluso
+        // che era partito un messaggio. Ha quindi zittito le insistenze del
+        // Collega proprio nel turno in cui c'era da protestare, e il turno e'
+        // stato consegnato come riuscito.
+        //
+        // Il freno serve ancora — quattro messaggi a Jose sono usciti da qui —
+        // ma deve scattare su un invio RIUSCITO. Se l'invio e' fallito non c'e'
+        // nessuno dall'altra parte che riceve due volte: si puo' e si deve dire.
+        const _ePartitoQualcosa = () =>
+          (result.toolsUsed || []).some(t =>
+            _INVII.includes(t && (t.name || t.tool || t)) && !(t && t.ok === false));
+
+        if (_ePartitoQualcosa()) {
+          ctx.log('[Collega] In questo turno e\' partito un messaggio: niente insistenze.');
+          valutazioneFinale = collega.giudica(incaricoCorrente, {
+            testo: result.content || '', righe: null,
+            file: ctx.session.fileDelTurno || [], pagine: ctx.session.pagineDelTurno || [],
+          }, ctx.session, 99, null, 99).valutazione;
+          insistenzeEsaurite = true;
+        }
+
+        for (; !_ePartitoQualcosa();) {
           const esito = {
             testo: result.content || '',
             righe: (ctx.session.righeUltimoFile || null),
@@ -520,7 +694,7 @@ function register(router, ctx) {
           });
           try {
             const ripresa = await ctx.callAI(
-              systemPrompt + '\n\n# NOTA DEL COLLEGA\n' + giudizio.istruzione,
+              systemPrompt + _bloccoCantiere(ctx) + '\n\n# NOTA DEL COLLEGA\n' + giudizio.istruzione,
               [...msgs, { role: 'assistant', content: result.content },
                { role: 'user', content: giudizio.istruzione }],
               useTools, { ...ctx, modelTier: modelSelection.tier }
@@ -585,6 +759,39 @@ function register(router, ctx) {
         } catch (e) { ctx.log(`[Insistenza] Secondo tentativo fallito: ${e.message}`); }
       }
 
+      // ── Il cantiere si salva, e si chiude solo quando il lavoro e' finito ──
+      //
+      // Cosi' la richiesta dopo riprende da dove si era arrivati invece di
+      // ricominciare — che e' la ragione per cui quattro tentativi di fila su
+      // otto aziende non erano arrivati in fondo.
+      if (ctx.session.cantiere && ctx._archivioCantieri) {
+        const r = ctx.session.cantiere.riepilogo();
+        if (r.finito) {
+          ctx._archivioCantieri.chiudi();
+          ctx.log(`[Cantiere] Lavoro finito (${r.complete}/${r.attese}): chiudo il cantiere`);
+        } else {
+          ctx._archivioCantieri.salva(ctx.session.cantiere);
+          ctx.log(`[Cantiere] Lascio aperto: ${r.voci} voci, ${r.buchi} incomplete — si riprende da qui`);
+        }
+      }
+
+      // ── Si impara dal LAVORO, non solo da quello che Luca dice ──
+      //
+      // Fino al 7 agosto l'archivio aveva 15 fatti, tutti raccolti ascoltando.
+      // Di quello che COBRA faceva non restava niente: che europages torna
+      // vuoto, che ITA blocca, che su tmwe.it il banner si toglie cliccando
+      // "impostazione cookie". Ogni mattina si ricominciava dalla stessa
+      // ignoranza.
+      try {
+        tiraLezioni(ctx, {
+          obiettivo: incaricoCorrente ? incaricoCorrente.obiettivo : message,
+          riuscito: !!(valutazioneFinale && valutazioneFinale.soddisfatto),
+          pagine: ctx.session._letturePerLezioni || [],
+          ostacoli: ctx.session._ostacoliPerLezioni || [],
+          moduli: ctx.session._moduliPerLezioni || [],
+        });
+      } catch (e) { ctx.log(`[Lezioni] non ho potuto imparare da questo turno: ${e.message}`); }
+
       // 9. Store + post-processing
       ctx.conversationEngine.addMessage(conv.id, 'assistant', result.content);
       ctx.SuperMario.updateNarrativeSummary(conversationHistory, ctx.aiKeys).catch(() => {});
@@ -602,6 +809,37 @@ function register(router, ctx) {
       else ctx.CobraSupervisor.failRequest(result.content);
 
       // 11. Record
+      // ── Si chiude la missione ──
+      //
+      // L'esito non lo decide il modello: lo dicono i fatti del turno. Un
+      // lavoro che non ha prodotto niente e ha inciampato e' fallito, anche se
+      // la risposta suona bene — ed e' esattamente il caso che oggi ha fatto
+      // dire "procedo con l'invio" a un messaggio mai partito.
+      if (ctx._missioni && _missione) {
+        try {
+          for (const t of (result.toolsUsed || [])) {
+            const nome = typeof t === 'string' ? t : t.name;
+            ctx._missioni.annota(_missione, { strumento: nome });
+            // Uno strumento fallito e' un inciampo: e' la parte che serve.
+            if (typeof t === 'object' && t.ok === false) {
+              ctx._missioni.inciampo(_missione, nome,
+                String(t.error || t.motivo || 'non riuscito').slice(0, 200));
+            }
+          }
+          for (const f of (ctx.session.fileDelTurno || [])) {
+            ctx._missioni.annota(_missione, { file: f.filename || String(f) });
+          }
+          for (const p of (ctx.session.pagineDelTurno || [])) {
+            ctx._missioni.annota(_missione, { pagina: (p.url || p || '').slice(0, 120) });
+          }
+          const haProdotto = (ctx.session.fileDelTurno || []).length > 0;
+          const mancanze = valutazioneFinale && !valutazioneFinale.soddisfatto;
+          ctx._missioni.chiudi(_missione,
+            mancanze ? 'incompleto' : (haProdotto || (result.toolsUsed || []).length ? 'consegnato' : 'incompleto'),
+            mancanze ? (valutazioneFinale.mancanze || []).slice(0, 2).join('; ') : null);
+        } catch (e) { ctx.log(`[Diario] non sono riuscito a chiudere la missione: ${e.message}`); }
+      }
+
       ctx.ResponseRecorder.recordChat({ userMessage: message, intent, systemPromptLength: systemPrompt.length, provider: result.provider, model: result.model || '', response: result.content, toolsUsed: result.toolsUsed || [], durationMs: Date.now() - _chatStart, kbEntries: (ctx.session.kbSnippets || []).length, repetitionDetected: !!repetitionWarning, marioScope: marioResult.scope, marioTraceId: marioResult.trace_id, taskPlanSteps: taskPlan ? taskPlan.steps.length : 0 });
 
       // Le pagine consultate diventano collegamenti: da lì l'utente prosegue

@@ -3,6 +3,49 @@
 const { sanitizeOutboundMessage } = require('../../security/output-sanitizer');
 const { leggiPosta } = require('../../utils/imap');
 
+// ══════════════════════════════════════════════════════════════════════
+// UNA SOLA STRADA: IL PONTE DI COBRA
+//
+// C'erano DUE ponti verso il browser, e uno era un fantasma.
+//
+//   ctx.bridgeCommand      → l'estensione COBRA. Collegata, funziona, la si
+//                             vede lavorare: apre le schede, legge il DOM,
+//                             scrive con il ritmo umano.
+//   ctx.extRelay           → un'ALTRA estensione, che riceveva i comandi
+//                             via postMessage con
+//                             `direction: from-webapp-li`. Sul computer di
+//                             Luca nessuno ascolta su quel canale.
+//
+// L'8 agosto: quattro tentativi di mandare una richiesta di collegamento a
+// Brandon Dvorak, quattro "Extension timeout". Nessun errore, nessuna pagina
+// che si apre, solo un'attesa a vuoto — perche' il comando partiva verso
+// un'estensione che non c'e'. Luca l'ha visto prima di me: "io non vedo
+// cercare su linkedin la pagina corretta". Non la cercava nessuno.
+//
+// Tre strumenti passavano SOLO di li' (linkedin_profile, linkedin_connect,
+// whatsapp_unread): non potevano riuscire, mai, in nessun caso. Altri quattro
+// tenevano il fantasma come riserva, e una riserva che non risponde non e' una
+// rete di sicurezza: e' un minuto e mezzo buttato prima di dire "non ce l'ho
+// fatta".
+//
+// Da qui in avanti si passa da un ponte solo. Se non risponde, si dice.
+// Il controllo che lo fa rispettare sta in tests/test-un-ponte-solo.js.
+// ══════════════════════════════════════════════════════════════════════
+
+/** Il ponte di COBRA, con la risposta gia' scartata dall'involucro. */
+async function _ponte(ctx, comando, args = {}) {
+  if (!ctx.isBridgeReady || !ctx.isBridgeReady()) {
+    return { ok: false, motivo: 'il browser non e\' collegato', cosaFare: 'Apri COBRA nel browser e riprova.' };
+  }
+  try {
+    const r = await ctx.bridgeCommand(comando, args);
+    return (r && r.result) || r || { ok: false, motivo: 'il ponte non ha risposto' };
+  } catch (e) {
+    return { ok: false, motivo: e.message };
+  }
+}
+
+
 // ── Prepare tools (in-memory drafts) ──
 async function prepareEmailDraft(args) {
   return JSON.stringify({ ok: true, type: 'draft', to: args.to, subject: args.subject, body: args.body || '', cc: args.cc || null, note: 'Bozza preparata. Mostra TO, SUBJECT e BODY. Chiedi conferma PRIMA di send_email.' });
@@ -139,17 +182,24 @@ async function openLinkedin(args, ctx) {
 
 // ── Extension-based tools ──
 async function linkedinSearch(args, ctx) {
-  ctx.emitReasoning('Cerco profili LinkedIn...', '🔍');
-  const r = await ctx.extRelay('linkedin', 'searchProfile', { query: args.query });
-  if (!r.success) {
-    const fallbackUrl = `https://www.linkedin.com/search/results/people/?keywords=${encodeURIComponent(args.query)}`;
-    if (ctx.isBridgeReady()) { await ctx.bridgeCommand('navigate', { url: fallbackUrl }); await new Promise(r => setTimeout(r, 3000)); return JSON.stringify({ ok: true, fallback: true, url: fallbackUrl, note: 'Estensione non disponibile — aperta ricerca nel browser.' }); }
-    return JSON.stringify({ error: `Estensione LinkedIn non disponibile: ${r.error}` });
-  }
-  return JSON.stringify({ ok: true, ...r });
+  const query = String(args.query || '').trim();
+  if (!query) return JSON.stringify({ ok: false, motivo: 'non mi hai detto cosa cercare' });
+  ctx.emitReasoning(`Cerco "${query}" su LinkedIn...`, '🔍');
+  const d = await _ponte(ctx, 'linkedin_cerca', { query, quanti: Number(args.quanti) || 10 });
+  if (d.ok) await _mostraPagina(ctx, `LinkedIn — ricerca "${query}"`, d.url || 'https://www.linkedin.com/search/results/people/');
+  return JSON.stringify(d);
 }
 
-async function linkedinProfile(args, ctx) { ctx.emitReasoning('Estraggo dati profilo LinkedIn...', '👤'); const r = await ctx.extRelay('linkedin', 'extractProfile', { url: args.url }); if (!r.success) return JSON.stringify({ error: `Estrazione fallita: ${r.error}` }); return JSON.stringify({ ok: true, ...r }); }
+async function linkedinProfile(args, ctx) {
+  const url = String(args.url || args.profilo || '').trim();
+  if (!/linkedin\.com\/(in|pub)\//i.test(url)) {
+    return JSON.stringify({ ok: false, motivo: 'serve l\'indirizzo di un profilo LinkedIn' });
+  }
+  ctx.emitReasoning('Leggo il profilo LinkedIn...', '👤');
+  const d = await _ponte(ctx, 'linkedin_profilo', { url });
+  if (d.ok) await _mostraPagina(ctx, `LinkedIn — ${d.nome || 'profilo'}`, d.url || url);
+  return JSON.stringify(d);
+}
 async function linkedinSendMessage(args, ctx) {
   ctx.emitReasoning('Invio messaggio LinkedIn...', '✉️');
   // P0.3: Sanitize outbound LinkedIn message
@@ -157,11 +207,169 @@ async function linkedinSendMessage(args, ctx) {
   if (liScan.blocked) { ctx.log(`[Security] LinkedIn BLOCKED: ${liScan.warnings.join('; ')}`); return JSON.stringify({ error: 'Contenuto LinkedIn bloccato per motivi di sicurezza.' }); }
   if (liScan.warnings.length) ctx.log(`[Security] LinkedIn sanitized: ${liScan.warnings.join('; ')}`);
   args.message = liScan.text;
-  const r = await ctx.extRelay('linkedin', 'sendMessage', { url: args.url, message: args.message }, 30000); if (!r.success) return JSON.stringify({ error: `Invio fallito: ${r.error}` }); return JSON.stringify({ ok: true, channel: 'linkedin', sent: true, ...r });
+  // Fuori da ogni ambito: chi scrive su LinkedIn passa da linkedin_scrivi,
+  // che ha le regole, la verifica del destinatario e il registro. Questo
+  // resta solo per i flussi interni e per l'ambito 'full'.
+  return JSON.stringify({
+    ok: false,
+    motivo: 'strada dismessa: usa linkedin_scrivi (regole, verifica del destinatario, registro)',
+  });
 }
-async function linkedinConnect(args, ctx) { ctx.emitReasoning('Invio richiesta collegamento...', '🤝'); const r = await ctx.extRelay('linkedin', 'sendConnectionRequest', { url: args.url, note: args.note || '' }, 30000); if (!r.success) return JSON.stringify({ error: `Richiesta fallita: ${r.error}` }); return JSON.stringify({ ok: true, channel: 'linkedin', ...r }); }
-async function linkedinInbox(args, ctx) { ctx.emitReasoning('Leggo inbox LinkedIn...', '📬'); const r = await ctx.extRelay('linkedin', 'readLinkedInInbox', {}); if (!r.success) return JSON.stringify({ error: `Lettura inbox fallita: ${r.error}` }); return JSON.stringify({ ok: true, ...r }); }
-async function linkedinReadThread(args, ctx) { ctx.emitReasoning('Leggo conversazione LinkedIn...', '💬'); const r = await ctx.extRelay('linkedin', 'readLinkedInThread', { threadUrl: args.threadUrl }); if (!r.success) return JSON.stringify({ error: `Lettura thread fallita: ${r.error}` }); return JSON.stringify({ ok: true, ...r }); }
+// ── L'invito passa dalle stesse regole del messaggio ──
+//
+// Stava fuori dagli ambiti, e c'era un test a tenerlo fuori: "invito senza
+// regole". Era vero — chiamava l'estensione e basta, senza limiti, senza
+// registro, senza ritmo. La stessa porta di servizio da cui il 7 agosto sono
+// usciti sette messaggi fuori conteggio.
+//
+// Ma a Luca serve poter chiedere un collegamento, e la risposta a "questa
+// strada e' senza guardrail" non e' chiudere la strada: e' metterci il
+// guardrail. Ora l'invito fa lo stesso percorso del messaggio — RegoleInvio
+// prima, pausa umana, registro dopo — e puo' stare in 'communicate' senza
+// riaprire il buco.
+async function linkedinConnect(args, ctx) {
+  const url = String(args.url || args.profilo || args.a || args.nome || '').trim();
+  const nota = String(args.note || args.nota || args.testo || '');
+  if (!url) return JSON.stringify({ ok: false, motivo: 'non mi hai detto a chi' });
+
+  const { RegoleInvio, pausaProssima } = require('../../security/regole-invio');
+  const modo = ctx.session?.automatico === true ? 'automatico' : 'diretto';
+  const R = ctx._regoleLi || (ctx._regoleLi = new RegoleInvio(ctx.dataDir, 'linkedin'));
+
+  const verdetto = R.puoScrivere({ a: url, testo: nota, conosciuto: true, modo });
+  if (!verdetto.si) {
+    ctx.emitReasoning(`Non invito: ${verdetto.motivo}`, '\u{1F6D1}');
+    return JSON.stringify({ ok: false, bloccato: true, motivo: verdetto.motivo, cosaFare: verdetto.cosaFare });
+  }
+
+  const pausa = pausaProssima('linkedin', modo);
+  ctx.emitReasoning(`Aspetto ${pausa}s prima di chiedere il collegamento`, '\u23F3');
+  await new Promise(r => setTimeout(r, pausa * 1000));
+
+  ctx.emitReasoning('Apro il profilo e chiedo il collegamento...', '\u{1F91D}');
+  const d = await _ponte(ctx, 'linkedin_collegati', { url, nota });
+
+  if (!d.ok) {
+    ctx.log(`[LinkedIn] Invito NON partito verso ${ctx.sanitizeForLog ? ctx.sanitizeForLog(url) : url}: ${d.motivo || 'senza motivo'}`);
+    return JSON.stringify(d);
+  }
+
+  // Si registra solo dopo che la pagina ha confermato: un invito segnato e
+  // mai partito e' peggio di uno partito e non segnato.
+  R.registra({ a: d.a || url, testo: nota || '[invito]' });
+  await _mostraPagina(ctx, `LinkedIn — ${d.a || 'profilo'}`, d.url || url);
+  return JSON.stringify(d);
+}
+// ── La posta di LinkedIn ──
+//
+// Passava da readLinkedInInbox, il lettore del Navigator. Misurato sulla
+// messaggistica vera di Luca il 7 agosto: 26 righe per 12 conversazioni (ogni
+// persona due volte, la seconda vuota), etichette come "Messaggio InMail" e
+// "Stato: offline" scambiate per contatti, e 28 secondi — perche' il metodo
+// principale scade (optimus_inbox_timeout_12000ms) e ripiega sul vecchio.
+//
+// Il lettore nuovo sta nell'estensione (linkedin_elenco_chat), e' scritto
+// guardando il DOM vero e sulla stessa pagina fa 10 conversazioni pulite in
+// 0,1 secondi. Da qui in avanti si usa quello. Il vecchio resta come riserva:
+// se l'estensione non e' collegata, meglio un dato sporco che nessun dato.
+async function linkedinInbox(args, ctx) {
+  ctx.emitReasoning('Leggo la posta LinkedIn...', '📬');
+
+  if (ctx.isBridgeReady && ctx.isBridgeReady()) {
+    try {
+      const r = await ctx.bridgeCommand('linkedin_elenco_chat', { quante: Number(args.quante) || 50 });
+      const d = r?.result || r;
+      if (d?.ok && Array.isArray(d.chat)) {
+        const sospetto = await _vuotoSospetto(ctx, d.chat.length, 'conversazioni LinkedIn');
+        if (sospetto) return JSON.stringify(sospetto);
+        _annota(ctx, d.chat.map(c => ({ ...c, haScritto: true })), 'linkedin');
+        const titolo = `LinkedIn — ${d.conversazioni} conversazioni, ${d.conNonLetti} da leggere`;
+        // La foto arriva dall'estensione: e' della scheda che ha letto davvero,
+        // non della scheda attiva (che di solito e' COBRA stesso).
+        if (d.screenshot) {
+          ctx.session.lastScreenshotData = d.screenshot;
+          ctx.session.lastPage = { url: d.url || 'https://www.linkedin.com/messaging/', title: titolo, html: '' };
+          ctx.wsBroadcast({ type: 'screenshot', data: d.screenshot, url: d.url || '', title: titolo });
+          ctx.wsBroadcast({ type: 'page_loaded', url: d.url || '', title: titolo });
+        }
+        await _mostraPagina(ctx, titolo, d.url || 'https://www.linkedin.com/messaging/');
+        return JSON.stringify({
+          ok: true,
+          conversazioni: d.conversazioni,
+          conNonLetti: d.conNonLetti,
+          chat: d.chat,
+          nota: d.nota,
+        });
+      }
+      // Non e' andata: si dice perche' invece di ripiegare in silenzio.
+      if (d && d.motivo) ctx.emitReasoning(`Lettore nuovo: ${d.motivo}`, '⚠️');
+    } catch (e) {
+      ctx.log(`[LinkedIn] lettore nuovo fallito (${e.message}), provo il vecchio`);
+    }
+  }
+
+  // Qui finiva la riserva sul ponte fantasma. Non c'e' una seconda strada:
+  // se il ponte di COBRA non ce l'ha fatta, si dice.
+  return JSON.stringify({
+    ok: false,
+    motivo: `non sono riuscito a leggere la posta LinkedIn`,
+    cosaFare: 'Controlla che la pagina sia aperta e l\'accesso fatto, poi riprova.',
+  });
+  _annota(ctx, _personeDa(r), 'linkedin');
+  return JSON.stringify({ ok: true, ...r });
+}
+// ── Entrare nella conversazione, non fermarsi all'anteprima ──
+//
+// Passava da readLinkedInThread, che vuole un threadUrl. Quel dato la
+// messaggistica non lo espone (verificato: zero link nelle righe della lista),
+// quindi questo strumento non era chiamabile e COBRA restava fermo alle
+// anteprime: centocinquanta caratteri tagliati, da cui uscivano riepiloghi
+// tipo "ha inviato un allegato".
+//
+// Adesso si apre per NOME e si leggono i messaggi veri.
+async function linkedinReadThread(args, ctx) {
+  const chi = String(args.nome || args.contact || args.threadUrl || '').trim();
+  ctx.emitReasoning(`Apro la conversazione con ${chi || 'il contatto'}...`, '💬');
+
+  if (chi && ctx.isBridgeReady && ctx.isBridgeReady()) {
+    try {
+      const r = await ctx.bridgeCommand('linkedin_leggi_conversazione', { nome: chi, quanti: Number(args.quanti) || 30 });
+      const d = r?.result || r;
+      if (d?.ok) {
+        const titolo = `LinkedIn — ${d.conversazione}, ${d.quanti} messaggi`;
+        if (d.screenshot) {
+          ctx.session.lastScreenshotData = d.screenshot;
+          ctx.session.lastPage = { url: d.url || '', title: titolo, html: '' };
+          ctx.wsBroadcast({ type: 'screenshot', data: d.screenshot, url: d.url || '', title: titolo });
+          ctx.wsBroadcast({ type: 'page_loaded', url: d.url || '', title: titolo });
+        } else {
+          // Niente foto: si dice dov'era la pagina, invece di lasciare il
+          // pannello nero e muto. Il titolo e l'indirizzo sono veri comunque.
+          ctx.wsBroadcast({ type: 'page_loaded', url: d.url || '', title: titolo });
+          if (d.notaFoto) ctx.emitReasoning(d.notaFoto, '📷');
+        }
+        _annota(ctx, [{ nome: d.conversazione, haScritto: true }], 'linkedin');
+        await _mostraPagina(ctx, titolo, d.url || 'https://www.linkedin.com/messaging/');
+        return JSON.stringify(d);
+      }
+      // Ambiguo o non trovato: si riferisce, non si tira a indovinare.
+      if (d && (d.ambiguo || d.disponibili)) return JSON.stringify(d);
+      if (d && d.motivo) ctx.emitReasoning(d.motivo, '⚠️');
+    } catch (e) {
+      ctx.log(`[LinkedIn] apertura conversazione fallita: ${e.message}`);
+    }
+  }
+
+  // Qui finiva la riserva sul ponte fantasma. Non c'e' una seconda strada:
+  // se il ponte di COBRA non ce l'ha fatta, si dice.
+  return JSON.stringify({
+    ok: false,
+    motivo: `non sono riuscito a leggere la conversazione LinkedIn`,
+    cosaFare: 'Controlla che la pagina sia aperta e l\'accesso fatto, poi riprova.',
+  });
+  _annota(ctx, _personeDa(r), 'linkedin');
+  return JSON.stringify({ ok: true, ...r });
+}
 async function whatsappSend(args, ctx) {
   ctx.emitReasoning('Invio messaggio WhatsApp...', '📱');
   // P0.3: Sanitize outbound WhatsApp text
@@ -169,12 +377,182 @@ async function whatsappSend(args, ctx) {
   if (waScan.blocked) { ctx.log(`[Security] WhatsApp BLOCKED: ${waScan.warnings.join('; ')}`); return JSON.stringify({ error: 'Contenuto WhatsApp bloccato per motivi di sicurezza.' }); }
   if (waScan.warnings.length) ctx.log(`[Security] WhatsApp sanitized: ${waScan.warnings.join('; ')}`);
   args.text = waScan.text;
-  const r = await ctx.extRelay('whatsapp', 'sendWhatsApp', { phone: args.phone, text: args.text }, 30000);
-  if (!r.success) { const waUrl = `https://web.whatsapp.com/send?phone=${encodeURIComponent(args.phone)}&text=${encodeURIComponent(args.text)}`; ctx.wsBroadcast({ type: 'open_url', url: waUrl, target: 'whatsapp' }); return JSON.stringify({ ok: true, fallback: true, url: waUrl, note: 'Estensione non disponibile — aperto WhatsApp Web.' }); }
-  return JSON.stringify({ ok: true, channel: 'whatsapp', sent: true, ...r });
+  // Fuori da ogni ambito dal 7 agosto: da qui erano usciti sette messaggi
+  // senza regole e senza registro. Chi scrive passa da whatsapp_scrivi.
+  return JSON.stringify({
+    ok: false,
+    motivo: 'strada dismessa: usa whatsapp_scrivi (regole, verifica del destinatario, registro)',
+  });
 }
-async function whatsappUnread(args, ctx) { ctx.emitReasoning('Leggo messaggi non letti...', '📱'); const r = await ctx.extRelay('whatsapp', 'readUnread', {}); if (!r.success) return JSON.stringify({ error: `Lettura fallita: ${r.error}` }); return JSON.stringify({ ok: true, ...r }); }
-async function whatsappReadThread(args, ctx) { ctx.emitReasoning('Leggo chat WhatsApp...', '💬'); const r = await ctx.extRelay('whatsapp', 'readThread', { contact: args.contact, maxMessages: args.maxMessages || 50 }); if (!r.success) return JSON.stringify({ error: `Lettura chat fallita: ${r.error}` }); return JSON.stringify({ ok: true, ...r }); }
+// ── Leggere serve anche a ricordare ──
+//
+// Ogni lettura passa davanti a nomi e numeri veri, e prima li buttava. Da qui
+// in poi finiscono in rubrica: e' cosi' che "manda un messaggio a Jose" smette
+// di richiedere una scansione di tutto WhatsApp per finire in venti omonimi.
+//
+// Non fallisce mai per colpa della rubrica: se annotare non riesce, la lettura
+// viene restituita lo stesso.
+// ── Far vedere dove sta guardando ──
+//
+// Il pannello a destra dice "Qui vedrai cosa fa COBRA in tempo reale", e
+// durante una lettura di WhatsApp o LinkedIn restava nero. Non era rotto:
+// nessuno gli mandava niente. Le foto le spediva solo browser-control.js,
+// cioe' i tool che navigano; i lettori passano dall'estensione e non
+// spedivano nulla.
+//
+// Il risultato pratico e' che Luca vedeva comparire un elenco di messaggi
+// senza nessuna prova di dove fosse stato preso. Con la foto della pagina
+// vera, l'elenco si puo' controllare a occhio in un secondo.
+async function _mostraPagina(ctx, titolo, url) {
+  // ── Anche una chat e' una fonte ──
+  //
+  // Il 7 agosto crea_report e' fallito sette volte di fila con "Mancano le
+  // fonti: senza gli indirizzi letti il documento non e' verificabile". Il
+  // report prende le fonti da ctx.session.pagineDelTurno, che si riempie solo
+  // con navigate: leggere LinkedIn dall'estensione non registrava niente,
+  // quindi fonti = [] e il documento veniva rifiutato SEMPRE.
+  //
+  // La regola e' giusta — un documento senza fonti non si firma — ma era
+  // scritta pensando alle ricerche sul web. Una conversazione LinkedIn letta
+  // dalla pagina vera e' una fonte quanto un sito: va registrata, non aggirata.
+  try {
+    if (url) {
+      if (!Array.isArray(ctx.session.pagineDelTurno)) ctx.session.pagineDelTurno = [];
+      if (!ctx.session.pagineDelTurno.some(p => (p.url || p) === url)) {
+        ctx.session.pagineDelTurno.push({ url, title: titolo });
+      }
+    }
+  } catch (_) { /* non deve mai impedire la lettura */ }
+
+  try {
+    if (!ctx.isBridgeReady || !ctx.isBridgeReady()) return;
+    const r = await ctx.bridgeCommand('screenshot', { quality: 60 });
+    const d = r?.result || r;
+    if (d?.ok && d.screenshot) {
+      ctx.session.lastScreenshotData = d.screenshot;
+      ctx.session.lastPage = { url: url || '', title: titolo, html: '' };
+      ctx.wsBroadcast({ type: 'screenshot', data: d.screenshot, url: url || '', title: titolo });
+      ctx.wsBroadcast({ type: 'page_loaded', url: url || '', title: titolo });
+    }
+  } catch (_) { /* la foto e' un di piu': se non viene, la lettura vale uguale */ }
+}
+
+// ── Un vuoto sospetto non e' un vuoto ──
+//
+// Domanda di Luca: se il DOM cambia, COBRA se ne deve accorgere.
+//
+// Il guasto tipico dello scraping e' silenzioso: un selettore che non trova
+// niente restituisce una lista vuota, e "lista vuota" e' indistinguibile da
+// "non c'e' niente". Cosi' COBRA riferiva "non hai messaggi non letti" a uno
+// che ne aveva otto — con la stessa serenita' con cui avrebbe detto la verita'.
+//
+// Qui si distinguono i due casi. Zero conversazioni su WhatsApp o LinkedIn non
+// e' un risultato plausibile: quelle liste non sono mai vuote per davvero. Se
+// escono zero, la pagina e' cambiata, e si dice — con la diagnosi accanto,
+// cosi' il selettore nuovo si scrive guardando cosa c'e' invece di indovinare.
+async function _vuotoSospetto(ctx, quante, cosa) {
+  if (quante > 0) return null;
+  ctx.emitReasoning(`Zero ${cosa}: non e' un numero credibile, controllo se la pagina e' cambiata`, '🔎');
+  let diagnosi = null;
+  try {
+    const r = await ctx.bridgeCommand('diagnosi_selettori', {});
+    diagnosi = r?.result || r;
+  } catch (_) { /* senza diagnosi si avvisa lo stesso */ }
+  return {
+    ok: false,
+    paginaCambiata: true,
+    motivo: `Ho letto la pagina e ho trovato zero ${cosa}. Quella lista non e' mai `
+      + 'vuota davvero: quasi sempre vuol dire che il sito ha cambiato struttura e '
+      + 'non riconosco piu\' dove stanno le cose.',
+    cosaDire: 'Dillo a Luca cosi\' com\'e\': NON dire che non ci sono messaggi, perche\' '
+      + 'non lo sai. Di\' che il sito e\' cambiato e che i selettori vanno aggiornati.',
+    diagnosi,
+  };
+}
+
+function _annota(ctx, elenco, canale) {
+  try {
+    const { Rubrica } = require('../../security/rubrica');
+    const R = new Rubrica(ctx.DATA_DIR || ctx.dataDir || './data');
+    const n = R.daLettura(elenco, canale);
+    if (n > 0) ctx.emitReasoning(`Segnati ${n} contatti in rubrica (${R.quante()} in tutto)`, '📇');
+    return n;
+  } catch (_) { return 0; }
+}
+
+// Da una risposta dell'estensione, le persone. I moduli copiati usano nomi di
+// campo diversi a seconda di chi li ha scritti: si guardano tutti invece di
+// scommettere su uno.
+function _personeDa(r) {
+  for (const c of ['chat', 'chats', 'contacts', 'messages', 'conversations', 'threads', 'items']) {
+    if (Array.isArray(r[c]) && r[c].length) return r[c];
+  }
+  return [];
+}
+
+async function whatsappUnread(args, ctx) {
+  ctx.emitReasoning('Leggo i messaggi non letti...', '📱');
+  const d = await _ponte(ctx, 'whatsapp_non_letti', { quanti: Number(args.quanti) || 50 });
+  if (d.ok) {
+    _annota(ctx, _personeDa(d), 'whatsapp');
+    await _mostraPagina(ctx, 'WhatsApp — messaggi non letti', d.url || 'https://web.whatsapp.com/');
+  }
+  return JSON.stringify(d);
+}
+
+// ── Entrare nella chat WhatsApp ──
+//
+// Passava da readThread del Navigator, che non ha mai potuto funzionare:
+// chiama _pageOpenAndReadThread e _pageDomReadMessages, due funzioni che non
+// esistono in nessun file. Ogni chiamata finiva nel catch e tornava
+// { success: false }, e il fallimento sembrava un problema di sessione.
+//
+// Il lettore nuovo sta nell'estensione, scritto guardando la pagina vera.
+async function whatsappReadThread(args, ctx) {
+  const chi = String(args.contact || args.nome || '').trim();
+  ctx.emitReasoning(`Apro la chat con ${chi || 'il contatto'}...`, '💬');
+
+  if (chi && ctx.isBridgeReady && ctx.isBridgeReady()) {
+    try {
+      const r = await ctx.bridgeCommand('whatsapp_leggi_conversazione',
+        { nome: chi, quanti: Number(args.maxMessages) || 40 });
+      const d = r?.result || r;
+      if (d?.ok) {
+        const titolo = `WhatsApp — ${d.conversazione}, ${d.quanti} messaggi`;
+        if (d.screenshot) {
+          ctx.session.lastScreenshotData = d.screenshot;
+          ctx.session.lastPage = { url: d.url || 'https://web.whatsapp.com/', title: titolo, html: '' };
+          ctx.wsBroadcast({ type: 'screenshot', data: d.screenshot, url: d.url || '', title: titolo });
+        }
+        ctx.wsBroadcast({ type: 'page_loaded', url: d.url || 'https://web.whatsapp.com/', title: titolo });
+        if (!d.screenshot && d.notaFoto) ctx.emitReasoning(d.notaFoto, '📷');
+        _annota(ctx, [{ nome: d.conversazione, haScritto: true }], 'whatsapp');
+        await _mostraPagina(ctx, titolo, d.url || 'https://web.whatsapp.com/');
+        return JSON.stringify(d);
+      }
+      // Ambiguo o non trovato: si riferisce, non si tira a indovinare.
+      if (d && (d.ambiguo || d.disponibili)) return JSON.stringify(d);
+      if (d && d.motivo) ctx.emitReasoning(d.motivo, '⚠️');
+    } catch (e) {
+      ctx.log(`[WhatsApp] apertura chat fallita: ${e.message}`);
+    }
+  }
+
+  // Qui finiva la riserva sul ponte fantasma. Non c'e' una seconda strada:
+  // se il ponte di COBRA non ce l'ha fatta, si dice.
+  return JSON.stringify({
+    ok: false,
+    motivo: `non sono riuscito a leggere la chat WhatsApp`,
+    cosaFare: 'Controlla che la pagina sia aperta e l\'accesso fatto, poi riprova.',
+  });
+  // Se ho aperto la sua chat e c'e' dentro qualcosa, quella persona esiste e
+  // ci siamo scritti: e' l'informazione piu' affidabile che passa di qui.
+  if (args.contact) {
+    _annota(ctx, [{ nome: args.contact, haScritto: true, numero: r.phone || r.numero || null }], 'whatsapp');
+  }
+  _annota(ctx, _personeDa(r), 'whatsapp');
+  return JSON.stringify({ ok: true, ...r });
+}
 
 module.exports = {
   prepare_email_draft: prepareEmailDraft, prepare_whatsapp_message: prepareWhatsappMessage, prepare_linkedin_message: prepareLinkedinMessage,

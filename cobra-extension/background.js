@@ -20,6 +20,12 @@
 // risponde. Chi passa da "localhost" dipende dal ripiego su IPv4 del browser,
 // e quando quel ripiego tarda Chrome scrive un errore rosso sulla riga della
 // WebSocket. Con l'indirizzo esplicito non c'e' ambiguita' da risolvere.
+
+// I moduli presi dalle estensioni gia' funzionanti del Navigator.
+// Vedi esterni/ponte.js per il perche' del caricatore.
+try { importScripts('esterni/ponte.js'); }
+catch (e) { console.error('[COBRA] ponte.js non caricato:', e.message); }
+
 const COBRA_WS_URL = 'ws://127.0.0.1:3000';
 const COBRA_API_URL = 'http://127.0.0.1:3000';
 const VERSION = chrome.runtime.getManifest().version;
@@ -469,10 +475,28 @@ async function catturaConIspettore(tabId, qualita = 70, intera = true) {
         const misure = await conLimite(
           chrome.debugger.sendCommand(bersaglio, 'Page.getLayoutMetrics', {}), 3000, 'misure pagina');
         const c = misure?.cssContentSize || misure?.contentSize;
-        if (c && c.width > 0 && c.height > 0) {
+        const finestra = misure?.cssVisualViewport || misure?.visualViewport;
+
+        // ── Si chiede la pagina intera SOLO se c'è davvero qualcosa sotto ──
+        //
+        // Regressione vista a schermo il 6 agosto su Google Voli: la stessa
+        // schermata ripetuta tre volte una sotto l'altra, come una carta da
+        // parati. Succede perché chiedendo un ritaglio più alto della pagina
+        // vera, il motore riempie lo spazio che avanza ridisegnando quello che
+        // ha — e viene fuori una piastrellatura che sembra un guasto grave.
+        //
+        // Su una pagina che sta tutta in una schermata — e Google Voli è una
+        // di quelle — non c'è niente da andare a prendere sotto: si fotografa
+        // la finestra e basta.
+        const altezzaFinestra = finestra?.clientHeight || finestra?.height || 0;
+        const valeLaPena = c && altezzaFinestra > 0 && c.height > altezzaFinestra * 1.05;
+
+        if (c && c.width > 0 && c.height > 0 && valeLaPena) {
           ritaglio = {
             x: 0, y: 0,
             width: Math.min(c.width, 2000),
+            // Mai oltre l'altezza vera del documento: è il ritaglio troppo
+            // alto a produrre la ripetizione.
             height: Math.min(c.height, ALTEZZA_MASSIMA_CATTURA),
             scale: 1,
           };
@@ -769,6 +793,70 @@ function realisticMouseCode() {
 // ══════════════════════════════════════════
 //  COMMAND EXECUTOR
 // ══════════════════════════════════════════
+
+
+// ── Svegliare una scheda che Chrome ha messo a dormire ──
+//
+// Chrome scarica dalla memoria le schede che non guardi da un po'. Restano
+// nell'elenco, con il loro titolo e il loro url, ma dentro non c'e' piu'
+// niente. Chiedere di eseguire uno script li' dentro produce:
+//
+//   "Cannot access contents of the page. Extension manifest must request
+//    permission to access the respective host."
+//
+// che sembra un problema di permessi e non lo e' — infatti gli stessi
+// permessi bastavano un minuto prima. Il 7 agosto ci ho perso un giro su
+// WhatsApp e oggi un altro su LinkedIn, perche' l'avevo gestito nel comando
+// dell'elenco e non in quello della lettura.
+//
+// Si ricarica e si aspetta. Una volta sola: se dopo il ricaricamento non
+// risponde ancora, il problema e' un altro e va detto com'e'.
+async function svegliaScheda(scheda) {
+  if (!scheda) return null;
+  try {
+    const t = await chrome.tabs.get(scheda.id);
+    if (t.status !== 'unloaded' && !t.discarded) return t;
+    await chrome.tabs.reload(t.id);
+    for (let i = 0; i < 15; i++) {
+      await new Promise(r => setTimeout(r, 700));
+      const d = await chrome.tabs.get(t.id);
+      if (d.status === 'complete') {
+        // Il contenuto compare dopo il caricamento: leggere subito
+        // significa leggere il guscio.
+        await new Promise(r => setTimeout(r, 2500));
+        return d;
+      }
+    }
+    return await chrome.tabs.get(t.id);
+  } catch (e) { return scheda; }
+}
+
+// ── Fotografare LA scheda giusta, o nessuna ──
+//
+// Il 7 agosto il pannello di COBRA ha mostrato la pagina "Cervello AI" di
+// Funnemail mentre l'etichetta sotto diceva "LinkedIn — Samuel Chen, 14
+// messaggi". Non era un errore di etichetta: captureVisibleTab fotografa la
+// scheda in PRIMO PIANO della finestra, e LinkedIn stava dietro. Usciva
+// l'immagine di una pagina che non c'entrava niente.
+//
+// Una foto sbagliata e' peggio di nessuna foto: chi guarda crede di vedere la
+// prova di quello che e' stato letto, e sta vedendo altro. Quindi si fotografa
+// solo se quella scheda e' davvero quella in primo piano; altrimenti si dice
+// perche' non c'e' l'immagine.
+async function fotoDi(tabId) {
+  try {
+    const t = await chrome.tabs.get(tabId);
+    if (!t.active) {
+      return { url: t.url, perche: 'la pagina e\' in una scheda in secondo piano: '
+        + 'Chrome fotografa solo quella in primo piano, e una foto di un\'altra '
+        + 'pagina sarebbe peggio di nessuna foto.' };
+    }
+    const img = await chrome.tabs.captureVisibleTab(t.windowId, { format: 'jpeg', quality: 60 });
+    return img ? { screenshot: img.split(',')[1], url: t.url } : { url: t.url };
+  } catch (e) {
+    return { perche: 'non sono riuscito a fotografare la pagina: ' + e.message };
+  }
+}
 async function executeCommand(command, args) {
   try {
     switch (command) {
@@ -951,6 +1039,1574 @@ async function executeCommand(command, args) {
         });
         await new Promise(r => setTimeout(r, 450));
         return { ok: true, x: args.x, y: args.y };
+      }
+
+      // ── Compilare un campo: prima si guarda, poi si scrive, poi si verifica ──
+      //
+      // Il metodo precedente faceva una cosa sola: prendeva il selettore e
+      // assegnava el.value, assumendo sempre un <input> o una <textarea>.
+      // Su un modulo vero questo produce tre guasti silenziosi:
+      //
+      //   <select>   — assegnare .value con un testo che non è uno dei valori
+      //                delle opzioni non fa niente. Nessun errore, campo vuoto.
+      //   checkbox   — la spunta sta in .checked, non in .value. Scrivere
+      //                "true" in .value lascia la casella com'era.
+      //   React/Vue  — molti moduli riscrivono il campo dopo l'evento, e senza
+      //                rileggere si dichiarava riuscito un campo tornato vuoto.
+      //
+      // Qui il campo viene prima ispezionato, poi trattato secondo quello che
+      // è, e infine RILETTO: si riferisce quello che c'è davvero nel campo,
+      // non quello che si è provato a metterci.
+      // ── WhatsApp e LinkedIn, con il codice che gia' funziona ──
+      //
+      // Qui non c'e' nessun selettore scritto da noi: si chiamano le funzioni
+      // delle estensioni del Navigator, che quei selettori li hanno gia'
+      // sbagliati e corretti abbastanza volte da sapere quali reggono.
+      case 'whatsapp_sessione':
+        return await Esterni.con('wa', (m) => m.Actions.verifySession(), args.modo || 'automatico');
+
+      // ── L'elenco delle conversazioni, letto dove sta davvero ──
+      //
+      // PERCHE' NON USO IL LORO readUnreadMessages
+      //
+      // Il 7 agosto l'ho provato sul WhatsApp vero di Luca. Ha restituito 150
+      // righe in cui i messaggi erano finiti al posto dei contatti:
+      //
+      //     contact: "We will do tomorrow"       <- e' un messaggio
+      //     lastMessage: "wds-ic-read"           <- e' il nome dell'icona
+      //     avgBadge: 0, confidence: 15
+      //
+      // Il motivo: la loro strategia "role-row" prende ogni elemento con
+      // role="row" di TUTTA la pagina, e le bolle della conversazione aperta
+      // hanno lo stesso ruolo delle righe dell'elenco. Con una chat aperta,
+      // legge quella e la scambia per la rubrica.
+      //
+      // I SELETTORI QUI SOTTO NON SONO INDOVINATI
+      //
+      // Vengono dal LORO Discovery, che sulla stessa pagina e nello stesso
+      // momento ha misurato: sidebarSelector "pane-side", chatItems 68,
+      // chatItemsMethod "cell-frame". Sono fatti rilevati dal vivo, non
+      // ipotesi mie: mi limito a leggere dentro il contenitore che loro hanno
+      // gia' identificato, invece che in tutta la pagina.
+      case 'whatsapp_elenco_chat': {
+        const _pwe = await globalThis.Pagine.preparaPagina('whatsapp_chat');
+        if (!_pwe.ok) return _pwe;
+        const viva = _pwe.scheda;
+
+        // Anche leggere e' un gesto che si vede. Su LinkedIn il ritmo c'era e
+        // qui no: sessantaquattro righe lette in un millisecondo, ogni volta
+        // allo stesso modo, sono una firma quanto un invio raffica.
+        if (globalThis.Ritmo) await globalThis.Ritmo.comeUnaPersona(viva.id, 'veloce', async () => {});
+
+        // Il selettore lo chiede alla mappa: la prima volta lo impara guardando,
+        // le volte dopo lo riusa, e se il DOM cambia lo ritrova da solo.
+        let selRighe = null, comeLoSoWa = 'scritto a mano';
+        if (globalThis.Mappa) {
+          const m = await globalThis.Mappa.selettorePer(viva.id, viva.url, 'elenco_conversazioni');
+          if (m.ok) { selRighe = m.selettore; comeLoSoWa = m.dallaMemoria ? 'gia\' noto dalla mappa' : m.come; }
+        }
+
+        const r = await chrome.scripting.executeScript({
+          target: { tabId: viva.id },
+          args: [Number(args.quante) || 40, selRighe],
+          func: (quante, selRighe) => {
+            const elenco = document.querySelector('#pane-side');
+            if (!elenco) return { ok: false, motivo: 'non trovo l\'elenco chat (#pane-side)' };
+
+            // ── Quale selettore, lo dice la pagina ──
+            //
+            // Al primo tentativo avevo scelto [role="listitem"] e ho trovato
+            // zero righe: WhatsApp non lo usa piu'. Indovinare un secondo
+            // selettore sarebbe stato lo stesso errore due volte.
+            //
+            // Il selettore imparato dalla mappa ha la precedenza: se regge, si
+            // usa quello e non si prova nient'altro.
+            //
+            // Quindi si provano i candidati e vince quello che trova piu'
+            // righe. Nota che "role=row" qui e' innocuo, mentre e' proprio
+            // quello che rovinava la lettura dei moduli del Navigator: la
+            // differenza non e' il selettore, e' che qui si cerca DENTRO
+            // #pane-side, dove le bolle della conversazione non arrivano.
+            // Il selettore imparato dalla mappa va provato per primo: se regge,
+            // gli altri non si guardano nemmeno. Se non regge, si ricade sui
+            // candidati e la mappa imparera' quello nuovo al giro dopo.
+            const candidati = [
+              ...(selRighe ? [selRighe] : []),
+              '[data-testid="cell-frame-container"]',
+              '[role="listitem"]',
+              '[role="row"]',
+              '[role="gridcell"]',
+              'div[data-id]',
+            ];
+            let scelto = null, righe = [];
+            for (const sel of candidati) {
+              let trovate = [...elenco.querySelectorAll(sel)];
+
+              // ── Solo le righe piu' esterne ──
+              //
+              // WhatsApp annida: una riga della lista ne contiene un'altra con
+              // lo stesso ruolo. Prendendole tutte, ogni conversazione viene
+              // contata due volte — il 7 agosto la prova dal vivo ha restituito
+              // 198 righe per 68 conversazioni, con ogni nome ripetuto.
+              //
+              // Contare di piu' non e' contare meglio. Si tengono solo gli
+              // elementi che non stanno dentro un altro elemento gia' preso.
+              trovate = trovate.filter(el => !trovate.some(altro => altro !== el && altro.contains(el)));
+
+              if (trovate.length > righe.length) { righe = trovate; scelto = sel; }
+            }
+
+            // Nessun candidato: si riporta com'e' fatto il contenitore, cosi'
+            // la prossima mossa parte da un fatto invece che da un'ipotesi.
+            if (!righe.length) {
+              const campione = [...elenco.querySelectorAll('*')].slice(0, 400);
+              const conteggio = {};
+              for (const el of campione) {
+                const chiave = el.getAttribute('role') ? 'role=' + el.getAttribute('role')
+                  : el.getAttribute('data-testid') ? 'data-testid=' + el.getAttribute('data-testid')
+                  : null;
+                if (chiave) conteggio[chiave] = (conteggio[chiave] || 0) + 1;
+              }
+              return {
+                ok: false,
+                motivo: 'dentro #pane-side non riconosco le righe',
+                figli: elenco.children.length,
+                elementi: campione.length,
+                cosaCeDentro: Object.entries(conteggio).sort((a, b) => b[1] - a[1]).slice(0, 12),
+              };
+            }
+
+            // ── Nome, anteprima e ora: da dove si prendono davvero ──
+            //
+            // La prima versione leggeva riga.innerText e ne ricavava tutto.
+            // Provata sulle chat vere di Luca il 7 agosto: nomi giusti, ma
+            // anteprima e ora VUOTE per tutte e 64 le conversazioni. WhatsApp
+            // mette quei testi in nodi che innerText non restituisce.
+            //
+            // Verificato sulla pagina: ogni riga ha due span[title] — il primo
+            // e' il contatto, il secondo l'ultimo messaggio. L'ora sta in un
+            // nodo a parte e si riconosce dalla forma.
+            const chat = righe.map((riga) => {
+              const titoli = [...riga.querySelectorAll('span[title], [title]')]
+                .map(e => (e.getAttribute('title') || '').trim());
+              const nome = titoli[0] || '';
+              // Il carattere invisibile che WhatsApp mette attorno all'anteprima
+              // (U+202A/U+202C, direzione del testo) va tolto o si porta dietro
+              // caratteri che non si vedono ma sporcano i confronti.
+              const anteprima = (titoli[1] || '').replace(/[‪-‮⁦-⁩]/g, '').slice(0, 160);
+
+              let ora = '';
+              for (const n of riga.querySelectorAll('div, span')) {
+                const s = (n.textContent || '').trim();
+                if (s.length < 12 && /^(\d{1,2}[:.]\d{2}|ieri|oggi|yesterday|today|\d{1,2}\/\d{1,2}\/\d{2,4}|luned|marted|mercoled|gioved|venerd|sabato|domenica)/i.test(s)) {
+                  ora = s; break;
+                }
+              }
+
+              let nonLetti = 0;
+              for (const e of riga.querySelectorAll('[aria-label]')) {
+                const m = (e.getAttribute('aria-label') || '').match(/(\d+)\s*(messagg|non lett|unread)/i);
+                if (m) { nonLetti = parseInt(m[1], 10); break; }
+              }
+
+              return { nome, anteprima, ora, nonLetti };
+            }).filter(c => c.nome);
+
+            // Cintura e bretelle: se due righe diverse portano lo stesso nome,
+            // per Luca sono la stessa conversazione. La struttura puo' cambiare
+            // ancora; il fatto che un contatto sia uno solo, no.
+            const visti = new Set();
+            const unici = chat.filter(c => {
+              if (visti.has(c.nome)) return false;
+              visti.add(c.nome);
+              return true;
+            });
+
+            return {
+              ok: true,
+              selettore: scelto,
+              righeGuardate: righe.length,
+              conNome: chat.length,
+              conversazioni: unici.length,
+              conNonLetti: unici.filter(c => c.nonLetti > 0).length,
+              chat: unici.slice(0, quante),
+            };
+          },
+        });
+        return r[0].result;
+      }
+
+      case 'whatsapp_non_letti':
+        return await Esterni.con('wa', (m) => m.Actions.readUnreadMessages(), args.modo || 'automatico');
+
+      case 'whatsapp_conversazione':
+        return await Esterni.con('wa', (m) => m.Actions.readThread(args.contatto, args.quanti || 30), args.modo || 'automatico');
+
+      case 'whatsapp_scrivi':
+        return await Esterni.con('wa', (m) => m.Actions.sendWhatsAppMessage(args.a, args.testo), args.modo || 'automatico');
+
+      case 'whatsapp_diagnosi':
+        return await Esterni.con('wa', (m) => m.Actions.diagnostic(), args.modo || 'automatico');
+
+      case 'linkedin_profilo':
+        return await Esterni.con('li', (m) => m.Actions.extractProfileByUrl(args.url), args.modo || 'automatico');
+
+      case 'linkedin_cerca':
+        return await Esterni.con('li', (m) => m.Actions.searchProfile(args.chi), args.modo || 'automatico');
+
+      case 'linkedin_posta':
+        return await Esterni.con('li', (m) => m.Actions.readInbox(), args.modo || 'automatico');
+
+      case 'linkedin_conversazione':
+        return await Esterni.con('li', (m) => m.Actions.readThread(args.contatto, args.quanti || 30), args.modo || 'automatico');
+
+      case 'linkedin_scrivi':
+        return await Esterni.con('li', (m) => m.Actions.sendLinkedInMessage(args.url, args.testo), args.modo || 'automatico');
+
+      case 'linkedin_diagnosi':
+        return await Esterni.con('li', (m) => m.Actions.diagnostic(), args.modo || 'automatico');
+
+      // Quali schede ci sono, e su quali si puo' davvero guardare.
+      //
+      // Serve a rispondere a una domanda precisa senza indovinare: quando un
+      // modulo dice "non riesco ad accedere alla pagina", su QUALE pagina non
+      // riesce? Le pagine chrome:// e il Web Store sono vietate a ogni
+      // estensione, e se la scheda scelta e' una di quelle l'errore parla di
+      // permessi ma il problema e' la scelta.
+      case 'elenco_schede': {
+        const schede = await chrome.tabs.query({});
+        const vietata = (u) => /^(chrome|edge|about|devtools|view-source):/i.test(u || '')
+          || /chrome\.google\.com\/webstore|chromewebstore\.google\.com/i.test(u || '');
+        return {
+          quante: schede.length,
+          whatsapp: schede.filter(t => /web\.whatsapp\.com/i.test(t.url || ''))
+            .map(t => ({ id: t.id, url: t.url, attiva: t.active, stato: t.status, finestra: t.windowId })),
+          linkedin: schede.filter(t => /linkedin\.com/i.test(t.url || ''))
+            .map(t => ({ id: t.id, url: (t.url || '').slice(0, 70), attiva: t.active })),
+          // Se COBRA riesce a leggere QUESTA, il permesso c'e'.
+          provaLettura: await (async () => {
+            const wa = schede.find(t => /web\.whatsapp\.com/i.test(t.url || ''));
+            if (!wa) return 'nessuna scheda WhatsApp aperta';
+            try {
+              const r = await chrome.scripting.executeScript({
+                target: { tabId: wa.id },
+                func: () => ({ titolo: document.title, caratteri: (document.body?.innerText || '').length }),
+              });
+              return { riuscita: true, ...r[0].result };
+            } catch (e) { return { riuscita: false, errore: e.message }; }
+          })(),
+          attiva: (schede.find(t => t.active) || {}).url,
+          vietate: schede.filter(t => vietata(t.url)).map(t => (t.url || '').slice(0, 50)),
+        };
+      }
+
+      // ── Come stanno WhatsApp e LinkedIn, per il badge in alto ──
+      //
+      // COMPLETAMENTE PASSIVO. Questo comando non tocca le pagine, non inietta
+      // niente, non manda una sola richiesta di rete. Se WhatsApp e LinkedIn
+      // fossero due persone che ci guardano, da qui non vedrebbero nulla.
+      //
+      // Il primo tentativo non era cosi': leggevo il DOM ogni venti secondi.
+      // Nessuna richiesta di rete, d'accordo, ma comunque uno script iniettato
+      // in continuazione in una pagina che non me lo aveva chiesto — per
+      // accendere una spia. Luca ha avuto ragione a fermarmi: "meno grave"
+      // non e' "zero", e su una spia decorativa il costo giusto e' zero.
+      //
+      // Da dove viene l'informazione, adesso:
+      //
+      //   1. chrome.tabs.query — dice se la scheda esiste e se e' caricata.
+      //      E' l'elenco che Chrome tiene per conto suo: leggerlo non tocca
+      //      nessun sito.
+      //
+      //   2. chrome.cookies — per LinkedIn c'e' il cookie `li_at`, che esiste
+      //      solo se la sessione e' aperta. Chrome ce l'ha gia' sul disco:
+      //      leggerlo e' come guardare in tasca, non come bussare alla porta.
+      //
+      //   3. La MEMORIA dell'ultima operazione vera. Quando COBRA fa davvero
+      //      qualcosa — legge le chat, verifica la sessione — l'esito resta
+      //      registrato. Il badge mostra quello, e dice quanto e' vecchio.
+      //
+      // WhatsApp non ha un cookie che dica "sei dentro" (la sessione vive in
+      // IndexedDB, che senza toccare la pagina non si legge). Quindi per
+      // WhatsApp il badge si fida della memoria, e se e' vecchia lo dichiara
+      // invece di fingere di sapere. Dire "verificato venti minuti fa" e'
+      // piu' onesto che dire "collegato" senza aver guardato.
+      case 'stato_canali': {
+        const schede = await chrome.tabs.query({});
+        const ricordo = (await chrome.storage.local.get(['cobra_canali'])).cobra_canali || {};
+
+        const cerca = (regex) => {
+          const t = schede.filter(x => regex.test(x.url || ''));
+          if (!t.length) return { scheda: false, caricata: false };
+          const viva = t.find(x => x.status === 'complete');
+          return { scheda: true, caricata: !!viva, quante: t.length,
+            titolo: (viva || t[0]).title || '' };
+        };
+
+        const eta = (quando) => {
+          if (!quando) return null;
+          const m = Math.round((Date.now() - quando) / 60000);
+          if (m < 1) return 'adesso';
+          if (m < 60) return `${m} minuti fa`;
+          const o = Math.round(m / 60);
+          return o < 24 ? `${o} ore fa` : `${Math.round(o / 24)} giorni fa`;
+        };
+
+        // ── LinkedIn: il cookie dice la verita' senza chiedere niente ──
+        const li = cerca(/linkedin\.com/i);
+        let liDentro = null;
+        try {
+          const c = await chrome.cookies.get({ url: 'https://www.linkedin.com', name: 'li_at' });
+          liDentro = !!(c && c.value);
+        } catch (_) { liDentro = null; }
+
+        const linkedin = {
+          scheda: li.scheda,
+          connesso: liDentro === true,
+          perche: liDentro === true ? null
+            : liDentro === false ? 'sessione non attiva: devi entrare tu'
+            : li.scheda ? 'non riesco a leggere lo stato della sessione'
+            : 'nessuna scheda aperta',
+          come: 'cookie di sessione — nessun contatto con LinkedIn',
+          ultimoLavoro: eta(ricordo.li?.quando),
+        };
+
+        // ── WhatsApp: memoria, piu' quello che dice la scheda ──
+        //
+        // Il titolo della scheda e' l'unica cosa che WhatsApp scrive fuori
+        // dalla pagina: diventa "(3) WhatsApp" quando ci sono non letti. Non
+        // dice se sei dentro, ma dice che l'applicazione sta girando.
+        const wa = cerca(/web\.whatsapp\.com/i);
+        const nonLetti = (wa.titolo.match(/^\((\d+)\)/) || [])[1];
+        const memoriaWa = ricordo.wa || {};
+        const recente = memoriaWa.quando && (Date.now() - memoriaWa.quando) < 30 * 60000;
+
+        const whatsapp = {
+          scheda: wa.scheda,
+          connesso: !!(wa.caricata && (recente ? memoriaWa.dentro : nonLetti !== undefined)),
+          perche: !wa.scheda ? 'nessuna scheda aperta'
+            : !wa.caricata ? 'scheda scaricata da Chrome'
+            : recente ? (memoriaWa.dentro ? null : (memoriaWa.perche || 'non risultavi dentro'))
+            : nonLetti !== undefined ? null
+            : 'non verifico da un po\': lo sapro\' al prossimo lavoro',
+          nonLetti: nonLetti ? Number(nonLetti) : null,
+          come: recente ? 'ultimo lavoro vero' : 'titolo della scheda — nessun contatto con WhatsApp',
+          ultimoLavoro: eta(memoriaWa.quando),
+        };
+
+        return { whatsapp, linkedin, passivo: true };
+      }
+
+      // ── L'elenco delle conversazioni LinkedIn ──
+      //
+      // Scritto guardando la pagina vera il 7 agosto, non a memoria. Il
+      // lettore del Navigator (readLinkedInInbox, metodo "legacy-structural")
+      // su quella stessa pagina restituiva 26 righe per 12 conversazioni:
+      // ogni contatto compariva due volte, la seconda vuota. E' lo stesso
+      // difetto che aveva su WhatsApp — prende elementi annidati e li conta
+      // tutti — e per giunta ci arriva solo dopo che il metodo principale
+      // scade (optimus_inbox_timeout_12000ms), quindi 28 secondi per un dato
+      // sbagliato.
+      //
+      // Qui si legge una volta sola, dal contenitore giusto.
+      //
+      // COSA NON C'E', e va detto: nella messaggistica LinkedIn non esiste
+      // nessun link al profilo delle persone — verificato, zero <a href="/in/">
+      // in tutta la pagina. Il numero della conversazione sta solo
+      // nell'indirizzo, e compare dopo averla aperta. Per questo qui si torna
+      // il NOME: e' l'unica chiave che la pagina offre davvero.
+      case 'linkedin_elenco_chat': {
+        // Regola di Luca: mai in serie, mai sovrapposte, mai meccaniche.
+        // Ritmo.comeUnaPersona mette in coda (una operazione per volta),
+        // aspetta una pausa gaussiana, muove il mouse su una traiettoria
+        // curva e ogni tanto scorre. Se il modulo non e' caricato si procede
+        // lo stesso: meglio senza ritmo che fermi.
+        // Una funzione sola porta sulla pagina giusta: la cerca, la sveglia,
+        // o la apre in secondo piano. Prima questo blocco era lungo trenta
+        // righe ed era diverso in ognuno dei cinque comandi.
+        const _pe = await globalThis.Pagine.preparaPagina('linkedin_messaggi');
+        if (!_pe.ok) return _pe;
+        const viva = _pe.scheda;
+        const apertaDaMe = !!_pe.apertaDaMe;
+
+        // ── Il selettore lo chiede alla mappa, non lo sa a memoria ──
+        //
+        // La prima volta guarda la pagina e impara; le volte dopo usa quello
+        // che sa, e ci mette un millisecondo. Se il DOM e' cambiato, il
+        // selettore imparato non regge piu' e la mappa ne trova un altro da
+        // sola: il lavoro prosegue, e la riscoperta viene detta invece di
+        // essere nascosta.
+        let selRighe = 'li.msg-conversation-listitem';
+        let comeLoSo = 'scritto a mano (mappa non disponibile)';
+        let riscoperto = false;
+        if (globalThis.Mappa) {
+          const m = await globalThis.Mappa.selettorePer(viva.id, viva.url, 'elenco_conversazioni');
+          if (m.ok) {
+            selRighe = m.selettore;
+            comeLoSo = m.dallaMemoria ? 'gia\' noto dalla mappa' : m.come;
+            riscoperto = !!m.riscoperto;
+          }
+        }
+
+        const r = await chrome.scripting.executeScript({
+          target: { tabId: viva.id },
+          args: [Number(args.quante) || 50, selRighe],
+          func: (quante, selRighe) => {
+            const righe = document.querySelectorAll(selRighe);
+            if (!righe.length) {
+              return {
+                ok: false,
+                motivo: 'non trovo le conversazioni',
+                cosaFare: 'Apri https://www.linkedin.com/messaging/ e riprova.',
+                cosaCeDentro: document.title.slice(0, 80),
+              };
+            }
+
+            // Righe che non sono persone: la barra di stato in fondo, e le
+            // InMail pubblicitarie che mettono l'etichetta al posto del nome.
+            const NON_PERSONE = /^(stato:|messaggio inmail$|sponsorizzat)/i;
+
+            const chat = [];
+            const visti = new Set();
+            for (const el of righe) {
+              const n = el.querySelector('.msg-conversation-listitem__participant-names, h3');
+              const nome = n ? n.innerText.replace(/\s+/g, ' ').trim() : '';
+              if (!nome || NON_PERSONE.test(nome)) continue;
+              if (visti.has(nome)) continue;      // niente doppioni
+              visti.add(nome);
+
+              const p = el.querySelector('.msg-conversation-card__message-snippet, .msg-conversation-card__message-snippet-body');
+              const t = el.querySelector('time, .msg-conversation-listitem__time-stamp');
+              chat.push({
+                nome,
+                anteprima: p ? p.innerText.replace(/\s+/g, ' ').trim().slice(0, 160) : '',
+                quando: t ? t.innerText.trim() : '',
+                nonLetto: !!el.querySelector('.msg-conversation-card__unread-count, [class*="unread"]'),
+              });
+              if (chat.length >= quante) break;
+            }
+
+            return {
+              ok: true,
+              righeGuardate: righe.length,
+              conversazioni: chat.length,
+              conNonLetti: chat.filter(c => c.nonLetto).length,
+              // Detto apertamente, perche' chi legge questa risposta deve
+              // sapere cosa NON puo' fare con essa.
+              nota: 'La messaggistica LinkedIn non espone il profilo di nessuno: '
+                + 'per rispondere si usa il nome, non un indirizzo.',
+              chat,
+            };
+          },
+        });
+        if (r?.[0]?.result) {
+          r[0].result.selettore = selRighe;
+          r[0].result.comeLoSo = comeLoSo;
+          if (riscoperto) {
+            r[0].result.paginaCambiata = 'Il selettore che conoscevo non funzionava piu\': '
+              + 'ho riguardato la pagina e ne ho imparato uno nuovo (' + selRighe + ').';
+          }
+        }
+        const esito = r?.[0]?.result || { ok: false, motivo: 'la pagina non ha risposto' };
+
+        // ── La foto della pagina che ho letto davvero ──
+        //
+        // Il pannello di COBRA restava nero durante le letture. Il comando
+        // 'screenshot' fotografa la scheda ATTIVA, che quasi sempre e' COBRA
+        // stesso o un'altra cosa: la messaggistica sta in un'altra scheda, a
+        // volte perfino in secondo piano.
+        //
+        // Quindi la foto si scatta qui, dove si sa quale scheda e'. Cosi' Luca
+        // vede la pagina da cui sono usciti quei nomi, e puo' controllarla a
+        // occhio in un secondo invece di fidarsi.
+        if (esito.ok) {
+          const foto = await fotoDi(viva.id);
+          if (foto.screenshot) esito.screenshot = foto.screenshot;
+          esito.url = foto.url;
+          if (foto.perche) esito.notaFoto = foto.perche;
+        }
+        // Se la scheda l'ho aperta io e non e' servita a niente, la chiudo:
+        // lasciarne in giro una a ogni tentativo fallito e' come Luca si e'
+        // ritrovato con centocinquanta copie dell'estensione.
+        if (apertaDaMe && !esito.ok) { try { await chrome.tabs.remove(viva.id); } catch (_) {} }
+        else if (apertaDaMe) esito.nota2 = 'Ho aperto io la scheda della messaggistica: era su un\'altra pagina.';
+        return esito;
+      }
+
+      // ── Aprire una conversazione e leggerla per intero ──
+      //
+      // Domanda di Luca, 7 agosto: "se legge la pagina e non entra nel
+      // messaggio di ognuno, come riporta i risultati?". Non li riportava: la
+      // lista da' solo l'anteprima, centocinquanta caratteri tagliati a meta'.
+      // Un riepilogo costruito su quelle e' un riepilogo di titoli, non di
+      // messaggi — e infatti diceva cose come "ha inviato un allegato".
+      //
+      // Qui la conversazione si apre davvero e si leggono i messaggi uno per
+      // uno, con chi ha scritto e quando.
+      //
+      // UN EFFETTO DA SAPERE: aprire una conversazione la segna come letta su
+      // LinkedIn. Non e' evitabile — succede anche a una persona che clicca —
+      // ma va detto, perche' e' un cambiamento sull'account di Luca fatto per
+      // leggere, non per scrivere.
+      case 'linkedin_leggi_conversazione': {
+        // Regola di Luca: mai in serie, mai sovrapposte, mai meccaniche.
+        // Ritmo.comeUnaPersona mette in coda (una operazione per volta),
+        // aspetta una pausa gaussiana, muove il mouse su una traiettoria
+        // curva e ogni tanto scorre. Se il modulo non e' caricato si procede
+        // lo stesso: meglio senza ritmo che fermi.
+        const chi = String(args.nome || args.contact || '').trim();
+        if (!chi) return { ok: false, motivo: 'non mi hai detto quale conversazione' };
+
+        const _pl = await globalThis.Pagine.preparaPagina('linkedin_messaggi');
+        if (!_pl.ok) return _pl;
+        const viva = _pl.scheda;
+
+        // 1. Trovare la riga e aprirla — dopo aver aspettato il proprio turno,
+        //    con la pausa e il movimento del mouse di una persona.
+        if (globalThis.Ritmo) await globalThis.Ritmo.comeUnaPersona(viva.id, 'leggere', async () => {});
+
+        const apri = await chrome.scripting.executeScript({
+          target: { tabId: viva.id }, args: [chi],
+          func: (chi) => {
+            const piatto = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+              .toLowerCase().replace(/\s+/g, ' ').trim();
+            const cerca = piatto(chi);
+            const righe = [...document.querySelectorAll('li.msg-conversation-listitem')];
+            const nomeDi = (el) => {
+              const n = el.querySelector('.msg-conversation-listitem__participant-names, h3');
+              return n ? n.innerText.replace(/\s+/g, ' ').trim() : '';
+            };
+            let trovate = righe.filter(el => piatto(nomeDi(el)) === cerca);
+            if (!trovate.length) trovate = righe.filter(el => piatto(nomeDi(el)).includes(cerca));
+
+            if (!trovate.length) {
+              return { ok: false, motivo: `non trovo nessuna conversazione con "${chi}"`,
+                disponibili: righe.map(nomeDi).filter(Boolean).slice(0, 12) };
+            }
+            // Piu' di una: NON si sceglie. Aprire la conversazione sbagliata
+            // significa segnarla come letta e riferire le parole di un altro.
+            if (trovate.length > 1) {
+              return { ok: false, ambiguo: true,
+                motivo: `"${chi}" corrisponde a ${trovate.length} conversazioni`,
+                candidati: trovate.map(nomeDi) };
+            }
+            const el = trovate[0];
+            const cliccabile = el.querySelector('.msg-conversation-listitem__link, a, [role="link"]') || el;
+            cliccabile.click();
+            return { ok: true, aperta: nomeDi(el) };
+          },
+        });
+        const esitoApri = apri?.[0]?.result;
+        if (!esitoApri || !esitoApri.ok) return esitoApri || { ok: false, motivo: 'la pagina non ha risposto' };
+
+        // 2. Aspettare che i messaggi compaiano. Leggere subito significa
+        //    leggere la conversazione precedente, ancora sullo schermo.
+        await new Promise(r => setTimeout(r, 2500));
+
+        let selMsg = '.msg-s-event-listitem';
+        if (globalThis.Mappa) {
+          const m = await globalThis.Mappa.selettorePer(viva.id, viva.url, 'messaggi');
+          if (m.ok && m.selettore !== '__TESTO_INTESTAZIONE__') selMsg = m.selettore;
+        }
+
+        const leggi = await chrome.scripting.executeScript({
+          target: { tabId: viva.id }, args: [Number(args.quanti) || 30, esitoApri.aperta, selMsg],
+          func: (quanti, aperta, selMsg) => {
+            const nodi = [...document.querySelectorAll(selMsg)];
+            if (!nodi.length) return { ok: false, motivo: 'la conversazione si e\' aperta ma non vedo messaggi' };
+
+            const messaggi = [];
+            let ultimoAutore = '';
+            for (const n of nodi.slice(-quanti)) {
+              const a = n.querySelector('.msg-s-message-group__name');
+              // LinkedIn scrive il nome solo sul primo messaggio di un gruppo:
+              // i successivi dello stesso autore non lo ripetono.
+              if (a && a.innerText.trim()) ultimoAutore = a.innerText.replace(/\s+/g, ' ').trim();
+              const t = n.querySelector('.msg-s-event-listitem__body');
+              const q = n.querySelector('time, .msg-s-message-group__timestamp');
+              const testo = t ? t.innerText.replace(/\n{3,}/g, '\n\n').trim() : '';
+              if (!testo) continue;
+              messaggi.push({ da: ultimoAutore || '(sconosciuto)', quando: q ? q.innerText.trim() : '', testo });
+            }
+            return { ok: true, conversazione: aperta, quanti: messaggi.length, messaggi,
+              nota: 'Aprire la conversazione l\'ha segnata come letta su LinkedIn.' };
+          },
+        });
+
+        const esito = leggi?.[0]?.result || { ok: false, motivo: 'non riesco a leggere i messaggi' };
+        if (esito.ok) {
+          const foto = await fotoDi(viva.id);
+          if (foto.screenshot) esito.screenshot = foto.screenshot;
+          esito.url = foto.url;
+          if (foto.perche) esito.notaFoto = foto.perche;
+        }
+        return esito;
+      }
+
+      // ── Rispondere dentro la conversazione ──
+      //
+      // Il pezzo che chiudeva il cerchio: leggere serve a poco se poi non si
+      // puo' rispondere. Prima l'unica strada era linkedin_send_message, che
+      // vuole l'indirizzo di un profilo — un dato che la messaggistica non
+      // espone. Quindi si poteva leggere Samuel Chen e non rispondergli mai.
+      //
+      // Qui si apre la conversazione per nome (stesso codice della lettura,
+      // stesse garanzie: se il nome corrisponde a due persone ci si ferma) e
+      // si scrive nella casella che e' gia' li'.
+      //
+      // La casella si svuota e si VERIFICA che si sia svuotata, come su
+      // WhatsApp: e' il difetto che ha fatto arrivare a Jose "test cobratest
+      // cobratest cobra". Qui non e' ancora successo, e non deve.
+      // ── Chiedere il collegamento a qualcuno ──
+      //
+      // Questo comando non c'era, e il buco e' costato l'8 agosto intero.
+      // `linkedin_connect` passava da `extRelay` — cioe' da un'ALTRA
+      // estensione LinkedIn, quella con `direction: from-webapp-li`, che sul
+      // computer di Luca non risponde. Nessuno raccoglieva il comando: nessuna
+      // pagina si apriva, nessun errore, solo un'attesa fino al timeout.
+      // Quattro tentativi, quattro "Extension timeout", e Luca che diceva la
+      // cosa giusta: "io non vedo cercare su linkedin la pagina corretta".
+      //
+      // Il ponte di COBRA aveva gia' nove comandi LinkedIn funzionanti e non
+      // questo. Adesso e' qui, con lo stesso metodo degli altri: la pagina se
+      // la prepara Pagine, il ritmo lo mette Ritmo, e il pulsante si cerca per
+      // SIGNIFICATO — ruolo piu' nome accessibile — non per classe CSS.
+      case 'linkedin_collegati': {
+        const url = String(args.url || args.profilo || '').trim();
+        const nota = String(args.nota || args.note || args.testo || '');
+        if (!/linkedin\.com\/(in|pub)\//i.test(url)) {
+          return { ok: false, motivo: 'serve l\'indirizzo di un profilo LinkedIn' };
+        }
+
+        const _pc = await globalThis.Pagine.preparaPagina('linkedin_profilo', { vai: url });
+        if (!_pc.ok) return _pc;
+        const viva = _pc.scheda;
+
+        if (globalThis.Ritmo) await globalThis.Ritmo.comeUnaPersona(viva.id, 'leggere', async () => {});
+        await new Promise(r => setTimeout(r, 2000));
+
+        // 1. Chi e' aperto davvero? Come per i messaggi: se non si legge il
+        //    nome non si va avanti. Un invito alla persona sbagliata non si
+        //    richiama piu' di un messaggio.
+        const chiCe = await chrome.scripting.executeScript({
+          target: { tabId: viva.id }, args: [url],
+          func: (atteso) => {
+            const h1 = document.querySelector('h1');
+            const slug = (location.pathname.match(/\/in\/([^/]+)/) || [])[1] || '';
+            const attesoSlug = (String(atteso).match(/\/in\/([^/?#]+)/) || [])[1] || '';
+            const piatto = (x) => String(x || '').replace(/[-_]/g, ' ')
+              .replace(/\s+\S*\d\S*$/, '').toLowerCase().trim();
+            return {
+              nome: h1 ? h1.innerText.trim() : '',
+              stessaPagina: piatto(slug) === piatto(attesoSlug),
+              url: location.href,
+            };
+          },
+        });
+        const q = chiCe?.[0]?.result;
+        if (!q || !q.nome) return { ok: false, motivo: 'non riesco a leggere di chi e\' il profilo: non procedo' };
+        if (!q.stessaPagina) return { ok: false, motivo: `sono finito su un altro profilo (${q.url}): non procedo` };
+
+        // 2. Il pulsante "Collegati". A volte e' in vista, a volte sta dentro
+        //    il menu "Altro": si guarda prima fuori, poi dentro.
+        if (globalThis.Ritmo) await globalThis.Ritmo.primaDiScrivere();
+        const premi = await chrome.scripting.executeScript({
+          target: { tabId: viva.id },
+          func: async () => {
+            const attendi = (ms) => new Promise(r => setTimeout(r, ms));
+            const nomeDi = (el) => (el.getAttribute('aria-label') || el.innerText || '').replace(/\s+/g, ' ').trim();
+            // Un elemento in `position: fixed` ha SEMPRE offsetParent nullo:
+            // e' cosi' che funziona il posizionamento fisso. Il riquadro
+            // "Aggiungi una nota" di LinkedIn e' esattamente questo, quindi
+            // filtrare su offsetParent lo avrebbe scartato come invisibile.
+            // Stesso difetto che teneva a schermo i banner dei cookie.
+            const siVede = (el) => {
+              try {
+                const r = el.getBoundingClientRect();
+                if (r.width < 2 || r.height < 2) return false;
+                const st = getComputedStyle(el);
+                return st.display !== 'none' && st.visibility !== 'hidden' && Number(st.opacity) !== 0;
+              } catch (_) { return false; }
+            };
+            const bottoni = () => [...document.querySelectorAll('button, a[role="button"]')].filter(siVede);
+            const cerca = (re) => bottoni().find(b => re.test(nomeDi(b)));
+
+            const collega = /^(collegati|connect)\b/i;
+            const gia = /(in attesa|pending|messaggio|message)$/i;
+
+            let b = cerca(collega);
+            if (!b) {
+              // Dietro "Altro": si apre e si riguarda.
+              const altro = cerca(/^(altro|more)\b/i);
+              if (altro) { altro.click(); await attendi(1200); b = cerca(collega); }
+            }
+            if (!b) {
+              const inAttesa = bottoni().find(x => /^(in attesa|pending)\b/i.test(nomeDi(x)));
+              if (inAttesa) return { ok: false, gia: true, motivo: 'la richiesta era gia\' in attesa' };
+              return { ok: false, motivo: 'non trovo il pulsante Collegati',
+                visti: bottoni().map(nomeDi).filter(Boolean).slice(0, 15) };
+            }
+            b.click();
+            await attendi(2000);
+            return { ok: true, premuto: nomeDi(b) };
+          },
+        });
+        const pr = premi?.[0]?.result;
+        if (!pr || !pr.ok) return pr || { ok: false, motivo: 'la pagina non ha risposto' };
+
+        // 3. La nota, se c'e'. "Aggiungi una nota" → si scrive → "Invia".
+        if (globalThis.Ritmo) await globalThis.Ritmo.comeUnaPersona(viva.id, 'pensare', async () => {});
+        const invia = await chrome.scripting.executeScript({
+          target: { tabId: viva.id }, args: [nota],
+          func: async (nota) => {
+            const attendi = (ms) => new Promise(r => setTimeout(r, ms));
+            const nomeDi = (el) => (el.getAttribute('aria-label') || el.innerText || '').replace(/\s+/g, ' ').trim();
+            // Un elemento in `position: fixed` ha SEMPRE offsetParent nullo:
+            // e' cosi' che funziona il posizionamento fisso. Il riquadro
+            // "Aggiungi una nota" di LinkedIn e' esattamente questo, quindi
+            // filtrare su offsetParent lo avrebbe scartato come invisibile.
+            // Stesso difetto che teneva a schermo i banner dei cookie.
+            const siVede = (el) => {
+              try {
+                const r = el.getBoundingClientRect();
+                if (r.width < 2 || r.height < 2) return false;
+                const st = getComputedStyle(el);
+                return st.display !== 'none' && st.visibility !== 'hidden' && Number(st.opacity) !== 0;
+              } catch (_) { return false; }
+            };
+            const visibili = () => [...document.querySelectorAll('button')].filter(siVede);
+            const cerca = (re) => visibili().find(b => re.test(nomeDi(b)));
+
+            if (nota && nota.trim()) {
+              const aggiungi = cerca(/^(aggiungi una nota|add a note)\b/i);
+              if (aggiungi) {
+                aggiungi.click();
+                await attendi(1200);
+                const campo = document.querySelector('textarea[name="message"], textarea#custom-message, textarea');
+                if (!campo) return { ok: false, motivo: 'non trovo il campo della nota' };
+                campo.focus();
+                // A pezzetti, non tutto insieme: come scrive una persona.
+                campo.value = '';
+                for (const pezzo of String(nota).match(/.{1,4}/g) || []) {
+                  campo.value += pezzo;
+                  campo.dispatchEvent(new Event('input', { bubbles: true }));
+                  await attendi(40 + Math.random() * 90);
+                }
+                await attendi(600);
+              }
+            }
+
+            const spedisci = cerca(/^(invia(\s+ora)?|send(\s+now)?|invia senza nota|send without a note)\b/i);
+            if (!spedisci) return { ok: false, motivo: 'non trovo il pulsante Invia',
+              visti: visibili().map(nomeDi).filter(Boolean).slice(0, 15) };
+            spedisci.click();
+            await attendi(2000);
+            return { ok: true, premuto: nomeDi(spedisci) };
+          },
+        });
+        const iv = invia?.[0]?.result;
+        if (!iv || !iv.ok) return iv || { ok: false, motivo: 'la pagina non ha risposto' };
+
+        // 4. La prova: il pulsante deve essere diventato "In attesa".
+        await new Promise(r => setTimeout(r, 2500));
+        const prova = await chrome.scripting.executeScript({
+          target: { tabId: viva.id },
+          func: () => {
+            const testo = document.body.innerText;
+            return { inAttesa: /\b(in attesa|pending)\b/i.test(testo),
+              collegatiAncoraLi: /\b(collegati|connect)\b/i.test(testo) };
+          },
+        });
+        const pv = prova?.[0]?.result || {};
+        return { ok: true, a: q.nome, url: q.url, conNota: !!(nota && nota.trim()),
+          confermato: !!pv.inAttesa,
+          nota: pv.inAttesa ? 'il profilo dice "In attesa": la richiesta e\' partita'
+            : 'non vedo "In attesa" sul profilo: verifica a mano' };
+      }
+
+      case 'linkedin_rispondi': {
+        // Regola di Luca: mai in serie, mai sovrapposte, mai meccaniche.
+        // Ritmo.comeUnaPersona mette in coda (una operazione per volta),
+        // aspetta una pausa gaussiana, muove il mouse su una traiettoria
+        // curva e ogni tanto scorre. Se il modulo non e' caricato si procede
+        // lo stesso: meglio senza ritmo che fermi.
+        const chi = String(args.nome || args.a || '').trim();
+        const testo = String(args.testo || '');
+        if (!chi || !testo) return { ok: false, motivo: 'servono il nome e il testo' };
+
+        const _pr = await globalThis.Pagine.preparaPagina('linkedin_messaggi');
+        if (!_pr.ok) return _pr;
+        const viva = _pr.scheda;
+
+        // 1. Aprire la conversazione giusta (o fermarsi).
+        if (globalThis.Ritmo) await globalThis.Ritmo.comeUnaPersona(viva.id, 'leggere', async () => {});
+
+        const apri = await chrome.scripting.executeScript({
+          target: { tabId: viva.id }, args: [chi],
+          func: (chi) => {
+            const piatto = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+              .toLowerCase().replace(/\s+/g, ' ').trim();
+            const cerca = piatto(chi);
+            const righe = [...document.querySelectorAll('li.msg-conversation-listitem')];
+            const nomeDi = (el) => {
+              const n = el.querySelector('.msg-conversation-listitem__participant-names, h3');
+              return n ? n.innerText.replace(/\s+/g, ' ').trim() : '';
+            };
+            let t = righe.filter(el => piatto(nomeDi(el)) === cerca);
+            if (!t.length) t = righe.filter(el => piatto(nomeDi(el)).includes(cerca));
+            if (!t.length) return { ok: false, motivo: `non trovo "${chi}" fra le conversazioni`,
+              disponibili: righe.map(nomeDi).filter(Boolean).slice(0, 12) };
+            if (t.length > 1) return { ok: false, ambiguo: true,
+              motivo: `"${chi}" corrisponde a ${t.length} conversazioni`, candidati: t.map(nomeDi) };
+            (t[0].querySelector('.msg-conversation-listitem__link, a, [role="link"]') || t[0]).click();
+            return { ok: true, aperta: nomeDi(t[0]) };
+          },
+        });
+        const a = apri?.[0]?.result;
+        if (!a || !a.ok) return a || { ok: false, motivo: 'la pagina non ha risposto' };
+
+        await new Promise(r => setTimeout(r, 2500));
+
+        // Prima di scrivere una persona legge quello che le hanno mandato e ci
+        // pensa su. Scrivere nell'istante in cui la conversazione si apre e'
+        // il gesto meno umano di tutti.
+        if (globalThis.Ritmo) { await globalThis.Ritmo.primaDiScrivere(); await globalThis.Ritmo.comeUnaPersona(viva.id, 'pensare', async () => {}); }
+
+        // ── Verificare CHI c'e' aperto, come su WhatsApp ──
+        //
+        // Qui non c'era per niente: si apriva la conversazione e si scriveva.
+        // Su WhatsApp il controllo c'era (rotto, ma c'era); qui mancava del
+        // tutto. E' l'ennesima asimmetria fra le due strade, e sta sul percorso
+        // dove un errore manda un messaggio a uno sconosciuto.
+        //
+        // Il titolo su LinkedIn e' in chiaro, verificato sulla pagina:
+        // .msg-entity-lockup__entity-title dice "Samuel Chen".
+        //
+        // Se non si riesce a leggerlo NON si scrive: nel dubbio si perde un
+        // invio, non si sbaglia persona.
+        const conferma = await chrome.scripting.executeScript({
+          target: { tabId: viva.id }, args: [a.aperta],
+          func: (atteso) => {
+            const e = document.querySelector('.msg-entity-lockup__entity-title, .msg-title-bar h2, [class*="entity-title"]');
+            const chi = e ? (e.innerText || '').split('\n')[0].trim() : '';
+            if (!chi) return { chi: null, perche: 'non riesco a leggere il nome in cima alla conversazione' };
+            const piatto = (x) => String(x || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+              .toLowerCase().replace(/\s+/g, ' ').trim();
+            return { chi, combacia: piatto(chi) === piatto(atteso) };
+          },
+        });
+        const c = conferma?.[0]?.result;
+        if (!c || !c.chi) {
+          return { ok: false,
+            motivo: c?.perche || 'non riesco a verificare quale conversazione e\' aperta',
+            cosaFare: 'Non scrivo senza sapere a chi. Riprova, o aprila tu e dimmelo.' };
+        }
+        if (!c.combacia) {
+          return { ok: false,
+            motivo: `ho chiesto "${a.aperta}" ma in cima vedo "${c.chi}": non scrivo`,
+            cosaFare: 'La conversazione aperta non e\' quella giusta. Riferiscilo a Luca.' };
+        }
+
+        // 2. Scrivere e mandare.
+        // La casella dalla mappa: se il DOM cambia, la ritrova da sola —
+        // anche per significato, cioe' "la casella dove si scrive un messaggio".
+        let selCasellaLi = '.msg-form__contenteditable';
+        if (globalThis.Mappa) {
+          const m = await globalThis.Mappa.selettorePer(viva.id, viva.url, 'casella_scrittura');
+          if (m.ok && m.selettore !== '__TESTO_INTESTAZIONE__') selCasellaLi = m.selettore;
+        }
+
+        const inviato = await chrome.scripting.executeScript({
+          target: { tabId: viva.id }, args: [testo, a.aperta, selCasellaLi],
+          func: async (testo, aperta, selCasella) => {
+            const box = document.querySelector(selCasella)
+              || document.querySelector('.msg-form__contenteditable, div[contenteditable="true"][role="textbox"]');
+            if (!box) return { ok: false, motivo: 'non trovo la casella di scrittura' };
+            box.focus();
+
+            const svuota = () => {
+              try {
+                const r = document.createRange(); r.selectNodeContents(box);
+                const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+                document.execCommand('delete', false);
+              } catch (e) { /* si riprova */ }
+            };
+            let residuo = '';
+            for (let i = 0; i < 3; i++) {
+              svuota();
+              residuo = (box.innerText || '').trim();
+              if (!residuo) break;
+              try {
+                box.innerHTML = '';
+                box.dispatchEvent(new InputEvent('input', { inputType: 'deleteContentBackward', bubbles: true, composed: true }));
+              } catch (e) { /* ignore */ }
+              residuo = (box.innerText || '').trim();
+              if (!residuo) break;
+            }
+            if (residuo) {
+              return { ok: false, motivo: 'casella_non_vuota', residuo: residuo.slice(0, 120),
+                perche: 'Nella casella e\' rimasto del testo: se scrivessi adesso partirebbe attaccato al mio.' };
+            }
+
+            // ── Si scrive a pezzi, non di colpo ──
+            //
+            // Regola di Luca: niente modifiche troppo rapide. Un messaggio di
+            // duecento caratteri che compare tutto insieme in un millisecondo
+            // non e' scritto da nessuno: e' incollato da un programma. Qui il
+            // testo entra a gruppi di poche lettere, con pause diverse ogni
+            // volta e qualche sosta piu' lunga dopo la punteggiatura, come chi
+            // rilegge la frase prima di continuare.
+            //
+            // Resta l'incollata come riserva: se il modo lento non attecchisce
+            // (Lexical a volte ignora insertText), meglio un messaggio inviato
+            // in fretta che un messaggio non inviato.
+            const uguale = () => (box.innerText || '').trim() === testo.trim();
+            const attesa = (ms) => new Promise(r => setTimeout(r, ms));
+
+            let scritto = '';
+            for (let i = 0; i < testo.length && !uguale();) {
+              const pezzo = 2 + Math.floor(Math.random() * 4);   // 2-5 caratteri
+              const parte = testo.slice(i, i + pezzo);
+              try { document.execCommand('insertText', false, parte); }
+              catch (e) { break; }
+              scritto += parte;
+              i += pezzo;
+              // Il ritmo di chi scrive non e' costante.
+              let pausa = 45 + Math.random() * 110;
+              if (/[.,;:!?]\s*$/.test(parte)) pausa += 200 + Math.random() * 400;
+              if (Math.random() < 0.07) pausa += 500 + Math.random() * 900;  // si ferma a pensare
+              await attesa(pausa);
+            }
+
+            if (!uguale()) {
+              try {
+                const dt = new DataTransfer(); dt.setData('text/plain', testo);
+                box.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+              } catch (e) { /* ignore */ }
+            }
+            if (!uguale()) { try { document.execCommand('insertText', false, testo); } catch (e) { /* ignore */ } }
+            if (!uguale()) {
+              try {
+                box.textContent = testo;
+                box.dispatchEvent(new InputEvent('input', { inputType: 'insertText', data: testo, bubbles: true, composed: true }));
+              } catch (e) { /* ignore */ }
+            }
+            if (!uguale()) return { ok: false, motivo: 'non riesco a scrivere nella casella',
+              dentro: (box.innerText || '').slice(0, 80) };
+
+            // Una persona rilegge prima di premere Invia.
+            await attesa(700 + Math.random() * 1600);
+            const bottone = [...document.querySelectorAll('button')]
+              .find(b => /invia|send/i.test(b.innerText || b.getAttribute('aria-label') || '') && !b.disabled);
+            if (!bottone) return { ok: false, motivo: 'il pulsante Invia e\' disattivato: il testo non e\' stato accettato' };
+            bottone.click();
+            await new Promise(r => setTimeout(r, 1200));
+
+            // La prova che e' partito: la casella si e' svuotata da sola.
+            const partito = !(box.innerText || '').trim();
+            return partito
+              ? { ok: true, a: aperta, testo }
+              : { ok: false, motivo: 'ho premuto Invia ma il testo e\' ancora nella casella' };
+          },
+        });
+        return inviato?.[0]?.result || { ok: false, motivo: 'la pagina non ha risposto' };
+      }
+
+      // ── Aprire una chat WhatsApp e leggerla ──
+      //
+      // Scritta da zero il 7 agosto. Quella del Navigator — readThread in
+      // wa/actions.js — non ha mai potuto funzionare: chiama
+      // _pageOpenAndReadThread e _pageDomReadMessages, e nessuna delle due
+      // esiste in nessun file. Ogni chiamata finiva nel catch e tornava
+      // { success: false }. Nessuno se n'era accorto perche' il fallimento
+      // sembrava un problema di sessione.
+      //
+      // DUE COSE IMPARATE GUARDANDO LA PAGINA, non a memoria:
+      //
+      //   1. Un .click() sulla riga NON apre la chat. WhatsApp ascolta la
+      //      sequenza vera del puntatore: pointerdown, mousedown, pointerup,
+      //      mouseup, click. Con il solo click la pagina non si muove, e si
+      //      finisce a leggere la conversazione precedente.
+      //
+      //   2. Autore e orario non stanno nel testo: stanno nell'attributo
+      //      data-pre-plain-text, nella forma "[04:57, 07/08/2026] Luca: ".
+      //      E' l'unico punto dove WhatsApp li mette insieme.
+      //
+      // EFFETTO DA SAPERE: aprire una chat la segna come letta. Vale anche
+      // per una persona che clicca, ma qui e' un programma a farlo su
+      // richiesta, e va detto.
+      // ── Scrivere in una chat WhatsApp aperta per nome ──
+      //
+      // Gemello di linkedin_rispondi, e nasce da un'asimmetria trovata
+      // rileggendo il codice a fine giornata.
+      //
+      // whatsapp_scrivi passava da sendWhatsAppMessage del Navigator, che
+      // prende `existingTabs[0]`: la PRIMA scheda WhatsApp che trova. Luca ne
+      // ha due aperte. Se la prima e' quella ferma sul QR o svuotata da Chrome,
+      // l'invio fallisce — o peggio, scrive nella conversazione sbagliata.
+      //
+      // E' lo stesso difetto che ho corretto oggi in cinque punti diversi. Su
+      // una lettura costa un errore; su un invio costa un messaggio mandato
+      // alla persona sbagliata, e quello non si richiama.
+      //
+      // Con un NUMERO la strada del Navigator resta giusta: /send?phone= apre
+      // la chat esatta senza ambiguita'. Con un NOME si passa di qui.
+      case 'whatsapp_rispondi': {
+        const chi = String(args.nome || args.a || '').trim();
+        const testo = String(args.testo || '');
+        if (!chi || !testo) return { ok: false, motivo: 'servono il nome e il testo' };
+
+        const _pw = await globalThis.Pagine.preparaPagina('whatsapp_chat');
+        if (!_pw.ok) return _pw;
+        const viva = _pw.scheda;
+
+        if (globalThis.Ritmo) await globalThis.Ritmo.comeUnaPersona(viva.id, 'leggere', async () => {});
+
+        // 1. Aprire la chat giusta, o fermarsi.
+        const apri = await chrome.scripting.executeScript({
+          target: { tabId: viva.id }, args: [chi],
+          func: (chi) => {
+            const piatto = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+              .toLowerCase().replace(/\s+/g, ' ').trim();
+            const cerca = piatto(chi);
+            const pane = document.querySelector('#pane-side');
+            if (!pane) return { ok: false, motivo: 'non trovo l\'elenco chat' };
+            const righe = [...pane.querySelectorAll('[role="row"]')];
+            const nomeDi = (r) => { const t = r.querySelector('span[title]'); return t ? (t.getAttribute('title') || '').trim() : ''; };
+            let t = righe.filter(r => piatto(nomeDi(r)) === cerca);
+            if (!t.length) t = righe.filter(r => piatto(nomeDi(r)).includes(cerca));
+            if (!t.length) return { ok: false, motivo: `non trovo nessuna chat con "${chi}"`,
+              disponibili: righe.map(nomeDi).filter(Boolean).slice(0, 15) };
+            if (t.length > 1) return { ok: false, ambiguo: true,
+              motivo: `"${chi}" corrisponde a ${t.length} chat`, candidati: t.map(nomeDi) };
+
+            const riga = t[0];
+            const bersaglio = riga.querySelector('[data-testid="cell-frame-container"]')
+              || riga.querySelector('[role="gridcell"]') || riga;
+            const b = bersaglio.getBoundingClientRect();
+            const x = b.left + b.width / 2, y = b.top + b.height / 2;
+            // La sequenza intera: col solo click la chat non si apre.
+            for (const tipo of ['pointerover', 'pointerenter', 'pointerdown', 'mousedown',
+                                'pointerup', 'mouseup', 'click']) {
+              const C = tipo.startsWith('pointer') ? PointerEvent : MouseEvent;
+              bersaglio.dispatchEvent(new C(tipo, { bubbles: true, cancelable: true,
+                composed: true, clientX: x, clientY: y, button: 0 }));
+            }
+            return { ok: true, aperta: nomeDi(riga) };
+          },
+        });
+        const a = apri?.[0]?.result;
+        if (!a || !a.ok) return a || { ok: false, motivo: 'la pagina non ha risposto' };
+
+        await new Promise(r => setTimeout(r, 2500));
+        if (globalThis.Ritmo) await globalThis.Ritmo.primaDiScrivere();
+
+        // ── 2. Verificare CHI c'e' aperto, e fermarsi se non si riesce ──
+        //
+        // La prima versione cercava `#main header span[title]` e trovava
+        // "Dettagli profilo" — l'etichetta del bottone che apre la scheda del
+        // contatto. Il nome della persona nell'header di WhatsApp NON sta in un
+        // attributo: sta nel testo.
+        //
+        // Il difetto era doppio, e il secondo peggiore del primo: trovando una
+        // stringa qualsiasi il controllo la confrontava, non combaciava mai
+        // davvero, ma la condizione `!chi` lo faceva passare lo stesso. Una rete
+        // di sicurezza che restituisce sempre "vai" non e' una rete: e' una
+        // decorazione. E sta sul percorso peggiore, quello dove un errore manda
+        // un messaggio a uno sconosciuto.
+        //
+        // Adesso: si legge il nome dal testo, e se non si riesce a leggerlo NON
+        // si scrive. Nel dubbio si perde un invio, non si sbaglia persona.
+        const conferma = await chrome.scripting.executeScript({
+          target: { tabId: viva.id }, args: [a.aperta],
+          func: (atteso) => {
+            const h = document.querySelector('#main header');
+            if (!h) return { chi: null, perche: 'nessuna conversazione aperta' };
+
+            // Il nome e' il primo testo utile: si scartano le etichette dei
+            // bottoni e le righe di stato ("online", "sta scrivendo...").
+            const scarta = /^(online|digitando|sta scrivendo|typing|click|clicca|dettagli|profil|ultimo accesso|last seen|tocca qui)/i;
+            let chi = null;
+            for (const n of h.querySelectorAll('span, div, h1, h2')) {
+              if (n.querySelector('span, div, h1, h2')) continue;   // solo le foglie
+              const t = (n.textContent || '').trim();
+              if (!t || t.length > 80 || scarta.test(t)) continue;
+              chi = t; break;
+            }
+            if (!chi) return { chi: null, perche: 'non riesco a leggere il nome in cima alla chat' };
+
+            const piatto = (x) => String(x || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+              .toLowerCase().replace(/\s+/g, ' ').trim();
+            return { chi, combacia: piatto(chi) === piatto(atteso) };
+          },
+        });
+        const c = conferma?.[0]?.result;
+        if (!c || !c.chi) {
+          return { ok: false,
+            motivo: c?.perche || 'non riesco a verificare quale chat e\' aperta',
+            cosaFare: 'Non scrivo senza sapere a chi: nel dubbio si perde un invio, '
+              + 'non si sbaglia persona. Riprova, o aprila tu e dimmelo.' };
+        }
+        if (!c.combacia) {
+          return { ok: false,
+            motivo: `ho chiesto "${a.aperta}" ma in cima alla chat vedo "${c.chi}": non scrivo`,
+            cosaFare: 'La conversazione aperta non e\' quella giusta. Riferiscilo a Luca.' };
+        }
+
+        // 3. Scrivere e mandare.
+        let selCasellaWa = 'footer [contenteditable="true"][data-tab]';
+        if (globalThis.Mappa) {
+          const m = await globalThis.Mappa.selettorePer(viva.id, viva.url, 'casella_scrittura');
+          if (m.ok && m.selettore !== '__TESTO_INTESTAZIONE__') selCasellaWa = m.selettore;
+        }
+
+        const inviato = await chrome.scripting.executeScript({
+          target: { tabId: viva.id }, args: [testo, a.aperta, selCasellaWa],
+          func: async (testo, aperta, selCasella) => {
+            const attesa = (ms) => new Promise(r => setTimeout(r, ms));
+            const box = document.querySelector(selCasella)
+              || document.querySelector('footer [contenteditable="true"][data-tab], footer [contenteditable="true"]');
+            if (!box) return { ok: false, motivo: 'non trovo la casella di scrittura' };
+            box.focus();
+
+            // Svuotare e VERIFICARE: e' il difetto che ha fatto arrivare a Jose
+            // "test cobratest cobratest cobra".
+            let residuo = '';
+            for (let i = 0; i < 3; i++) {
+              try {
+                const r = document.createRange(); r.selectNodeContents(box);
+                const sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(r);
+                document.execCommand('delete', false);
+              } catch (e) { /* si riprova */ }
+              residuo = (box.innerText || '').trim();
+              if (!residuo) break;
+              try {
+                box.textContent = '';
+                box.dispatchEvent(new InputEvent('input', { inputType: 'deleteContentBackward', bubbles: true, composed: true }));
+              } catch (e) { /* ignore */ }
+              residuo = (box.innerText || '').trim();
+              if (!residuo) break;
+            }
+            if (residuo) return { ok: false, motivo: 'casella_non_vuota', residuo: residuo.slice(0, 120) };
+
+            // Uguale, non "contiene": la differenza che produceva i doppioni.
+            const uguale = () => (box.innerText || '').trim() === testo.trim();
+            for (let i = 0; i < testo.length && !uguale();) {
+              const pezzo = 2 + Math.floor(Math.random() * 4);
+              const parte = testo.slice(i, i + pezzo);
+              try { document.execCommand('insertText', false, parte); } catch (e) { break; }
+              i += pezzo;
+              let pausa = 45 + Math.random() * 110;
+              if (/[.,;:!?]\s*$/.test(parte)) pausa += 200 + Math.random() * 400;
+              if (Math.random() < 0.07) pausa += 500 + Math.random() * 900;
+              await attesa(pausa);
+            }
+            if (!uguale()) {
+              try {
+                const dt = new DataTransfer(); dt.setData('text/plain', testo);
+                box.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+              } catch (e) { /* ignore */ }
+            }
+            if (!uguale()) return { ok: false, motivo: 'non riesco a scrivere nella casella',
+              dentro: (box.innerText || '').slice(0, 80) };
+
+            await attesa(700 + Math.random() * 1600);
+            const bottone = document.querySelector('[data-testid="send"], [aria-label*="Invia" i], [aria-label*="Send" i]');
+            if (bottone) bottone.click();
+            else {
+              box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+            }
+            await attesa(1200);
+
+            // La prova che e' partito: la casella si e' svuotata da sola.
+            return (box.innerText || '').trim()
+              ? { ok: false, motivo: 'ho premuto invio ma il testo e\' ancora nella casella' }
+              : { ok: true, a: aperta, testo };
+          },
+        });
+        return inviato?.[0]?.result || { ok: false, motivo: 'la pagina non ha risposto' };
+      }
+
+      case 'whatsapp_leggi_conversazione': {
+        const chi = String(args.nome || args.contact || '').trim();
+        if (!chi) return { ok: false, motivo: 'non mi hai detto quale chat' };
+
+        const _pw = await globalThis.Pagine.preparaPagina('whatsapp_chat');
+        if (!_pw.ok) return _pw;
+        const viva = _pw.scheda;
+
+        if (globalThis.Ritmo) await globalThis.Ritmo.comeUnaPersona(viva.id, 'leggere', async () => {});
+
+        const apri = await chrome.scripting.executeScript({
+          target: { tabId: viva.id }, args: [chi],
+          func: (chi) => {
+            const piatto = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+              .toLowerCase().replace(/\s+/g, ' ').trim();
+            const cerca = piatto(chi);
+            const pane = document.querySelector('#pane-side');
+            if (!pane) return { ok: false, motivo: 'non trovo l\'elenco chat' };
+
+            const righe = [...pane.querySelectorAll('[role="row"]')];
+            const nomeDi = (r) => {
+              const t = r.querySelector('span[title]');
+              return t ? (t.getAttribute('title') || '').trim() : '';
+            };
+            let t = righe.filter(r => piatto(nomeDi(r)) === cerca);
+            if (!t.length) t = righe.filter(r => piatto(nomeDi(r)).includes(cerca));
+
+            if (!t.length) {
+              return { ok: false, motivo: `non trovo nessuna chat con "${chi}"`,
+                disponibili: righe.map(nomeDi).filter(Boolean).slice(0, 15) };
+            }
+            // Due omonimi: non si sceglie. Aprire la chat sbagliata la segna
+            // come letta e fa riferire le parole di un altro.
+            if (t.length > 1) {
+              return { ok: false, ambiguo: true,
+                motivo: `"${chi}" corrisponde a ${t.length} chat`,
+                candidati: t.map(nomeDi) };
+            }
+
+            const riga = t[0];
+            const bersaglio = riga.querySelector('[data-testid="cell-frame-container"]')
+              || riga.querySelector('[role="gridcell"]') || riga;
+            const b = bersaglio.getBoundingClientRect();
+            const x = b.left + b.width / 2, y = b.top + b.height / 2;
+            // La sequenza intera: col solo click la chat non si apre.
+            for (const tipo of ['pointerover', 'pointerenter', 'pointerdown', 'mousedown',
+                                'pointerup', 'mouseup', 'click']) {
+              const C = tipo.startsWith('pointer') ? PointerEvent : MouseEvent;
+              bersaglio.dispatchEvent(new C(tipo, {
+                bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, button: 0,
+              }));
+            }
+            return { ok: true, aperta: nomeDi(riga) };
+          },
+        });
+        const a = apri?.[0]?.result;
+        if (!a || !a.ok) return a || { ok: false, motivo: 'la pagina non ha risposto' };
+
+        await new Promise(r => setTimeout(r, 2500));
+
+        let selMsgWa = '[data-pre-plain-text]';
+        if (globalThis.Mappa) {
+          const m = await globalThis.Mappa.selettorePer(viva.id, viva.url, 'messaggi');
+          if (m.ok && m.selettore !== '__TESTO_INTESTAZIONE__') selMsgWa = m.selettore;
+        }
+
+        const leggi = await chrome.scripting.executeScript({
+          target: { tabId: viva.id }, args: [Number(args.quanti) || 40, a.aperta, selMsgWa],
+          func: (quanti, aperta, selMsgWa) => {
+            const main = document.querySelector('#main');
+            if (!main) return { ok: false, motivo: 'la chat non si e\' aperta' };
+
+            const nodi = [...main.querySelectorAll(selMsgWa)];
+            if (!nodi.length) {
+              return { ok: true, conversazione: aperta, quanti: 0, messaggi: [],
+                nota: 'La chat e\' aperta ma non contiene messaggi di testo: '
+                  + 'puo\' essere fatta solo di immagini, audio o allegati.' };
+            }
+
+            const messaggi = [];
+            for (const n of nodi.slice(-quanti)) {
+              const pre = n.getAttribute('data-pre-plain-text') || '';
+              const m = pre.match(/^\[([^,\]]+),\s*([^\]]+)\]\s*(.*?):\s*$/);
+              const t = n.querySelector('span.selectable-text, span[dir]') || n;
+              const testo = (t.innerText || '').replace(/\s+/g, ' ').trim();
+              if (!testo) continue;
+              messaggi.push({
+                da: m ? m[3] : '(sconosciuto)',
+                quando: m ? `${m[1]} ${m[2]}` : '',
+                testo,
+              });
+            }
+            return { ok: true, conversazione: aperta, quanti: messaggi.length, messaggi,
+              nota: 'Aprire la chat l\'ha segnata come letta su WhatsApp.' };
+          },
+        });
+
+        const esito = leggi?.[0]?.result || { ok: false, motivo: 'non riesco a leggere i messaggi' };
+        if (esito.ok) {
+          const foto = await fotoDi(viva.id);
+          if (foto.screenshot) esito.screenshot = foto.screenshot;
+          esito.url = foto.url;
+          if (foto.perche) esito.notaFoto = foto.perche;
+        }
+        return esito;
+      }
+
+      // ── "La pagina e' cambiata?" ──
+      //
+      // Domanda di Luca, 7 agosto: se il DOM cambia, COBRA se ne deve
+      // accorgere. Giusto, e prima non se ne accorgeva: un selettore che non
+      // trova niente restituisce una lista vuota, e "lista vuota" diventava
+      // "non hai messaggi" — detto serenamente a chi ne aveva otto.
+      //
+      // Questo comando prova tutti i selettori su entrambi i siti e dice
+      // quali reggono, quali stanno andando di riserva e quali sono morti.
+      // Legge soltanto: non apre, non clicca, non manda niente.
+      // ── Cosa ha imparato la mappa ──
+      case 'mappa_pagine':
+        if (!globalThis.Mappa) return { ok: false, motivo: 'mappa.js non caricato' };
+        return await globalThis.Mappa.quelloCheSo();
+
+      // Dimentica quello che sa: il prossimo uso riparte guardando la pagina.
+      // Serve quando si vuole forzare una riscoperta senza aspettare un guasto.
+      case 'mappa_dimentica':
+        if (!globalThis.Mappa) return { ok: false, motivo: 'mappa.js non caricato' };
+        return await globalThis.Mappa.dimentica(args.pagina || null);
+
+      case 'diagnosi_selettori':
+        if (!globalThis.Selettori) return { ok: false, motivo: 'selettori.js non caricato' };
+        return await globalThis.Selettori.diagnosi();
+
+      // Sblocca la coda del ritmo. Serve se un'operazione e' rimasta appesa
+      // (tipico: la pagina ricaricata mentre COBRA la stava leggendo).
+      case 'sblocca_coda':
+        return globalThis.Ritmo ? globalThis.Ritmo.sbloccaCoda()
+                                : { ok: false, motivo: 'ritmo non caricato' };
+
+      case 'stato_ritmo':
+        return globalThis.Ritmo ? await globalThis.Ritmo.stato() : { errore: 'ritmo non caricato' };
+
+      case 'stato_moduli_esterni':
+        return Esterni.stato();
+
+      // ── Entrare in un sito chiuso ──
+      //
+      // La password arriva qui dal server e finisce nel campo. Non viene
+      // registrata, non torna nella risposta, non passa dal modello.
+      //
+      // Prima si guarda se si e' GIA' dentro: la sessione condivisa del
+      // profilo di Luca spesso e' ancora valida, e in quel caso rifare
+      // l'accesso e' solo un rischio in piu'.
+      case 'compila_accesso': {
+        const tab = await getWorkTab();
+        if (args.url) {
+          await chrome.tabs.update(tab.id, { url: args.url });
+          await waitForTabLoad(tab.id, 15000);
+          await new Promise(r => setTimeout(r, 1200));
+        }
+
+        const trovaCampi = () => {
+          const vedi = (el) => {
+            const r = el.getBoundingClientRect();
+            return r.width >= 2 && r.height >= 2;
+          };
+          const tutti = [...document.querySelectorAll('input')].filter(vedi);
+          const pwd = tutti.find(i => (i.type || '').toLowerCase() === 'password');
+          const utente = tutti.find(i => {
+            const t = (i.type || '').toLowerCase();
+            const n = ((i.name || '') + ' ' + (i.id || '') + ' ' + (i.autocomplete || '')
+              + ' ' + (i.placeholder || '')).toLowerCase();
+            return (t === 'email' || t === 'text' || t === 'tel')
+              && /user|email|mail|login|account|utente|username|userid/.test(n);
+          }) || tutti.find(i => ['email', 'text'].includes((i.type || '').toLowerCase()));
+          return { utente, pwd };
+        };
+
+        // Si e' gia' dentro? Se non c'e' un campo password, quasi certamente si'.
+        const stato = await run(tab.id, () => {
+          const pwd = [...document.querySelectorAll('input')].find(i => {
+            const r = i.getBoundingClientRect();
+            return (i.type || '').toLowerCase() === 'password' && r.width >= 2 && r.height >= 2;
+          });
+          const testo = (document.body.innerText || '').toLowerCase();
+          return {
+            campoPassword: !!pwd,
+            sembraDentro: !pwd && /esci|logout|il mio account|my account|dashboard|benvenut/.test(testo),
+          };
+        });
+        if (stato && !stato.campoPassword) {
+          return { ok: true, gia: true, motivo: 'la sessione era ancora valida: non ho rifatto l\'accesso' };
+        }
+
+        // Si compila. Il setter nativo serve ai moduli fatti in React, che
+        // altrimenti riscrivono il campo appena si gira lo sguardo.
+        const esito = await run(tab.id, (u, p, sorgenteTrova) => {
+          // eslint-disable-next-line no-new-func
+          const trova = new Function('return ' + sorgenteTrova)();
+          const { utente, pwd } = trova();
+          if (!pwd) return { ok: false, motivo: 'non trovo il campo della password' };
+
+          const scrivi = (el, valore) => {
+            el.focus();
+            const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement : HTMLInputElement;
+            const setter = Object.getOwnPropertyDescriptor(proto.prototype, 'value');
+            if (setter && setter.set) setter.set.call(el, valore); else el.value = valore;
+            for (const e of ['input', 'change', 'blur']) el.dispatchEvent(new Event(e, { bubbles: true }));
+            return el.value === valore;
+          };
+
+          const okU = utente ? scrivi(utente, u) : true;
+          const okP = scrivi(pwd, p);
+          if (!okP) return { ok: false, motivo: 'la pagina ha rifiutato il valore nel campo password' };
+
+          // Il pulsante di invio: quello del modulo, o il primo che lo dice.
+          const modulo = pwd.form;
+          let invio = modulo && modulo.querySelector('button[type="submit"], input[type="submit"]');
+          if (!invio) {
+            invio = [...document.querySelectorAll('button, input[type="submit"], [role="button"]')]
+              .find(b => {
+                const r = b.getBoundingClientRect();
+                if (r.width < 2 || r.height < 2) return false;
+                const t = ((b.innerText || b.value || '') + '').trim().toLowerCase();
+                return /^(accedi|entra|login|log in|sign in|continua|invia|submit)$/.test(t);
+              });
+          }
+          if (invio) { invio.click(); return { ok: true, compilati: { utente: okU, password: true }, inviato: true }; }
+          if (modulo) { try { modulo.submit(); return { ok: true, inviato: true, via: 'modulo' }; } catch (_) { /* niente */ } }
+          return { ok: false, motivo: 'campi compilati ma non trovo il pulsante per entrare' };
+        }, [String(args.utente || ''), String(args.password || ''), trovaCampi.toString()]);
+
+        if (!esito || !esito.ok) return esito || { ok: false, motivo: 'accesso non riuscito' };
+
+        await waitForTabLoad(tab.id, 15000);
+        await new Promise(r => setTimeout(r, 1500));
+
+        // Ha funzionato davvero? Se c'e' ancora un campo password, no. E se
+        // chiede un codice, serve una persona: non e' un fallimento nostro.
+        const dopo = await run(tab.id, () => {
+          const t = (document.body.innerText || '').toLowerCase();
+          const pwd = [...document.querySelectorAll('input')].some(i => {
+            const r = i.getBoundingClientRect();
+            return (i.type || '').toLowerCase() === 'password' && r.width >= 2 && r.height >= 2;
+          });
+          return {
+            ancoraFuori: pwd,
+            chiedeCodice: /codice di verifica|verification code|autenticazione a due|two.?factor|otp|sms/.test(t),
+            erroreCredenziali: /credenziali non valide|password errata|incorrect password|invalid (username|password|credentials)/.test(t),
+          };
+        });
+
+        if (dopo && dopo.chiedeCodice) {
+          return { ok: false, serveUmano: true, motivo: 'il sito chiede un codice di verifica' };
+        }
+        if (dopo && dopo.erroreCredenziali) {
+          return { ok: false, motivo: 'il sito dice che le credenziali non sono valide' };
+        }
+        if (dopo && dopo.ancoraFuori) {
+          return { ok: false, motivo: 'dopo l\'invio c\'e\' ancora il modulo di accesso' };
+        }
+        return { ok: true, entrato: true };
+      }
+
+      case 'compila_campo': {
+        const tab = await getWorkTab();
+        await muoviCursoreSu(tab.id, args.selettore, 'scrivo');
+        return await run(tab.id, (sel, valore) => {
+          const el = document.querySelector(sel);
+          if (!el) return { ok: false, motivo: 'campo non trovato', selettore: sel };
+
+          const r = el.getBoundingClientRect();
+          if (r.width < 2 || r.height < 2) return { ok: false, motivo: 'campo presente ma non visibile', selettore: sel };
+          if (el.disabled) return { ok: false, motivo: 'campo disabilitato: la pagina non permette di compilarlo', selettore: sel };
+          if (el.readOnly) return { ok: false, motivo: 'campo di sola lettura', selettore: sel };
+
+          const tag = el.tagName.toLowerCase();
+          const tipo = (el.type || '').toLowerCase();
+          const testo = String(valore);
+          const avvisa = () => {
+            for (const e of ['input', 'change', 'blur']) el.dispatchEvent(new Event(e, { bubbles: true }));
+          };
+
+          try { el.focus(); } catch (_) { /* alcuni campi non prendono il fuoco */ }
+
+          // ── Elenco a tendina ──
+          if (tag === 'select') {
+            const opzioni = [...el.options];
+            const norm = (x) => String(x || '').trim().toLowerCase();
+            let scelta = opzioni.find(o => norm(o.value) === norm(testo))
+              || opzioni.find(o => norm(o.text) === norm(testo))
+              || opzioni.find(o => norm(o.text).includes(norm(testo)));
+            if (!scelta) {
+              return { ok: false, motivo: 'nessuna opzione corrisponde', selettore: sel,
+                opzioniDisponibili: opzioni.slice(0, 25).map(o => o.text.trim()).filter(Boolean) };
+            }
+            el.value = scelta.value;
+            avvisa();
+            return { ok: el.value === scelta.value, tipo: 'elenco', scritto: scelta.text.trim(), rilettoDalCampo: el.value };
+          }
+
+          // ── Casella e scelta singola: la spunta non è un testo ──
+          if (tipo === 'checkbox' || tipo === 'radio') {
+            const vuole = !(testo === 'false' || testo === '0' || testo === '' || testo === 'no');
+            if (el.checked !== vuole) { try { el.click(); } catch (_) { el.checked = vuole; avvisa(); } }
+            return { ok: el.checked === vuole, tipo: tipo === 'radio' ? 'scelta' : 'casella', rilettoDalCampo: el.checked };
+          }
+
+          // ── Testo modificabile (editor ricchi) ──
+          if (el.isContentEditable) {
+            el.textContent = testo;
+            avvisa();
+            return { ok: (el.textContent || '').includes(testo), tipo: 'testo libero', rilettoDalCampo: (el.textContent || '').slice(0, 80) };
+          }
+
+          // ── Campo di testo: si passa dal setter nativo, altrimenti React
+          //    non si accorge del cambiamento e al primo ridisegno lo cancella.
+          const proto = tag === 'textarea' ? HTMLTextAreaElement : HTMLInputElement;
+          const setter = Object.getOwnPropertyDescriptor(proto.prototype, 'value');
+          if (setter && setter.set) setter.set.call(el, testo); else el.value = testo;
+          avvisa();
+
+          // La rilettura è il punto: un modulo che rifiuta il valore lo si
+          // scopre adesso, non quando l'utente guarda il modulo mezzo vuoto.
+          const dopo = el.value;
+          if (dopo === testo) return { ok: true, tipo: tipo || 'testo', rilettoDalCampo: dopo };
+          return { ok: false, tipo: tipo || 'testo', selettore: sel,
+            motivo: dopo === '' ? 'la pagina ha svuotato il campo subito dopo'
+              : 'la pagina ha cambiato il valore scritto',
+            volevo: testo, rilettoDalCampo: dopo };
+        }, [args.selettore, args.valore]);
+      }
+
+      // Cosa c'è davvero in un modulo, prima di provare a compilarlo.
+      case 'leggi_modulo': {
+        const tab = await getWorkTab();
+        return await run(tab.id, () => {
+          const campi = [];
+          for (const el of document.querySelectorAll('input, select, textarea, [contenteditable="true"]')) {
+            const r = el.getBoundingClientRect();
+            if (r.width < 2 || r.height < 2) continue;
+            const tipo = (el.type || '').toLowerCase();
+            if (tipo === 'hidden') continue;
+
+            // L'etichetta come la vede una persona: quella collegata, quella
+            // che lo contiene, il segnaposto, o il testo di aiuto.
+            let etichetta = '';
+            try {
+              if (el.id) {
+                const l = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+                if (l) etichetta = l.innerText.trim();
+              }
+              if (!etichetta) {
+                const dentro = el.closest('label');
+                if (dentro) etichetta = dentro.innerText.trim();
+              }
+              if (!etichetta) etichetta = el.getAttribute('aria-label') || el.placeholder || '';
+            } catch (_) { /* etichetta non trovata */ }
+
+            const voce = {
+              selettore: el.id ? '#' + CSS.escape(el.id)
+                : el.name ? `[name="${el.name}"]`
+                : el.getAttribute('aria-label') ? `[aria-label="${el.getAttribute('aria-label')}"]` : null,
+              etichetta: etichetta.slice(0, 80),
+              tag: el.tagName.toLowerCase(),
+              tipo,
+              obbligatorio: !!(el.required || el.getAttribute('aria-required') === 'true'),
+              disabilitato: !!el.disabled,
+              solaLettura: !!el.readOnly,
+              valoreAttuale: (el.type === 'checkbox' || el.type === 'radio') ? el.checked : String(el.value || '').slice(0, 60),
+            };
+            if (el.tagName === 'SELECT') {
+              voce.opzioni = [...el.options].slice(0, 30).map(o => o.text.trim()).filter(Boolean);
+            }
+            if (voce.selettore) campi.push(voce);
+          }
+          const invii = [...document.querySelectorAll('button[type="submit"],input[type="submit"],button')]
+            .filter(b => { const r = b.getBoundingClientRect(); return r.width > 2 && r.height > 2; })
+            .map(b => (b.innerText || b.value || '').trim()).filter(Boolean).slice(0, 8);
+          return { ok: true, campi, quanti: campi.length, pulsanti: invii };
+        });
       }
 
       case 'click': {
@@ -1963,9 +3619,30 @@ async function executeCommand(command, args) {
             } catch (_) { return false; }
           };
 
+          // Un selettore rifiutato non deve portarsi via tutto il resto.
+          //
+          // querySelectorAll con una lista separata da virgole è tutto-o-niente:
+          // se UNA sola parte non è valida per il motore, la chiamata solleva
+          // un'eccezione e non torna NIENTE — nemmeno i pulsanti che sarebbero
+          // stati trovati dalle parti valide.
+          //
+          // Qui dentro c'è [class*="accept" i], che usa il modificatore di
+          // maiuscole/minuscole negli attributi: Chrome, Firefox e Safari lo
+          // accettano da anni, ma è la parte più giovane della lista, ed è
+          // stata aggiunta oggi. Se un domani un motore la rifiuta, senza
+          // questa rete salterebbe l'intera rimozione degli ostacoli — e il
+          // sintomo sarebbe "i banner non si tolgono più", che manda a cercare
+          // dalla parte sbagliata.
+          const cerca = (sel) => {
+            try { return [...document.querySelectorAll(sel)]; }
+            catch (_) { return []; }
+          };
+
           // 1. Come farebbe una persona: cercare il pulsante di chiusura
-          const candidati = [...document.querySelectorAll(
-            'button,[role="button"],a[role="button"],input[type="button"],input[type="submit"],[aria-label],[class*="close"],[id*="close"],[class*="accept" i],[id*="accept" i]')];
+          const candidati = [
+            ...cerca('button,[role="button"],a[role="button"],input[type="button"],input[type="submit"],[aria-label],[class*="close"],[id*="close"]'),
+            ...cerca('[class*="accept" i],[id*="accept" i]'),
+          ];
           for (const el of candidati) {
             try {
               if (!siVede(el)) continue;
@@ -1991,6 +3668,45 @@ async function executeCommand(command, args) {
                 }
               }
             } catch (_) { /* riquadro non leggibile */ }
+          }
+
+          // 1c. I muri di accesso: si chiudono, non si attraversano.
+          //
+          // Google, LinkedIn, Pinterest e molti altri aprono un riquadro
+          // "Accedi con Google" sopra il contenuto. Quel riquadro va tolto di
+          // mezzo per continuare a leggere — quasi sempre la pagina sotto è
+          // consultabile lo stesso.
+          //
+          // Ma NON si preme "Continua con Google". Quel gesto concede a un
+          // sito l'accesso all'account di Luca: nome, indirizzo, a volte molto
+          // di più, e su alcuni siti resta valido finché non lo si revoca a
+          // mano. È una decisione sua, non una scorciatoia da automatizzare.
+          // Se la pagina è leggibile solo dopo l'accesso, si chiede a lui.
+          const testiAccesso = ['continua con google','continue with google','accedi con google',
+            'sign in with google','continua con facebook','accedi con facebook','sign in with apple',
+            'continua con apple','accedi con linkedin','sign in with linkedin'];
+          let muroDiAccesso = null;
+          for (const el of document.querySelectorAll('div,section,dialog,form,[role="dialog"]')) {
+            let st; try { st = getComputedStyle(el); } catch (_) { continue; }
+            if (st.position !== 'fixed' && el.tagName !== 'DIALOG') continue;
+            const t = (el.innerText || '').toLowerCase();
+            if (t.length > 600) continue;
+            if (testiAccesso.some(x => t.includes(x))) { muroDiAccesso = el; break; }
+          }
+          if (muroDiAccesso) {
+            // Prima si cerca la sua X, che è il modo pulito di dire "no grazie"
+            let chiuso = false;
+            for (const b of muroDiAccesso.querySelectorAll('button,[role="button"],[aria-label]')) {
+              const et = ((b.innerText || '') + ' ' + (b.getAttribute('aria-label') || '')).trim().toLowerCase();
+              if (/^(x|✕|×|chiudi|close|dismiss|not now|non ora|salta|skip|annulla|cancel)$/.test(et)
+                  || /chiudi|close|dismiss/.test(b.getAttribute('aria-label') || '')) {
+                try { b.click(); chiuso = true; azioni.push('chiuso il riquadro di accesso'); break; } catch (_) { /* sparito */ }
+              }
+            }
+            if (!chiuso) {
+              try { muroDiAccesso.remove(); azioni.push('tolto il riquadro di accesso'); } catch (_) { /* gia via */ }
+            }
+            azioni.push('NB: non ho fatto l\'accesso, ho solo tolto il riquadro');
           }
 
           // 2. Esc: molti modali lo ascoltano

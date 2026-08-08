@@ -71,18 +71,33 @@ async function fillForm(args, ctx) {
       await ctx.dismissModalsBridge();
       let fields; try { fields = typeof args.fields === 'string' ? JSON.parse(args.fields) : args.fields; } catch { return JSON.stringify({ error: 'Formato fields non valido.' }); }
       const results = [];
-      // Method 1: nativeSetter
+
+      // ── Prima via: si guarda il campo, poi si scrive secondo quello che è ──
+      //
+      // Il metodo precedente costruiva una stringa di JavaScript e la faceva
+      // eseguire nella pagina, assumendo sempre un <input> o una <textarea>.
+      // Tre guasti silenziosi, tutti su moduli normalissimi:
+      //   - un <select> ignorava il valore se non coincideva con un'opzione,
+      //     e nessuno se ne accorgeva;
+      //   - una casella da spuntare riceveva "true" in .value invece che in
+      //     .checked, e restava com'era;
+      //   - un valore con un a capo dentro rompeva la stringa di JavaScript.
+      // E in nessun caso il campo veniva riletto: bastava che il setter non
+      // sollevasse eccezioni per dichiarare il campo compilato.
       for (const [sel, val] of Object.entries(fields)) {
         try {
-          const safeSel = sel.replace(/\\/g, '\\\\').replace(/'/g, "\\'"), safeVal = String(val).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-          const js = `(function(){var el=document.querySelector('${safeSel}');if(!el)return{ok:false};el.focus();var proto=el.tagName==='TEXTAREA'?HTMLTextAreaElement:HTMLInputElement;var ns=Object.getOwnPropertyDescriptor(proto.prototype,'value')?.set;if(ns)ns.call(el,'${safeVal}');else el.value='${safeVal}';el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));el.dispatchEvent(new Event('blur',{bubbles:true}));return{ok:true,value:el.value};})()`;
-          const r = await ctx.bridgeCommand('execute_js', { code: js });
-          results.push({ selector: sel, ok: r.ok && r.result?.ok !== false, value: val, via: 'nativeSetter' });
-        } catch (e) { results.push({ selector: sel, ok: false, value: val, error: e.message, via: 'nativeSetter' }); }
+          const r = await ctx.bridgeCommand('compila_campo', { selettore: sel, valore: String(val) });
+          const esito = r?.result || r;
+          results.push({
+            selector: sel, ok: !!esito?.ok, value: val, via: 'compila_campo',
+            tipo: esito?.tipo, letto: esito?.rilettoDalCampo, motivo: esito?.motivo,
+            opzioniDisponibili: esito?.opzioniDisponibili,
+          });
+        } catch (e) { results.push({ selector: sel, ok: false, value: val, error: e.message, via: 'compila_campo' }); }
       }
       // Method 2: click+type_human for failed fields
       for (const ff of results.filter(r => !r.ok)) {
-        try { await ctx.bridgeCommand('click', { selector: ff.selector }); await new Promise(r => setTimeout(r, 200)); await ctx.bridgeCommand('key_combo', { keys: ['Control','a'] }); await new Promise(r => setTimeout(r, 100)); const tr = await ctx.bridgeCommand('type_human', { text: String(ff.value), selector: ff.selector, delay: 50 }); if (tr.ok) { ff.ok = true; ff.via = 'type_human'; } } catch (_) { /* best-effort */ }
+        try { await ctx.bridgeCommand('click', { selector: ff.selector }); await new Promise(r => setTimeout(r, 200)); await ctx.bridgeCommand('key_combo', { keys: [process.platform === 'darwin' ? 'Meta' : 'Control', 'a'] }); await new Promise(r => setTimeout(r, 100)); const tr = await ctx.bridgeCommand('type_human', { text: String(ff.value), selector: ff.selector, delay: 50 }); if (tr.ok) { ff.ok = true; ff.via = 'type_human'; } } catch (_) { /* best-effort */ }
       }
       // Method 3: bridge native fill for still-failed
       const still = results.filter(r => !r.ok);
@@ -106,7 +121,8 @@ async function fillForm(args, ctx) {
       if (!fi) { results.push({ selector: sel, ok: false, error: 'Non trovato' }); continue; }
       if (fi.isSelect) { await ap.select(sel, val); }
       else if (fi.type==='checkbox'||fi.type==='radio') { if (val==='true'||val===true) await ap.click(sel); }
-      else if (fi.isCustom||fi.hasAuto) { await ap.click(sel); await new Promise(r=>setTimeout(r,300)); await ap.keyboard.down('Control'); await ap.keyboard.press('a'); await ap.keyboard.up('Control'); await ap.keyboard.press('Backspace'); await ap.type(sel,val,{delay:80}); await new Promise(r=>setTimeout(r,1500)); const picked=await ap.evaluate(()=>{for(const o of document.querySelectorAll('[role="option"],li[data-value],[class*="option"] li')){if(o.offsetParent){o.click();return o.textContent.trim().substring(0,60);}} return null;}); if(!picked){await ap.keyboard.press('ArrowDown');await new Promise(r=>setTimeout(r,300));await ap.keyboard.press('Enter');} results.push({selector:sel,ok:true,value:val,method:'autocomplete'}); continue; }
+      else if (fi.isCustom||fi.hasAuto) { await ap.click(sel); await new Promise(r=>setTimeout(r,300)); const _selTutto = process.platform === 'darwin' ? 'Meta' : 'Control';  // su Mac Ctrl+A va a inizio riga, non seleziona
+      await ap.keyboard.down(_selTutto); await ap.keyboard.press('a'); await ap.keyboard.up(_selTutto); await ap.keyboard.press('Backspace'); await ap.type(sel,val,{delay:80}); await new Promise(r=>setTimeout(r,1500)); const picked=await ap.evaluate(()=>{for(const o of document.querySelectorAll('[role="option"],li[data-value],[class*="option"] li')){if(o.offsetParent){o.click();return o.textContent.trim().substring(0,60);}} return null;}); if(!picked){await ap.keyboard.press('ArrowDown');await new Promise(r=>setTimeout(r,300));await ap.keyboard.press('Enter');} results.push({selector:sel,ok:true,value:val,method:'autocomplete'}); continue; }
       else { await ap.click(sel, {clickCount:3}); await ap.type(sel,val,{delay:30}); }
       results.push({ selector: sel, ok: true, value: val });
     } catch (e) {
@@ -152,4 +168,36 @@ async function selectOption(args, ctx) {
   } catch (e) { return JSON.stringify({ error: `Select failed: ${e.message}` }); }
 }
 
-module.exports = { click_element: clickElement, fill_form: fillForm, select_option: selectOption };
+
+/**
+ * Cosa c'è davvero in un modulo, prima di provare a compilarlo.
+ *
+ * Senza questo, l'unica strada era tirare a indovinare i selettori dal testo
+ * della pagina e scoprire gli errori uno per uno, un tentativo alla volta.
+ * Qui si ottiene in un colpo l'elenco dei campi con etichetta, tipo, se sono
+ * obbligatori, e per gli elenchi a tendina QUALI opzioni esistono — che è
+ * l'informazione senza cui un <select> non si compila mai al primo colpo.
+ */
+async function leggiModulo(args, ctx) {
+  if (!ctx.isBridgeReady()) {
+    return JSON.stringify({ error: 'Serve il browser collegato per leggere un modulo.' });
+  }
+  try {
+    const r = await ctx.bridgeCommand('leggi_modulo', {});
+    const esito = r?.result || r;
+    if (!esito?.ok) return JSON.stringify({ error: 'Non sono riuscito a leggere il modulo', dettaglio: esito });
+    ctx.emitReasoning(`Il modulo ha ${esito.quanti} campi: li guardo prima di scrivere`, '📋');
+    return JSON.stringify({
+      ok: true,
+      campi: esito.campi,
+      pulsanti: esito.pulsanti,
+      nota: 'Usa i selettori qui sopra con fill_form. Per gli elenchi a tendina scrivi '
+        + 'esattamente una delle opzioni elencate. I campi obbligatori vanno compilati tutti, '
+        + 'altrimenti l\'invio viene rifiutato dalla pagina.',
+    });
+  } catch (e) {
+    return JSON.stringify({ error: `Lettura del modulo fallita: ${e.message}` });
+  }
+}
+
+module.exports = { click_element: clickElement, fill_form: fillForm, select_option: selectOption, leggi_modulo: leggiModulo };

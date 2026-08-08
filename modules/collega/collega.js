@@ -35,6 +35,14 @@ const MASSIME_INSISTENZE = 2;
  * pretendere JSON puro e fallire su una virgoletta significa buttare via un
  * lavoro corretto per un dettaglio di forma.
  */
+/** Un campo che il modello ha lasciato vuoto, comunque abbia scelto di dirlo. */
+function _vuoto(v) {
+  if (v === null || v === undefined) return true;
+  const s = String(v).trim().toLowerCase();
+  return s === '' || s === 'null' || s === 'none' || s === 'nessuna'
+      || s === 'nessuno' || s === 'n/a' || s === '-' || s === 'undefined';
+}
+
 function leggiJson(testo) {
   if (!testo) return null;
   let s = String(testo).trim();
@@ -56,6 +64,72 @@ function leggiJson(testo) {
 function normalizzaLingua(valore) {
   const v = String(valore || '').trim().toLowerCase();
   return /^[a-z]{2}$/.test(v) ? v : 'it';
+}
+
+/**
+ * La frase promette che sta per fare qualcosa?
+ *
+ * Serve a distinguere una risposta ("sono le nove e mezza") da un impegno
+ * ("procedo a cercare e invio la richiesta"). La seconda, detta da chi poi
+ * non esegue, e' una bugia raccontata a Luca.
+ *
+ * Si guarda solo la PRIMA persona al presente o al futuro: "cerco", "invio",
+ * "procedo", "ci penso io". Non "puoi cercare", non "ho cercato", non "il
+ * volo parte alle 6" — quelli non impegnano nessuno.
+ */
+const _PROMESSE = new RegExp([
+  '\\b(?:proced|provved)o\\b',
+  '\\bci\\s+penso\\s+io\\b',
+  '\\b(?:adesso|ora|subito)\\s+(?:cerc|invi|mand|scriv|guard|contatt)o\\b',
+  '\\b(?:cerc|invi|mand|scriv|contatt|prepar|verific|controll)o\\s+(?:subito|adesso|ora)\\b',
+  '\\bsto\\s+per\\s+(?:cercare|inviare|mandare|scrivere|contattare)\\b',
+  '\\bvado\\s+a\\s+(?:cercare|vedere|prendere)\\b',
+  '\\b(?:cerchero|invier|mander|scriver|contatter)\\w*\\b',
+].join('|'), 'i');
+
+function prometteUnAzione(testo) {
+  const t = String(testo || '')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return _PROMESSE.test(t);
+}
+
+/**
+ * La domanda chiede il PERMESSO invece di un'informazione che manca?
+ *
+ * "Cerco anche da Bergamo, o solo Malpensa?" e' una proposta vera: Luca non
+ * l'aveva detto, e la risposta cambia il lavoro.
+ * "Vuoi procedere con questo piano?" non chiede niente: Luca l'ordine l'ha
+ * gia' dato: e' un giro in piu' che non aggiunge una virgola. Detta a chi ha
+ * appena chiesto una cosa, e' solo il turno che si chiude senza far niente.
+ *
+ * L'8 agosto, terzo tentativo su Brandon Dvorak: "Cerchero' l'indirizzo e
+ * invierò la richiesta. Vuoi procedere con questo piano?" — promessa piu'
+ * domanda di permesso, zero strumenti chiamati.
+ */
+const _PERMESSO = new RegExp([
+  '\\bvuoi\\s+(?:che|procedere|proseguire)\\b',
+  '\\b(?:posso|devo)\\s+(?:procedere|proseguire|andare\\s+avanti)\\b',
+  '\\bproced(?:o|iamo)\\s*\\?',
+  '\\bconferm(?:i|a|armi|ato)\\b',
+  '\\bsei\\s+d\\W?accordo\\b',
+  '\\bti\\s+va\\s+bene\\b',
+  '\\bva\\s+bene\\s*\\?',
+  '\\bfammi\\s+sapere\\s+se\\b',
+].join('|'), 'i');
+
+// Un'alternativa o una parola interrogativa: allora la domanda vuole un dato,
+// non un via libera. "Ti va bene se cerco anche da Bergamo, O preferisci solo
+// Malpensa?" chiede il permesso nella forma ma un'informazione nella sostanza.
+const _DOMANDA_VERA = /\b(?:o|oppure|quale|quali|quanti|quante|quando|dove|chi|come|cosa|che\s+cosa|preferisci|meglio)\b/i;
+
+function chiedeSoloIlPermesso(testo) {
+  const t = String(testo || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
+  if (!/\?/.test(t)) return false;
+  if (!_PERMESSO.test(t)) return false;
+  // Si guarda SOLO la frase interrogativa, non tutto il testo: la promessa che
+  // la precede contiene spesso parole che sembrano interrogative.
+  const domanda = t.split(/[.!]\s+/).filter(f => f.includes('?')).join(' ');
+  return !_DOMANDA_VERA.test(domanda);
 }
 
 class Collega {
@@ -123,12 +197,43 @@ class Collega {
     // Qui l'incarico c'è ma non parte: resta in sospeso. Se Luca risponde
     // — anche solo "vai" — riparte da lì con la sua risposta dentro.
     if (dati.modo === 'proposta') {
+      // Una proposta e' una DOMANDA. Se invece promette ("Procedo a cercare
+      // e invio la richiesta"), non c'e' niente da aspettare: il turno si
+      // chiuderebbe lo stesso, con Luca davanti a un impegno che nessuno
+      // mantiene. Stesso difetto del ramo conversazione, altro ramo — il
+      // freno andava messo su tutte e due le uscite, non su una.
+      if (prometteUnAzione(risposta) && (!/\?/.test(risposta) || chiedeSoloIlPermesso(risposta))) {
+        this.log('[Collega] "Proposta" che promette o chiede solo il permesso: passo all\'Esecutore');
+        return { modo: 'passa_oltre', risposta: '' };
+      }
       const proposto = dati.incarico ? new Incarico(dati.incarico) : null;
       if (proposto && proposto.avvisi.length) this.log(`[Collega] Criteri scartati nella proposta: ${proposto.avvisi.join('; ')}`);
       return { modo: 'proposta', risposta, lingua, incarico: proposto || undefined };
     }
 
     if (dati.modo !== 'incarico' || !dati.incarico) {
+      // ── Una promessa senza nessuno che la mantenga e' una bugia ──
+      //
+      // L'8 agosto, due volte di fila: "cerca online il profilo di Brandon
+      // Dvorak e mandagli la richiesta di collegamento". Il Collega ha
+      // classificato conversazione e ha risposto "Procedo a cercare online
+      // il profilo e invio la richiesta". Poi il turno e' finito li': in
+      // modo conversazione l'Esecutore non si sveglia. Zero strumenti
+      // chiamati, e Luca davanti a una frase che dice che sta succedendo
+      // una cosa che non succedera' mai.
+      //
+      // E' il caso peggiore di tutti, peggio di un rifiuto: un rifiuto lo
+      // vedi. Il prompt lo vietava gia' a parole ("Procedo con l'invio NON
+      // e' una risposta: e' una promessa"), ma un divieto scritto non e' un
+      // freno — il modello puo' sempre non ubbidire. Il freno e' qui.
+      //
+      // Non si corregge il testo e non si inventa un incarico: si passa
+      // oltre. L'Esecutore riceve la richiesta e fa il lavoro davvero, e il
+      // Collega parla comunque alla fine (collegaPassaOltre in chat.js).
+      if (prometteUnAzione(risposta) || chiedeSoloIlPermesso(risposta)) {
+        this.log('[Collega] Promessa o richiesta di permesso in modo conversazione: passo all\'Esecutore');
+        return { modo: 'passa_oltre', risposta: '' };
+      }
       return { modo: 'conversazione', risposta, lingua };
     }
 
@@ -288,10 +393,19 @@ class Collega {
     if (!dati) return { risposta: String(grezzo || '').trim(), proposta: null, lingua: 'it' };
     return {
       risposta: String(dati.risposta || '').trim(),
-      proposta: dati.proposta ? String(dati.proposta).trim() : null,
+      // ── "null" scritto a parole non e' una proposta ──
+      //
+      // Il 7 agosto, in fondo a una risposta giusta, e' comparso "null" da
+      // solo su una riga. Nel prompt avevo scritto che la proposta e' "quasi
+      // sempre null", e il modello ha obbedito alla lettera: ha messo la
+      // stringa "null" invece del valore vuoto. Il controllo qui guardava solo
+      // se il campo fosse pieno, e una stringa di quattro lettere e' piena.
+      //
+      // Vale per tutti i modi in cui un modello dice "niente".
+      proposta: _vuoto(dati.proposta) ? null : String(dati.proposta).trim(),
       lingua: normalizzaLingua(dati.lingua),
     };
   }
 }
 
-module.exports = { Collega, leggiJson, normalizzaLingua, MASSIME_INSISTENZE };
+module.exports = { Collega, leggiJson, normalizzaLingua, prometteUnAzione, chiedeSoloIlPermesso, MASSIME_INSISTENZE };

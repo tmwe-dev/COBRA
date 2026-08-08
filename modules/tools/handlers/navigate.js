@@ -28,6 +28,7 @@ async function handle(args, ctx) {
   // com'era, dicendolo apertamente.
   if (!ctx.session._cachePagine) ctx.session._cachePagine = new Map();
   const chiave = String(url).trim();
+  const inizioLettura = Date.now();
   // La cache serve il TESTO, ma il browser resta dov'è: se dopo si clicca o
   // si compila un campo, si agisce sulla pagina precedente credendo di essere
   // qui. È il modo in cui i prezzi di una città finiscono sotto il nome di
@@ -159,6 +160,10 @@ async function handle(args, ctx) {
               ctx.log(`[Ostacoli] ${dominio}: ${quanti} elemento/i copriva/no la pagina`
                 + `${stato.scorrimentoBloccato ? ' (scorrimento bloccato)' : ''} → ${(sblocco?.azioni || []).join(', ')}`);
               ctx.emitReasoning(`Tolgo di mezzo quello che copre la pagina su ${dominio}`, '🧹');
+              // Come si e' tolto l'ostacolo e' una cosa che vale la pena
+              // ricordare: domani su questo sito si sa gia' dove premere.
+              if (!ctx.session._ostacoliPerLezioni) ctx.session._ostacoliPerLezioni = [];
+              ctx.session._ostacoliPerLezioni.push({ url, azioni: sblocco?.azioni || [] });
             } catch (e) { ctx.log(`[Ostacoli] sblocco non riuscito su ${dominio}: ${e.message}`); }
             continue;   // si rilegge subito dopo aver liberato la vista
           }
@@ -201,7 +206,33 @@ async function handle(args, ctx) {
         if (ctx.registroFonti) {
           try {
             const haDati = /(?:€|\$|£)\s?\d|\d[\d.,]*\s?(?:€|\$|EUR|USD)|\d{1,2}:\d{2}/.test(content);
-            ctx.registroFonti.registra(url, { caratteri: content.length, bloccata: false, dati: haDati });
+
+            // ── Una pagina di blocco non è una fonte buona ──
+            //
+            // Verificato dal vivo il 6 agosto: il registro dava
+            // ita-airways.com "affidabile, 7 letture su 7" — e quelle sette
+            // volte erano sette schermate di blocco anti-bot. La pagina di
+            // blocco è lunga (la stessa frase in sei lingue) e contiene
+            // numeri (il codice di riferimento), quindi passava per piena.
+            //
+            // Risultato: il registro consigliava per primo proprio il sito
+            // che non ci fa entrare, e il capitolo voli del report è rimasto
+            // vuoto. Un registro che impara al contrario è peggio di nessun
+            // registro, perché ci si fida.
+            const testoBlocco = /security check|unusual behaviour|resembles that of a bot|are you a robot|verifica di sicurezza|access denied|accesso negato|checking your browser|enable javascript to continue|attention required|blocked/i;
+            const bloccata = testoBlocco.test(content);
+            if (bloccata) {
+              ctx.log(`[navigate] ${new URL(url).hostname} ha risposto con una schermata di blocco: lo segno come tale`);
+            }
+            ctx.registroFonti.registra(url, { caratteri: content.length, bloccata, dati: haDati && !bloccata });
+
+            // Le stesse cose servono anche a imparare COME lavorare, non solo
+            // dove: quanto ha reso, se ha bloccato, quanto ci ha messo.
+            if (!ctx.session._letturePerLezioni) ctx.session._letturePerLezioni = [];
+            ctx.session._letturePerLezioni.push({
+              url, caratteri: content.length, bloccata,
+              secondi: (Date.now() - (inizioLettura || Date.now())) / 1000,
+            });
           } catch (_) { /* best-effort */ }
         }
         const _sorv = guardia.riepilogo();

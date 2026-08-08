@@ -8,6 +8,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { COBRA_CORE } = require('./prompts/cobra-core');
+const manuali = require('./prompts/manuali');
 const { AGENT_PROMPTS } = require('./prompts/agents');
 const { ALWAYS_LOADED_KB } = require('./prompts/kb-rules');
 const { SUPABASE_URL, SUPABASE_ANON_KEY, fetchKB } = require('./kb/supabase');
@@ -21,7 +22,7 @@ const RUNTIME_CONTRACT = {
   maxToolChainPerTurn: 25,
   bannedToolPatterns: ['delete_task'],
   writeTools: ['save_to_kb', 'kb_update', 'kb_delete', 'create_file', 'crea_report', 'save_local_file', 'save_memory', 'create_task',
-               'prepare_email_draft', 'prepare_whatsapp_message', 'prepare_linkedin_message'],
+               'prepare_email_draft', 'prepare_whatsapp_message', 'prepare_linkedin_message', 'scrivi_raccolta'],
   sendTools: ['send_email', 'open_whatsapp', 'open_linkedin', 'linkedin_send_message', 'linkedin_connect', 'whatsapp_send'],
   destructiveTools: ['delete_task'],
   readTools: ['processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato',
@@ -30,7 +31,7 @@ const RUNTIME_CONTRACT = {
               'read_local_file', 'search_local_files', 'batch_scrape', 'scroll_page', 'check_emails',
               'detect_block', 'verify_action', 'wait_network_idle',
               'linkedin_search', 'linkedin_profile', 'linkedin_inbox', 'linkedin_read_thread',
-              'whatsapp_unread', 'whatsapp_read_thread'],
+              'whatsapp_unread', 'whatsapp_read_thread', 'annota', 'stato_lavoro', 'leggi_modulo', 'leggi_manuale'],
   interactTools: ['click_element', 'fill_form', 'inspect_dom_js', 'mutate_dom_js', 'hover_element', 'drag_drop', 'upload_file', 'switch_tab', 'wait_for', 'select_option', 'press_key',
                   'type_human', 'key_combo', 'select_dropdown', 'set_datepicker', 'clipboard_write', 'request_human_takeover'],
   executeTools: ['run_task'],
@@ -40,25 +41,85 @@ const RUNTIME_CONTRACT = {
 const TOOL_SCOPES = {
   chat: [],
   search: ['google_search', 'navigate', 'read_page', 'scrape_url', 'batch_scrape', 'read_table',
-           'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato'],
+           'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato', 'annota', 'stato_lavoro', 'scrivi_raccolta', 'leggi_manuale'],
   browse: ['navigate', 'read_page', 'screenshot', 'scroll_page', 'get_page_elements', 'get_page_snapshot', 'read_table',
            'detect_block', 'verify_action', 'wait_network_idle', 'request_human_takeover',
-           'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato'],
-  interact: ['navigate', 'click_element', 'fill_form', 'inspect_dom_js', 'mutate_dom_js', 'scroll_page', 'screenshot', 'get_page_elements', 'get_page_snapshot', 'read_page',
+           'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato', 'annota', 'stato_lavoro', 'scrivi_raccolta', 'leggi_manuale'],
+  interact: ['accedi', 'siti_con_accesso', 'navigate', 'click_element', 'fill_form', 'inspect_dom_js', 'mutate_dom_js', 'scroll_page', 'screenshot', 'get_page_elements', 'get_page_snapshot', 'read_page',
              'hover_element', 'drag_drop', 'upload_file', 'switch_tab', 'wait_for', 'select_option', 'press_key',
              'type_human', 'key_combo', 'select_dropdown', 'set_datepicker', 'clipboard_write',
              'detect_block', 'verify_action', 'wait_network_idle', 'request_human_takeover',
-           'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato'],
+           'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato', 'leggi_modulo', 'leggi_manuale'],
   data: ['extract_data', 'read_table', 'crawl_website', 'batch_scrape', 'create_file', 'crea_report', 'scrape_url', 'navigate', 'read_page',
-           'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato'],
+           'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato', 'annota', 'stato_lavoro', 'scrivi_raccolta', 'leggi_manuale'],
   admin: ['save_to_kb', 'kb_update', 'kb_delete', 'create_task', 'run_task', 'list_tasks', 'delete_task', 'save_memory', 'search_kb', 'list_local_files',
            'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato'],
   file: ['list_local_files', 'read_local_file', 'save_local_file', 'search_local_files', 'create_file', 'crea_report',
-           'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato'],
-  communicate: ['send_email', 'open_whatsapp', 'open_linkedin', 'prepare_email_draft', 'prepare_whatsapp_message', 'prepare_linkedin_message', 'check_emails',
-                 'linkedin_search', 'linkedin_profile', 'linkedin_send_message', 'linkedin_connect', 'linkedin_inbox', 'linkedin_read_thread',
-                 'whatsapp_send', 'whatsapp_unread', 'whatsapp_read_thread',
-           'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato'],
+           'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato', 'annota', 'stato_lavoro', 'scrivi_raccolta', 'leggi_manuale'],
+  // ── Parlare con qualcuno ──
+  //
+  // whatsapp_scrivi e linkedin_scrivi sono QUI, e non altrove, perche' il
+  // filtro degli ambiti e' l'unico posto che decide cosa il modello puo'
+  // vedere. Il 7 agosto li ho scritti, gli ho dato uno schema, gli ho dato un
+  // rischio — e mi sono dimenticato questa riga. Risultato: COBRA rispondeva
+  // "non posso mandare messaggi WhatsApp", con lo strumento a due centimetri.
+  //
+  // Uno strumento non elencato qui non esiste, per quanto sia ben fatto.
+  // ── Una sola strada per scrivere a qualcuno ──
+  //
+  // Qui dentro c'erano DUE strade per mandare un messaggio WhatsApp:
+  // whatsapp_scrivi (con le regole, il conteggio, la verifica di chi sia il
+  // destinatario) e whatsapp_send (senza niente). Idem su LinkedIn.
+  //
+  // Il 7 agosto sono usciti sette messaggi, tutti e sette da whatsapp_send. Il
+  // registro degli invii era ancora vuoto e i limiti non avevano contato nulla:
+  // non perche' fossero rotti, ma perche' nessuno ci era passato. Avevo
+  // costruito le protezioni su una strada e lasciato aperta quella accanto.
+  //
+  // Una protezione che si puo' aggirare senza saperlo non e' una protezione.
+  // I tool vecchi restano nel codice (li usa 'full' e qualche flusso interno),
+  // ma da qui non passano piu': se il modello vuole scrivere a una persona,
+  // l'unica porta e' whatsapp_scrivi / linkedin_scrivi.
+  // ── Gli strumenti per GUARDARE la pagina, che qui mancavano ──
+  //
+  // Il 7 agosto, per "rispondi a Samuel Chen su LinkedIn", il modello ha
+  // ricevuto ventisei strumenti e NESSUNO che gli permettesse di guardare la
+  // pagina: niente get_page_snapshot, niente read_page, niente click_element.
+  // Poteva solo chiamare linkedin_scrivi e sperare.
+  //
+  // Quando quello non riusciva, l'unica cosa che aveva a portata era
+  // linkedin_search — e infatti si e' messo a cercare profili. Non era
+  // ostinazione: era l'unico strumento rimasto in mano.
+  //
+  // E' l'errore piu' grave della giornata, perche' rovescia il progetto. Su
+  // Google Voli COBRA funziona proprio perche' NON conosce Google: guarda la
+  // pagina con get_page_snapshot, legge etichette e campi, e decide. Su
+  // WhatsApp e LinkedIn gli avevo tolto quella possibilita' e messo al suo
+  // posto dei comandi che sapevano tutto in anticipo — e che si rompono al
+  // primo cambio di interfaccia.
+  //
+  // I comandi specifici restano: su due siti usati ogni giorno sono una
+  // scorciatoia che vale secondi. Ma sono una scorciatoia, non l'unica strada.
+  // Se falliscono, il modello adesso puo' fare quello che farebbe una persona:
+  // aprire la pagina, guardarla, e scrivere nel campo giusto.
+  communicate: ['whatsapp_scrivi', 'linkedin_scrivi', 'conto_invii',
+                 'accedi', 'siti_con_accesso',
+                 // guardare e agire su una pagina qualsiasi: la strada generale
+                 'navigate', 'get_page_snapshot', 'get_page_elements', 'read_page',
+                 'screenshot', 'leggi_modulo', 'fill_form', 'click_element',
+                 'type_human', 'select_option', 'press_key', 'scroll_page', 'wait_for',
+                 // leggere va bene da qualunque strada: non fa uscire niente
+                 'whatsapp_unread', 'whatsapp_read_thread',
+                 'linkedin_search', 'linkedin_profile', 'linkedin_inbox', 'linkedin_read_thread',
+                 // Trovare una persona che NON e' gia' nelle conversazioni.
+                 // L'8 agosto: "cerca online l'indirizzo di Brandon Dvorak e
+                 // chiedigli il collegamento". Zero strumenti chiamati, perche'
+                 // nessuno dei due serviva era qui dentro. Lo strumento c'era,
+                 // in schemas.js, dal primo giorno: non era mai stato messo in
+                 // mano a chi doveva usarlo. E' la sesta volta che succede.
+                 'google_search', 'linkedin_connect',
+                 'check_emails', 'prepare_email_draft', 'send_email',
+                 'processo_avvia', 'processo_inizia_passo', 'processo_completa_passo', 'processo_fallisci_passo', 'processo_stato'],
   full: null, // all tools
 };
 
@@ -643,6 +704,20 @@ async function assemble({ intent, scopes, operationLevel, userMessage, conversat
     contextParts.push(session.processo.perIlPrompt());
   }
 
+  // ── I passi dicono DOVE sei, il cantiere dice COSA hai ──
+  //
+  // La checklist dei passi da sola non basta: dice "passo 2, prendere le
+  // email" ma non QUALI email mancano. Verificato il 6 agosto sulla raccolta
+  // di otto aziende — il modello sapeva di essere al passo 2 e non sapeva
+  // quali aziende avessero gia' la email e quali no, quindi ricominciava.
+  //
+  // Le due viste vanno insieme, e vanno insieme A OGNI TURNO: senza i dati da
+  // verificare, sapere il numero del passo non dice a che punto sei.
+  if (session.cantiere) {
+    const blocco = session.cantiere.perIlPrompt();
+    if (blocco) contextParts.push(blocco);
+  }
+
   // Pagina corrente (UNTRUSTED — delimitata per injection defense, Microsoft Spotlighting pattern)
   if (session.lastPage && scopes.some(s => ['browse', 'interact', 'search', 'data'].includes(s))) {
     const pageText = (session.lastPage.markdown || '').substring(0, 3000);
@@ -736,8 +811,79 @@ async function assemble({ intent, scopes, operationLevel, userMessage, conversat
   // 5. ASSEMBLE FINAL PROMPT
   const agent = resolveAgent(scopes);
   const agentPrompt = AGENT_PROMPTS[agent] || AGENT_PROMPTS.full;
+  // ── Chi sta parlando adesso ──
+  //
+  // Il menu in alto fa scegliere fra COBRA, COBRA EN, COBRA ES e COBRA
+  // ANALISTA. Fino a qui la scelta arrivava solo all'endpoint che la
+  // ristampava: il prompt era identico per tutti e quattro, quindi
+  // selezionare lo spagnolo non cambiava una parola. Adesso il carattere e la
+  // lingua dell'agente entrano nel prompt, ed e' l'unica cosa che rende
+  // quella scelta reale.
+  // ── Cosa sappiamo di lavori come questo ──
+  //
+  // Poche righe, e solo se ci sono precedenti veri. E' lo stesso criterio dei
+  // manuali: il prompt assemblato arrivava a 25.000 caratteri e la regola che
+  // serviva annegava fra quelle che quel giorno non c'entravano.
+  //
+  // Qui entrano al massimo tre lavori simili con i loro inciampi. Se non ce ne
+  // sono, non entra niente — non una riga che dice "nessun precedente".
+  let bloccoDiario = '';
+  try {
+    if (ctx && ctx._missioni && userMessage) {
+      bloccoDiario = ctx._missioni.cosaSappiamoSu(userMessage) || '';
+      // Un blocco lungo non lo legge nessuno: se supera mille caratteri
+      // vuol dire che qualcosa non va nel filtro, e meglio niente che rumore.
+      if (bloccoDiario.length > 1000) bloccoDiario = bloccoDiario.slice(0, 1000) + '\n…';
+    }
+  } catch (_) { /* senza diario si lavora come prima */ }
+
+  // ── La scrivania: solo quando c'entra ──
+  //
+  // Sedici file veri stavano in data/files, e gli strumenti per guardarli
+  // c'erano tutti — list_local_files, read_local_file, search_local_files.
+  // In due giorni non sono stati chiamati NESSUNA volta.
+  //
+  // Non mancava il contenitore: mancava che COBRA sapesse che il tavolo non e'
+  // vuoto. Un file che esiste ma di cui nessuno sa e' un file che verra' rifatto
+  // da capo.
+  //
+  // Entra solo se il lavoro tocca file, dati o ricerche: su "manda un messaggio
+  // a Jose" un elenco di fogli di calcolo e' rumore.
+  let bloccoScrivania = '';
+  try {
+    const serve = (scopes || []).some(x => ['file', 'data', 'search'].includes(x));
+    if (serve && ctx && ctx._missioni) {
+      const path = require('path');
+      bloccoScrivania = ctx._missioni.bloccoScrivania(
+        path.join(ctx.dataDir || './data', 'files')) || '';
+    }
+  } catch (_) { /* senza scrivania si lavora come prima */ }
+
+  let bloccoAgente = '';
+  try {
+    if (ctx && ctx._agenteScelto) {
+      const { quello } = require('./config/agenti');
+      const ag = quello(ctx._agenteScelto);
+      if (ag && !ag.predefinito) {
+        const lingue = { it: 'italiano', en: 'inglese', es: 'spagnolo' };
+        bloccoAgente = `# CHI SEI ADESSO: ${ag.nome}\n`
+          + `Rispondi SEMPRE in ${lingue[ag.lingua] || ag.lingua}, anche se Luca ti scrive in un'altra lingua.\n`
+          + `${ag.carattere}\n`
+          + `Quando serve: ${ag.quandoUsarlo}\n`
+          + `Questo vale sopra il tono descritto piu' sotto: stessi fatti, stesse regole, voce diversa.`;
+      }
+    }
+  } catch (_) { /* senza elenco agenti si resta su COBRA */ }
+
   const promptParts = [
     COBRA_CORE,
+    bloccoAgente,
+    bloccoDiario,
+    bloccoScrivania,
+    // I manuali: l'indice sempre, il testo completo solo di quelli che
+    // servono adesso. Prima erano tutti dentro il prompt fisso, e la regola
+    // che serviva annegava fra quelle che oggi non c'entravano.
+    manuali.perIlPrompt({ messaggio: userMessage, scopes, voiceMode }),
     agentPrompt,
     `<system_rules>\n${kbText}\n</system_rules>`,
     memoryBlock,
@@ -769,6 +915,9 @@ function complete(assemblyResult, response, model, promptTokens, completionToken
 }
 
 module.exports = {
+  // Esportato perche' tests/test-strumenti-raggiungibili.js lo controlla: uno
+  // strumento fuori da tutti gli ambiti e' codice che nessuno chiamera' mai.
+  TOOL_SCOPES,
   routeIntent, clarifyIntentWithLLM, selectTools, resolveAgent,
   buildMemoryBlock, updateNarrativeSummary,
   decompose, buildPlanPrompt, savePlanTemplate, updatePlanFromResponse,
@@ -778,7 +927,15 @@ module.exports = {
   logInvocation, logToolExecution,
   getInvocationLog: () => _invocationLog,
   getRuntimeContract: () => RUNTIME_CONTRACT,
-  getToolRisk: (name) => TOOL_RISK[name] || { level: 'unknown', confirm: true },
+  // Uno strumento non dichiarato resta da confermare — è giusto, perché non
+  // si sa cosa faccia. Ma NON va chiamato "distruttivo": non lo sappiamo.
+  //
+  // Il 6 agosto Luca si è visto chiedere il permesso per "DESTRUCTIVE annota"
+  // — cioè per prendere un appunto — perché i sei strumenti aggiunti quel
+  // giorno non erano stati dichiarati da nessuna parte. Il lavoro si è fermato
+  // a ogni singola annotazione, e l'avviso non diceva né cosa fosse quello
+  // strumento né perché lo si stesse chiedendo.
+  getToolRisk: (name) => TOOL_RISK[name] || { level: 'sconosciuto', confirm: true },
   clearSummaryCache: () => _summaryCache.clear(),
   detectLanguage, TOOL_RISK,
 };

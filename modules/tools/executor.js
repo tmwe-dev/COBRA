@@ -2,6 +2,7 @@
 // Source: server.js lines 4939-7204
 
 const { COBRA_DEFAULTS } = require('../config');
+const { spiega } = require('../security/spiegazioni');
 const { isDomainWhitelisted } = require('../config/whitelist');
 const { auditToolCall, auditSecurityEvent } = require('../security/audit-log');
 
@@ -130,7 +131,14 @@ async function executeTool(name, args, ctx) {
   }
   if (guard.kind === 'block_for_confirmation') {
     ctx.log(`[Security] BLOCKED ${name} (risk=${guard.effective_risk})`);
-    ctx.wsBroadcast({ type: 'pending_action', id: guard.pending_action_id, tool: name, risk: guard.effective_risk, summary: guard.summary, expires_at: guard.expires_at.toISOString(), reasons: guard.reasons });
+    // L'avviso deve poter essere LETTO: prima arrivava "DESTRUCTIVE annota"
+    // con sotto il JSON grezzo, e chi guardava non poteva decidere, solo
+    // premere a caso.
+    const spiegazione = spiega(name, args, guard.effective_risk);
+    ctx.wsBroadcast({ type: 'pending_action', id: guard.pending_action_id, tool: name,
+      risk: guard.effective_risk, summary: guard.summary,
+      titolo: spiegazione.titolo, dettaglio: spiegazione.dettaglio, perche: spiegazione.perche,
+      expires_at: guard.expires_at.toISOString(), reasons: guard.reasons });
     return JSON.stringify({ status: 'pending_confirmation', pending_action_id: guard.pending_action_id, risk_level: guard.effective_risk, message: `Azione intercettata. In attesa di conferma. ID: ${guard.pending_action_id}`, instructions_for_ai: 'NON rigenerare la chiamata. Spiega all\'utente e attendi conferma.' });
   }
   if (guard.effective_risk !== 'read' && guard.effective_risk !== 'inspect') {

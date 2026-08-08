@@ -11,9 +11,15 @@ const bridgeTools = require('./bridge-tools');
 const data = require('./data');
 const communication = require('./communication');
 const processo = require('./process');
+const cantiere = require('./cantiere');
+const accesso = require('./accesso');
+const manualiTool = require('./manuali');
 
 // Merge all handlers into a single map
 const allHandlers = {
+  ...cantiere,
+  ...accesso,
+  ...manualiTool,
   ...navigate,
   ...search,
   ...readScrape,

@@ -100,7 +100,16 @@ class LearningStore {
     this.facts = readJsonSafeSync(this._file, []) || [];
     // L1: registro di ciò che COBRA ha fatto, alimentato dagli strumenti
     this.azioni = readJsonSafeSync(this._fileAzioni, []) || [];
-    this._turnsSinceExtraction = 0;
+    // ── Il contatore sopravvive al riavvio ──
+    //
+    // Prima ripartiva da zero a ogni avvio del server, e servono quattro turni
+    // per estrarre. Il 7 agosto il server si e' riavviato otto volte: il
+    // contatore non ha mai raggiunto quattro, e COBRA non ha imparato NIENTE
+    // da una giornata intera di lavoro. Un difetto che non da' errori: da'
+    // solo un archivio che resta fermo a quindici fatti vecchi.
+    const stato = readJsonSafeSync(path.join(dataDir, 'stato_apprendimento.json'), null);
+    this._turnsSinceExtraction = (stato && Number(stato.turni)) || 0;
+    this._fileStato = path.join(dataDir, 'stato_apprendimento.json');
     this._extracting = false;
     this.potaAzioni();
   }
@@ -405,6 +414,10 @@ class LearningStore {
    */
   async extractFromConversation(turns, aiKeys, log = () => {}) {
     this._turnsSinceExtraction++;
+    // Il contatore va scritto su disco: senza, un riavvio lo azzera e
+    // l'estrazione non scatta mai. Il 7 agosto e' successo otto volte.
+    try { writeJsonAtomicSync(this._fileStato, { turni: this._turnsSinceExtraction }); }
+    catch (_) { /* il contatore e' un di piu': non deve fermare il turno */ }
     if (this._extracting) return { skipped: 'gia in corso' };
     if (this._turnsSinceExtraction < MIN_TURNS_BETWEEN_EXTRACTIONS) {
       return { skipped: 'troppo presto' };
@@ -453,7 +466,13 @@ class LearningStore {
         else if (esito === 'rafforzato') rafforzati++;
         else scartati++;
       }
+        // Estratto: si riparte a contare. Senza questo si estrae a OGNI turno —
+      // costa una chiamata al modello ogni volta e riempie l'archivio di
+      // varianti della stessa cosa. Tolto per sbaglio mentre rendevo
+      // persistente il contatore, e ripreso dal test che lo difendeva.
       this._turnsSinceExtraction = 0;
+      try { writeJsonAtomicSync(this._fileStato, { turni: 0 }); } catch (_) { /* best-effort */ }
+
       if (nuovi || rafforzati) {
         log(`[Apprendimento] ${nuovi} fatti nuovi, ${rafforzati} confermati, ${scartati} scartati (totale ${this.facts.length})`);
       }

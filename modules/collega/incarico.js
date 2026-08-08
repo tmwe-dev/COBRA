@@ -93,8 +93,41 @@ class Incarico {
           continue;
         }
       }
+      // ── Un invio non si verifica contando parole in una frase ──
+      //
+      // Il 7 agosto, per "manda un messaggio WhatsApp a Jose", il Collega ha
+      // scritto il criterio { campi_obbligatori: [numero_telefono,
+      // testo_messaggio] }. Quel criterio controlla se quelle parole
+      // COMPAIONO nel testo della risposta — e in un "fatto, mandato" non
+      // compariranno mai. Quindi bocciava, insisteva, e per due giri diceva
+      // all'Esecutore che gli mancava un numero di telefono.
+      //
+      // Da li' e' venuto tutto il resto: il modello ha smesso di usare
+      // whatsapp_scrivi (che il numero non lo vuole, gli basta il nome), si e'
+      // messo a cercare un numero, ed e' ripiegato sul vecchio whatsapp_send.
+      // Per ore ho creduto che fosse il modello a rifiutare: era il suo
+      // supervisore a dirgli che il lavoro non era finito.
+      //
+      // Su un invio l'unica domanda vera e' "il messaggio e' partito?", e la
+      // risposta sta nel registro degli invii, non nella prosa.
+      if (c.tipo === 'campi_obbligatori' && this._eUnInvio()) {
+        this.avvisi.push('campi_obbligatori non si applica a un invio: '
+          + 'un messaggio o parte o non parte, non ha "campi" nella risposta');
+        continue;
+      }
       this.criteri.push({ ...c });
     }
+
+    // Un invio senza criteri resta un incarico valido: il criterio e' l'invio.
+    if (this.criteri.length === 0 && this._eUnInvio()) {
+      this.criteri.push({ tipo: 'elementi_minimi', quanti: 1 });
+    }
+  }
+
+  /** L'obiettivo e' mandare un messaggio a una persona? */
+  _eUnInvio() {
+    return /\b(manda|mandare|invia|inviare|scriv[ie]|contatta|contattare|rispondi)\b/i.test(this.obiettivo)
+      && /\b(whatsapp|linkedin|messaggio|mail|email)\b/i.test(this.obiettivo);
   }
 
   /** Un incarico senza obiettivo o senza criteri non e' un incarico. */
@@ -110,6 +143,9 @@ class Incarico {
    * @param {object} sessione  per risalire alle pagine lette nel turno
    */
   valuta(esito = {}, sessione = {}) {
+    // Il cantiere e' la verita' su cosa e' stato raccolto: senza, i criteri
+    // giudicano la frase di accompagnamento invece del lavoro.
+    const cantiere = sessione && sessione.cantiere;
     const righe = righeDi(esito);
     const testo = testoDi(esito);
     const testoMinuscolo = testo.toLowerCase();
@@ -129,6 +165,29 @@ class Incarico {
           break;
         }
         case 'campi_obbligatori': {
+          // ── Si giudica il LAVORO, non il messaggio in chat ──
+          //
+          // Il 7 agosto il verdetto diceva "non compaiono i campi: sito, email"
+          // mentre nel foglio consegnato c'erano tutti e otto i siti e tutte le
+          // email. Il criterio guardava la frase di accompagnamento invece dei
+          // dati raccolti — e bocciava un lavoro riuscito.
+          //
+          // Se c'e' un cantiere, la verita' e' li': ogni voce sa quali campi ha.
+          if (cantiere && cantiere.elenco().length > 0) {
+            const buchi = cantiere.buchi();
+            const campiMancanti = [...new Set(buchi.flatMap(b => b.campiMancanti))]
+              .filter(campo => c.campi.some(x => String(x).toLowerCase() === String(campo).toLowerCase()));
+            esiti.push({
+              tipo: c.tipo, soddisfatto: campiMancanti.length === 0,
+              dettaglio: campiMancanti.length
+                ? `${buchi.length} voci su ${cantiere.elenco().length} incomplete`
+                : `tutte le ${cantiere.elenco().length} voci hanno ${c.campi.join(', ')}`,
+              mancante: campiMancanti.length
+                ? `${buchi.length} voci senza ${campiMancanti.join(', ')}: ${buchi.slice(0, 4).map(b => b.nome).join(', ')}`
+                : null,
+            });
+            break;
+          }
           const assenti = c.campi.filter(campo => !testoMinuscolo.includes(String(campo).toLowerCase()));
           esiti.push({
             tipo: c.tipo, soddisfatto: assenti.length === 0,
@@ -140,7 +199,16 @@ class Incarico {
         case 'soggetti_coperti': {
           // È il criterio che avrebbe fermato il blocco di Milano copiato da
           // Barcellona: ogni soggetto chiesto deve comparire per conto suo.
-          const scoperti = c.soggetti.filter(s => !testoMinuscolo.includes(String(s).toLowerCase()));
+          // Anche qui: se c'e' un cantiere, si guarda dentro le voci raccolte
+          // e non solo la frase in chat. Il 7 agosto il verdetto diceva "non
+          // hai trattato: Lombardia, Emilia" su otto aziende tutte lombarde ed
+          // emiliane — perche' nel foglio c'erano le CITTA', non le regioni.
+          const doveCercare = cantiere && cantiere.elenco().length
+            ? (testoMinuscolo + ' ' + cantiere.elenco()
+                .map(v => `${v.nome} ${Object.values(v.campi).join(' ')} ${(v.fonti || []).join(' ')}`)
+                .join(' ')).toLowerCase()
+            : testoMinuscolo;
+          const scoperti = c.soggetti.filter(s => !doveCercare.includes(String(s).toLowerCase()));
           esiti.push({
             tipo: c.tipo, soddisfatto: scoperti.length === 0,
             dettaglio: scoperti.length ? `soggetti non trattati: ${scoperti.join(', ')}` : 'tutti i soggetti trattati',
