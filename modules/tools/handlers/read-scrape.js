@@ -55,6 +55,15 @@ async function readPage(args, ctx) {
 }
 
 async function scrapeUrl(args, ctx) {
+  // Stesso filtro di navigate: i link sponsorizzati rispondono con una pagina
+  // vuota, e leggerli costa venti secondi per niente. Il 9 agosto ne sono
+  // stati aperti tre di fila, tutti da qui.
+  try {
+    const { primaDiAprire } = require('../../utils/annunci');
+    const d = primaDiAprire(args && args.url);
+    if (d.salta) return JSON.stringify({ ok: false, motivo: d.motivo, cosaFare: d.cosaFare, url: args.url });
+    if (d.eraUnAnnuncio) { ctx.log(`[Annunci] ${d.nota}`); args = { ...args, url: d.apri }; }
+  } catch (_) { /* si procede come prima */ }
   const url = args.url;
   const ssrf = await assertSSRFSafe(url);
   if (!ssrf.safe) {

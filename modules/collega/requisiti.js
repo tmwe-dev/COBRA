@@ -105,7 +105,28 @@ function soggettiNominati(testo) {
     if (m[1]) trovati.add(m[1]); if (m[2]) trovati.add(m[2]);
   }
 
-  return [...trovati];
+  // ── Un percorso non e' tre soggetti ──
+  //
+  // Prova vera del 9 agosto, "voli Milano-Tokyo, Milano-Madrid e Milano-Bogota":
+  // sono usciti CINQUE soggetti — Milano-Tokyo, Milano-Madrid, Milano-Bogota,
+  // piu' Tokyo e Milano da soli. Il criterio chiedeva di trattarli tutti, e
+  // "Milano-Tokyo" come stringa letterale non compare quasi mai in un
+  // risultato: si legge "Milano" e "Tokyo" in colonne diverse.
+  //
+  // Risultato: criteri impossibili, il Collega insisteva, e il lavoro girava
+  // senza poter finire. Un requisito che non si puo' soddisfare non protegge
+  // niente — ostacola e basta.
+  //
+  // Quando c'e' il composto, le parti non si contano: sono la stessa cosa
+  // detta due volte.
+  const fuori = [...trovati];
+  const pezziDiComposti = new Set();
+  for (const t of fuori) {
+    if (t.includes('-')) {
+      for (const pezzo of t.split('-')) pezziDiComposti.add(pezzo.trim().toLowerCase());
+    }
+  }
+  return fuori.filter(t => !pezziDiComposti.has(t.toLowerCase()));
 }
 
 /** I campi chiesti esplicitamente nella frase. */

@@ -183,6 +183,10 @@ function register(router, ctx) {
     'linkedin_posta', 'linkedin_diagnosi', 'linkedin_elenco_chat',
     'linkedin_leggi_conversazione', 'whatsapp_leggi_conversazione',
     'diagnosi_selettori', 'mappa_pagine', 'sblocca_coda',
+  // Il registro delle durate: serve a rispondere a "perche' ci ha messo tre
+  // minuti" con un numero invece che con un'ipotesi. E' in sola lettura come
+  // tutti gli altri qui: nessuno di questi comandi manda niente fuori.
+  'get_action_log',
     // NOTA: whatsapp_rispondi e linkedin_rispondi NON sono qui apposta.
     // Questa rotta e' di sola lettura: un comando che manda un messaggio a una
     // persona vera non deve poter partire da un indirizzo nella barra del

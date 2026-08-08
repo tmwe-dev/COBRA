@@ -6,6 +6,31 @@ const { assertSSRFSafe } = require('../../security/ssrf');
 const { Sorveglianza } = require('../../collega/sorveglianza');
 
 async function handle(args, ctx) {
+  // ── Un annuncio non e' un risultato ──
+  //
+  // Prova vera del 9 agosto: tre `bing.com/aclick?...` di fila, venti secondi
+  // ciascuno, tutti finiti in "probabile blocco anti-bot". Erano i link
+  // sponsorizzati in cima ai risultati: il modello li sceglie perche' stanno
+  // per primi e sembrano risultati.
+  //
+  // Dentro il redirect, in base64 e a due livelli di profondita', c'e' la
+  // destinazione vera. Se si legge si va diritti li' e si guadagna un
+  // passaggio; se non si legge si dice che era un annuncio, invece di
+  // bruciare venti secondi per una pagina vuota.
+  try {
+    const { primaDiAprire } = require('../../utils/annunci');
+    const d = primaDiAprire(args && args.url);
+    if (d.salta) {
+      ctx.emitReasoning('Quello e\' un link sponsorizzato: ne prendo un altro', '🚫');
+      return JSON.stringify({ ok: false, motivo: d.motivo, cosaFare: d.cosaFare, url: args.url });
+    }
+    if (d.eraUnAnnuncio) {
+      ctx.log(`[Annunci] ${d.nota}`);
+      ctx.emitReasoning(d.nota, '↪️');
+      args = { ...args, url: d.apri };
+    }
+  } catch (_) { /* se il filtro non c'e', si naviga come prima */ }
+
   // Cambiando pagina, il modulo guardato prima non c'entra piu' niente: i
   // campi sono altri. Senza questo, il freno di fill_form si lascerebbe
   // convincere da una lettura fatta su un altro sito.
