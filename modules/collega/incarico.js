@@ -33,7 +33,55 @@ const { verificaFormato } = require('../output/consegna');
 // testo grezzo con l'estensione sbagliata — un file che non si apre.
 const PRODUCIBILI = ['html', 'xlsx', 'csv', 'txt', 'json', 'md'];
 
-const TIPI = ['elementi_minimi', 'campi_obbligatori', 'soggetti_coperti', 'origine_verificabile', 'file_atteso', 'nessun_duplicato', 'formato_consegna'];
+// ── I SETTE CRITERI, IN UN POSTO SOLO ──
+//
+// Questo elenco viveva in tre copie: qui (che e' l'unica che conta, perche' e'
+// quella che valuta), nel prompt del Collega, e nel manuale criteri.md. Oggi
+// dicono la stessa cosa. Ma niente lo garantisce, e una regola in tre copie e'
+// una regola che aspetta di divergere: il giorno in cui il codice ne conosce
+// sette e il prompt ne descrive otto, il Collega chiede un criterio che il
+// codice scarta in silenzio — e l'incarico risulta "senza verifica" senza che
+// nessuno capisca perche'.
+//
+// Adesso la descrizione sta accanto alla definizione, e il prompt la GENERA da
+// qui invece di ricopiarla. Un test controlla che il manuale non se ne allontani.
+const CRITERI = {
+  soggetti_coperti: {
+    forma: '{ "tipo": "soggetti_coperti", "soggetti": ["Milano","Madrid"] }',
+    spiega: 'ogni soggetto trattato per conto suo. SEMPRE quando la richiesta ne ha piu\' di uno.',
+  },
+  elementi_minimi: {
+    forma: '{ "tipo": "elementi_minimi", "quanti": 3 }',
+    spiega: 'quanti risultati distinti servono.',
+  },
+  campi_obbligatori: {
+    forma: '{ "tipo": "campi_obbligatori", "campi": ["prezzo","orario"] }',
+    spiega: 'cosa deve esserci per ogni elemento. Serve anche al sistema per sapere cosa raccogliere.',
+  },
+  origine_verificabile: {
+    forma: '{ "tipo": "origine_verificabile" }',
+    spiega: 'ogni numero viene da una pagina aperta davvero. OBBLIGATORIO se ci sono prezzi, tariffe, quantita\' o disponibilita\'.',
+  },
+  file_atteso: {
+    forma: '{ "tipo": "file_atteso", "estensione": "html" }',
+    spiega: 'html per report e confronti, xlsx solo se Luca ha nominato Excel.',
+  },
+  nessun_duplicato: {
+    forma: '{ "tipo": "nessun_duplicato" }',
+    spiega: 'insieme a soggetti_coperti.',
+  },
+  formato_consegna: {
+    forma: '{ "tipo": "formato_consegna" }',
+    spiega: 'sempre insieme a file_atteso.',
+  },
+};
+
+const TIPI = Object.keys(CRITERI);
+
+/** L'elenco dei criteri come va scritto nel prompt: generato, non ricopiato. */
+function elencoCriteriPerPrompt() {
+  return TIPI.map(t => `- ${CRITERI[t].forma}\n  ${CRITERI[t].spiega}`).join('\n');
+}
 
 /** Righe di una tabella, o righe di testo: si valuta ciò che c'è. */
 function righeDi(esito) {
@@ -344,4 +392,4 @@ function descriviCriterio(c) {
   }
 }
 
-module.exports = { Incarico, TIPI, descriviCriterio };
+module.exports = { Incarico, TIPI, CRITERI, elencoCriteriPerPrompt, descriviCriterio };

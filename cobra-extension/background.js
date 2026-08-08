@@ -1734,6 +1734,42 @@ async function executeCommand(command, args) {
       // questo. Adesso e' qui, con lo stesso metodo degli altri: la pagina se
       // la prepara Pagine, il ritmo lo mette Ritmo, e il pulsante si cerca per
       // SIGNIFICATO — ruolo piu' nome accessibile — non per classe CSS.
+      // ══════════════════════════════════════════════════════
+      // GUARDARE LA PAGINA, E POTERNE NOMINARE I PEZZI
+      // ══════════════════════════════════════════════════════
+      //
+      // Il modello non scrive piu' selettori CSS: guarda, e poi agisce su
+      // quello che ha visto. `guarda` restituisce E1, E2, E3... e i comandi
+      // dopo accettano quei nomi. Un elemento inventato non esiste, quindi
+      // non puo' essere nominato — che e' il punto.
+      case 'guarda': {
+        const _pg = args.tabId
+          ? { ok: true, scheda: { id: Number(args.tabId) } }
+          : await (async () => {
+              const [att] = await chrome.tabs.query({ active: true, currentWindow: true });
+              if (!att) return { ok: false, motivo: 'nessuna scheda attiva' };
+              return { ok: true, scheda: att };
+            })();
+        if (!_pg.ok) return _pg;
+        if (globalThis.Ritmo) await globalThis.Ritmo.comeUnaPersona(_pg.scheda.id, 'leggere', async () => {});
+        return await globalThis.Sguardo.guarda(_pg.scheda.id, {
+          quanti: args.quanti, ancheInvisibili: args.ancheInvisibili,
+        });
+      }
+
+      case 'agisci': {
+        const _pa = args.tabId
+          ? { id: Number(args.tabId) }
+          : (await chrome.tabs.query({ active: true, currentWindow: true }))[0];
+        if (!_pa) return { ok: false, motivo: 'nessuna scheda attiva' };
+        const cosa = String(args.cosa || 'clicca');
+        // Scrivere e premere sono gesti che si vedono: passano dal ritmo.
+        if (globalThis.Ritmo && cosa !== 'guarda') {
+          await globalThis.Ritmo.comeUnaPersona(_pa.id, 'pensare', async () => {});
+        }
+        return await globalThis.Sguardo.agisci(_pa.id, args.id, cosa, args.valore);
+      }
+
       case 'linkedin_collegati': {
         const url = String(args.url || args.profilo || '').trim();
         const nota = String(args.nota || args.note || args.testo || '');

@@ -38,9 +38,24 @@ sezione('Il modello lo decide il lavoro, non la lunghezza del messaggio');
   const c = fs.readFileSync('modules/routes/chat.js', 'utf8');
   const cmd = fs.readFileSync('modules/collega/comando.js', 'utf8');
   ok('l incarico decide il modello', /function modelloPer/.test(cmd));
-  ok('conta il numero di criteri', /criteri\.length >= 3/.test(cmd));
+  // Queste due prove guardavano il TESTO della vecchia euristica
+  // (`criteri.length >= 3` e l'elenco letterale dei tipi impegnativi). Quando
+  // la scelta e' diventata un punteggio, sono diventate rosse pur essendo la
+  // sostanza intatta — anzi migliore. Adesso guardano il comportamento: e' cio'
+  // che la prova voleva dire fin dall'inizio, e sopravvive al prossimo cambio
+  // di formula.
+  const { modelloPer, difficoltaDi } = require('../modules/collega/comando');
+  const unCriterio = { criteri: [{ tipo: 'elementi_minimi', quanti: 1 }] };
+  const treCriteri = { criteri: [
+    { tipo: 'elementi_minimi', quanti: 3 },
+    { tipo: 'nessun_duplicato' },
+    { tipo: 'formato_consegna' }] };
+  ok('conta il numero di criteri',
+     difficoltaDi(treCriteri).punteggio > difficoltaDi(unCriterio).punteggio);
   ok('e conta anche il tipo di criterio impegnativo',
-     /'origine_verificabile', 'file_atteso', 'soggetti_coperti', 'campi_obbligatori'/.test(cmd));
+     ['origine_verificabile', 'file_atteso', 'soggetti_coperti', 'campi_obbligatori']
+       .every(t => modelloPer({ criteri: [{ tipo: t, soggetti: ['a', 'b'], campi: ['x'] },
+                                          { tipo: 'origine_verificabile' }] }).tier === 'power'));
   ok('col motivo scritto', /NON si guarda la lunghezza del messaggio/.test(cmd));
   ok('e il turno obbedisce invece di rattoppare',
      /ctx\._ordineDiLavoro\s*\n?\s*\? \{ tier: ctx\._ordineDiLavoro\.tier/.test(c));

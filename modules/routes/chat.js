@@ -3,7 +3,7 @@
 const { Collega } = require('../collega/collega');
 const { Cantiere } = require('../collega/cantiere');
 const { ArchivioCantieri } = require('../collega/cantiere-archivio');
-const { ordineDiLavoro, inChiaro } = require('../collega/comando');
+const { ordineDiLavoro, inChiaro, domandaPerLaConoscenza } = require('../collega/comando');
 const { tiraLezioni } = require('../memory/tira-lezioni');
 const { descriviCriterio } = require('../collega/incarico');
 const { analizzaRisposta, rispostaOnesta, analizzaResa } = require('../security/fabrication-guard');
@@ -450,8 +450,18 @@ function register(router, ctx) {
         }
       }
 
-      // 5. KB search
-      try { ctx.session.kbSnippets = await ctx.searchKB(message); } catch { ctx.session.kbSnippets = []; }
+      // 5. KB search — si chiede all'INCARICO, non al messaggio
+      //
+      // Il messaggio grezzo va bene finche' descrive il lavoro. Ma le risposte
+      // piu' frequenti a una domanda del Collega sono "vai", "procedi", "ok":
+      // cercare quelle nella conoscenza non produce niente. E' il paradosso
+      // per cui piu' il Collega fa bene il suo mestiere, piu' la KB diventa
+      // cieca al turno dopo.
+      const _domandaKB = domandaPerLaConoscenza(incaricoCorrente, message);
+      if (_domandaKB !== message) {
+        ctx.log(`[KB] Cerco per l'incarico invece che per il messaggio: "${_domandaKB.slice(0, 60)}"`);
+      }
+      try { ctx.session.kbSnippets = await ctx.searchKB(_domandaKB); } catch { ctx.session.kbSnippets = []; }
 
       // 6. SuperMario assemble
       const lastToolResult = ctx.session.lastPage

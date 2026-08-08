@@ -54,6 +54,8 @@ const TOOL_RISK_TAXONOMY = {
   send_email:      { level:'send', confirm:true, batchable:true, ttl:600, truth:'Invia email SMTP.' },
   open_whatsapp:   { level:'send_prepare', confirm:false, batchable:false, ttl:300, truth:'Apre WhatsApp precompilato.' },
   open_linkedin:   { level:'send_prepare', confirm:false, batchable:false, ttl:300, truth:'Apre LinkedIn.' },
+  guarda_pagina:         { level:'read', confirm:false, batchable:true, truth:'Guarda la pagina e elenca cio\' su cui si puo\' agire.' },
+  agisci:                { level:'interact', confirm:false, batchable:false, truth:'Preme o compila un elemento visto prima.' },
   linkedin_search:       { level:'read', confirm:false, batchable:true, truth:'Cerca profili LinkedIn.' },
   linkedin_profile:      { level:'read', confirm:false, batchable:true, truth:'Estrae profilo LinkedIn.' },
   linkedin_inbox:        { level:'read', confirm:false, batchable:true, truth:'Legge inbox LinkedIn.' },

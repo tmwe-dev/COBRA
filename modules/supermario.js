@@ -106,6 +106,7 @@ const TOOL_SCOPES = {
                  'accedi', 'siti_con_accesso',
                  // guardare e agire su una pagina qualsiasi: la strada generale
                  'navigate', 'get_page_snapshot', 'get_page_elements', 'read_page',
+                 'guarda_pagina', 'agisci',
                  'screenshot', 'leggi_modulo', 'fill_form', 'click_element',
                  'type_human', 'select_option', 'press_key', 'scroll_page', 'wait_for',
                  // leggere va bene da qualunque strada: non fa uscire niente

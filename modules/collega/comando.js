@@ -98,20 +98,86 @@ function ambitiPer(incarico) {
 }
 
 /**
- * Quanto è difficile questo lavoro.
+ * Quanto è difficile questo lavoro, in un numero.
  *
  * NON si guarda la lunghezza del messaggio: "Vai." è lungo quattro lettere e
  * può valere mezz'ora di ricerche. Si guarda cosa è stato promesso.
+ *
+ * Prima c'era una soglia sola — tre criteri, oppure uno dei quattro
+ * "impegnativi" — e due esiti possibili. Funzionava, ma appiattiva casi molto
+ * diversi: un confronto fra otto compagnie con prezzi da verificare e un file
+ * finale prendeva lo stesso modello di una ricerca con due criteri qualsiasi.
+ * E nell'altro verso, un lavoro con un solo `file_atteso` — scrivere un
+ * appunto — pretendeva il modello grosso.
+ *
+ * Adesso il peso si somma, ogni voce dice quanto pesa e perché, e le soglie
+ * sono scritte in un punto solo. Il conto è deterministico: lo stesso incarico
+ * dà sempre lo stesso numero, e il numero si può leggere ad alta voce.
  */
-function modelloPer(incarico) {
-  const criteri = (incarico && incarico.criteri) || [];
-  const tipi = new Set(criteri.map(c => c.tipo));
-  const impegnativi = ['origine_verificabile', 'file_atteso', 'soggetti_coperti', 'campi_obbligatori'];
+const PESI = {
+  origine_verificabile: { peso: 25, perche: 'ogni numero va verificato su una pagina aperta' },
+  file_atteso:          { peso: 15, perche: 'c\'è un documento da produrre' },
+  campi_obbligatori:    { peso: 12, perche: 'ogni elemento deve avere campi precisi' },
+  soggetti_coperti:     { peso: 10, perche: 'più soggetti, ognuno per conto suo' },
+  formato_consegna:     { peso: 5,  perche: 'il documento ha un formato da rispettare' },
+  nessun_duplicato:     { peso: 5,  perche: 'i risultati non si possono ripetere' },
+  elementi_minimi:      { peso: 3,  perche: 'serve una quantità minima di risultati' },
+};
 
-  if (criteri.length >= 3 || criteri.some(c => impegnativi.includes(c.tipo))) {
-    return { tier: 'power', perche: `${criteri.length} criteri, di cui verificabili dal codice` };
+const SOGLIE = [
+  { fino: 20, tier: 'standard' },
+  { fino: 55, tier: 'power' },
+  { fino: Infinity, tier: 'power' },
+];
+
+function difficoltaDi(incarico) {
+  const criteri = (incarico && incarico.criteri) || [];
+  const voci = [];
+  let punti = 0;
+
+  for (const c of criteri) {
+    const v = PESI[c.tipo];
+    if (!v) continue;
+    let peso = v.peso;
+
+    // Un criterio non pesa sempre uguale. Tre soggetti sono tre ricerche;
+    // otto sono un lavoro che non sta in un turno.
+    if (c.tipo === 'soggetti_coperti' && Array.isArray(c.soggetti)) {
+      peso += Math.min(20, Math.max(0, c.soggetti.length - 2) * 5);
+    }
+    if (c.tipo === 'campi_obbligatori' && Array.isArray(c.campi)) {
+      peso += Math.min(10, Math.max(0, c.campi.length - 2) * 2);
+    }
+    if (c.tipo === 'elementi_minimi' && Number(c.quanti) > 5) {
+      peso += Math.min(10, Number(c.quanti) - 5);
+    }
+
+    punti += peso;
+    voci.push({ tipo: c.tipo, peso, perche: v.perche });
   }
-  return { tier: 'standard', perche: 'lavoro semplice' };
+
+  // Più criteri diversi significano più cose da tenere insieme in una volta.
+  if (criteri.length >= 4) {
+    punti += 8;
+    voci.push({ tipo: 'insieme', peso: 8, perche: `${criteri.length} criteri da tenere insieme` });
+  }
+
+  const punteggio = Math.min(100, punti);
+  const tier = (SOGLIE.find(s => punteggio <= s.fino) || SOGLIE[SOGLIE.length - 1]).tier;
+
+  // La riga che si legge ad alta voce: chi guarda il registro deve capire
+  // perché è stato scelto quel modello senza aprire questo file.
+  const perche = voci.length
+    ? `difficoltà ${punteggio}/100 — ` + voci.sort((a, b) => b.peso - a.peso)
+        .slice(0, 3).map(v => `${v.perche} (${v.peso})`).join('; ')
+    : 'difficoltà 0/100 — lavoro semplice';
+
+  return { punteggio, tier, perche, voci };
+}
+
+function modelloPer(incarico) {
+  const d = difficoltaDi(incarico);
+  return { tier: d.tier, punteggio: d.punteggio, perche: d.perche };
 }
 
 /**
@@ -135,4 +201,42 @@ function inChiaro(ordine) {
   return `Per questo lavoro mi servono: ${ordine.ambiti.join(', ')} — ${ordine.perche.join('; ')}.`;
 }
 
-module.exports = { ordineDiLavoro, ambitiPer, modelloPer, inChiaro };
+// ── La domanda giusta da fare alla conoscenza ──
+//
+// La ricerca nella KB partiva dal messaggio grezzo di Luca. Funziona finche'
+// il messaggio descrive il lavoro; smette di funzionare esattamente quando
+// serve di piu':
+//
+//   "vai"                        → cerca "vai"
+//   "vai con quello di prima"    → cerca "vai con quello di prima"
+//   "procedi"                    → cerca "procedi"
+//
+// Tre ricerche inutili, e sono le risposte piu' frequenti che da' una persona
+// a cui hai appena chiesto conferma. Il paradosso: piu' il Collega fa bene il
+// suo lavoro — capire e chiedere — piu' il messaggio successivo e' corto e
+// vuoto, e piu' la KB diventa cieca.
+//
+// L'incarico invece contiene sempre la sostanza: l'obiettivo scritto per
+// esteso, i soggetti, i campi che servono. Quella e' la domanda da fare.
+//
+// Si tiene anche il messaggio, in coda: a volte contiene un nome proprio che
+// nell'obiettivo e' stato riassunto via.
+function domandaPerLaConoscenza(incarico, messaggio = '') {
+  const pezzi = [];
+  if (incarico && incarico.obiettivo) pezzi.push(String(incarico.obiettivo));
+
+  for (const c of (incarico && incarico.criteri) || []) {
+    if (c.tipo === 'soggetti_coperti' && Array.isArray(c.soggetti)) pezzi.push(c.soggetti.join(' '));
+    if (c.tipo === 'campi_obbligatori' && Array.isArray(c.campi)) pezzi.push(c.campi.join(' '));
+  }
+
+  // Il messaggio serve solo se aggiunge qualcosa: "vai" non aggiunge niente.
+  const m = String(messaggio || '').trim();
+  if (m.length > 12) pezzi.push(m);
+
+  const domanda = pezzi.join(' ').replace(/\s+/g, ' ').trim();
+  // Senza incarico non c'e' niente di meglio del messaggio: si torna a quello.
+  return domanda || m;
+}
+
+module.exports = { ordineDiLavoro, ambitiPer, modelloPer, difficoltaDi, PESI, inChiaro, domandaPerLaConoscenza };

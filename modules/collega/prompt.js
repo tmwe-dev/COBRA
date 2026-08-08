@@ -16,6 +16,8 @@
 // manuali di modules/collega/manuali, e si aprono quando servono.
 
 const fs = require('fs');
+// I criteri si prendono da chi li VALUTA: una copia sola, quella che conta.
+const { elencoCriteriPerPrompt } = require('./incarico');
 const path = require('path');
 
 const CARTELLA = path.join(__dirname, 'manuali');
@@ -146,17 +148,7 @@ Se il lavoro va fatto:
 Un incarico SENZA criteri non viene controllato da nessuno, e il lavoro torna
 com'e' venuto. Mettine sempre almeno due.
 
-- { "tipo": "soggetti_coperti", "soggetti": ["Milano","Madrid"] }
-  ogni soggetto trattato per conto suo. SEMPRE quando la richiesta ne ha piu' di uno.
-- { "tipo": "elementi_minimi", "quanti": 3 } — quanti risultati distinti servono.
-- { "tipo": "campi_obbligatori", "campi": ["prezzo","orario"] } — cosa deve
-  esserci per ogni elemento. Serve anche al sistema per sapere cosa raccogliere.
-- { "tipo": "origine_verificabile" } — ogni numero viene da una pagina aperta
-  davvero. OBBLIGATORIO se ci sono prezzi, tariffe, quantita' o disponibilita'.
-- { "tipo": "file_atteso", "estensione": "html" } — html per report e confronti,
-  xlsx solo se Luca ha nominato Excel.
-- { "tipo": "nessun_duplicato" } — insieme a soggetti_coperti.
-- { "tipo": "formato_consegna" } — sempre insieme a file_atteso.
+${elencoCriteriPerPrompt()}
 
 ## Quando Luca chiede un riepilogo, il riepilogo e' un file
 

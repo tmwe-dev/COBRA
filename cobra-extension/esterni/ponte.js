@@ -198,6 +198,12 @@ try { importScripts('esterni/mappa.js'); }
 catch (e) { console.error('[COBRA] mappa.js non caricato:', e.message); }
 
 // Portarsi sulla pagina giusta: una sola funzione, per tutti i comandi.
+// Lo sguardo: guardare la pagina e poterne nominare i pezzi. Va caricato dopo
+// mappa e pagine perche' e' l'ultimo anello — ma non dipende da loro: se uno
+// dei due manca, guardare funziona lo stesso.
+try { importScripts('esterni/sguardo.js'); }
+catch (e) { console.error('[COBRA] sguardo.js non caricato:', e.message); }
+
 try { importScripts('esterni/pagine.js'); }
 catch (e) { console.error('[COBRA] pagine.js non caricato:', e.message); }
 
