@@ -170,7 +170,26 @@
                 if (m) { nonLetti = parseInt(m[1], 10); break; }
               }
 
-              return { nome, anteprima, ora, nonLetti };
+              // ── Il numero, quando la pagina lo espone ──
+              //
+              // Prova vera del 9 agosto: "manda un WhatsApp al numero +53...".
+              // Bloccato da `soloSeConosciuto` con "non ti ha mai scritto e non
+              // risulta in rubrica". Ma Jose HA scritto: la rubrica lo conosce
+              // per NOME, e il numero non l'aveva mai visto nessuno.
+              //
+              // Una regola che protegge dal contattare sconosciuti diventa un
+              // muro contro i conosciuti, se l'unica identita' che impara e' il
+              // nome. WhatsApp il numero ce l'ha: sta in `data-id`, nella forma
+              // `false_5353341229@c.us`.
+              let numero = '';
+              try {
+                const conId = riga.closest('[data-id]') || riga.querySelector('[data-id]');
+                const id = conId ? (conId.getAttribute('data-id') || '') : '';
+                const m = id.match(/(\d{7,15})@c\.us/);
+                if (m) numero = m[1];
+              } catch (_) { /* senza numero si continua: e' un di piu' */ }
+
+              return { nome, anteprima, ora, nonLetti, numero: numero || undefined };
             }).filter(c => c.nome);
 
             // Cintura e bretelle: se due righe diverse portano lo stesso nome,

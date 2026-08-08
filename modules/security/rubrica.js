@@ -166,6 +166,32 @@ class Rubrica {
     if (!c) return [];
     const dentro = this._voci.filter(v => (!canale || v.canale === canale));
 
+    // ── Una persona ha due identita': il nome e il numero ──
+    //
+    // Prova vera del 9 agosto: "manda un WhatsApp al numero +5353341229".
+    // Bloccato con "non ti ha mai scritto e non risulta in rubrica" — mentre
+    // Jose aveva scritto eccome: la rubrica lo conosceva come "Jose
+    // Programmatore Cuba" e il numero non l'aveva mai visto nessuno.
+    //
+    // Una regola che protegge dal contattare sconosciuti diventa un muro
+    // contro i conosciuti, se l'unica identita' che sa riconoscere e' il nome.
+    // Chi cerca per numero deve trovare la stessa persona.
+    const soloCifre = String(chi || '').replace(/[^0-9]/g, '');
+    if (soloCifre.length >= 7) {
+      const perNumero = dentro.filter(v => {
+        const n = String(v.numero || '').replace(/[^0-9]/g, '');
+        if (!n) return false;
+        // Il prefisso internazionale a volte c'e' e a volte no: si confrontano
+        // le ultime cifre, che sono quelle che identificano davvero.
+        const corte = Math.min(n.length, soloCifre.length, 10);
+        return n.slice(-corte) === soloCifre.slice(-corte);
+      });
+      if (perNumero.length) {
+        return perNumero.sort((a, b) =>
+          (b.haScrittoLui - a.haScrittoLui) || (b.ultimoContatto - a.ultimoContatto));
+      }
+    }
+
     const esatti = dentro.filter(v => Rubrica._piatto(v.nome) === c);
     const trovati = esatti.length ? esatti
       : dentro.filter(v => Rubrica._piatto(v.nome).includes(c));

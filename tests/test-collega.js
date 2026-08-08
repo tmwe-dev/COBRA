@@ -180,6 +180,40 @@ function collegaChe(risposte) {
     ok('il caso vero di Brandon va all Esecutore',
        (await c5.ascolta('trova Brandon e mandagli il collegamento')).modo === 'passa_oltre');
 
+
+    // ── Un rifiuto inventato chiude il turno peggio di una promessa ──
+    //
+    // Prova vera del 9 agosto. "manda un messaggio WhatsApp al numero +53...":
+    //
+    //   "Non posso inviare messaggi WhatsApp utilizzando un numero di telefono.
+    //    Ho bisogno del nome del contatto salvato."
+    //
+    // E' falso ed e' il CONTRARIO del vero: con un numero non c'e' ambiguita'
+    // possibile, e la descrizione dello strumento dice "il numero e' sempre
+    // piu' sicuro". Lo strumento c'era e funzionava.
+    //
+    // Una promessa non mantenuta lascia Luca in attesa; un rifiuto lo fa
+    // rinunciare — chiude la conversazione convinto che non si possa fare.
+    const { rifiutaSenzaProvare } = require('../modules/collega/collega');
+    for (const f of ['Non posso inviare messaggi WhatsApp utilizzando un numero di telefono.',
+                     'Non riesco ad accedere a quel sito.', 'Non ho gli strumenti per farlo.',
+                     'Ho bisogno del nome del contatto salvato.', 'I cannot send messages.']) {
+      ok(`riconosce il rifiuto: "${f.slice(0, 30)}…"`, rifiutaSenzaProvare(f) === true);
+    }
+    // La "i" da sola avrebbe fatto scattare il freno su mezza lingua italiana.
+    for (const f of ['I voli costano 300 euro.', 'I prezzi sono 55, 120 e 300.',
+                     'Ho trovato i contatti di tutte e tre le aziende.',
+                     'Sono le nove e mezza.', 'Fatto, mandato a Jose.']) {
+      ok(`e non si confonde con: "${f.slice(0, 30)}…"`, rifiutaSenzaProvare(f) === false);
+    }
+
+    const c6 = collegaChe([JSON.stringify({
+      modo: 'conversazione',
+      risposta: 'Non posso inviare messaggi WhatsApp utilizzando un numero di telefono. Ho bisogno del nome del contatto salvato.',
+    })]);
+    ok('un rifiuto inventato va all Esecutore invece di chiudere',
+       (await c6.ascolta('manda un WhatsApp al numero +5353341229: test')).modo === 'passa_oltre');
+
     const c2 = collegaChe([JSON.stringify({ modo: 'conversazione', risposta: 'Sono le nove e mezza.' })]);
     const r2 = await c2.ascolta('che ore sono?');
     ok('una risposta vera resta conversazione', r2.modo === 'conversazione');

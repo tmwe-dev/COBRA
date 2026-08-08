@@ -90,5 +90,38 @@ console.log('\n── Sopravvive a un riavvio ──');
 
 console.log(`\n╔══════════════════════════════════════════╗`);
 console.log(`║  RUBRICA: ${pass} PASS, ${fail} FAIL`);
+
+console.log('\n-- Una persona ha due identita: il nome e il numero --');
+{
+  // Prova vera del 9 agosto: "manda un WhatsApp al numero +5353341229".
+  // Bloccato con "non ti ha mai scritto e non risulta in rubrica" — mentre
+  // Jose aveva scritto eccome. La rubrica lo conosceva per NOME, e il numero
+  // non l'aveva mai visto nessuno.
+  //
+  // Una regola che protegge dal contattare sconosciuti diventa un muro contro
+  // i conosciuti, se l'unica identita' che sa riconoscere e' il nome.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'rub-'));
+  const R = new Rubrica(tmp);
+  R.daLettura([{ nome: 'Jose Programmatore Cuba', numero: '5353341229', haScritto: true }], 'whatsapp');
+
+  ok('lo trova per nome', R.destinatario('Jose', 'whatsapp').trovato === true);
+  ok('e per numero', R.destinatario('+5353341229', 'whatsapp').trovato === true);
+  ok('col prefisso o senza', R.destinatario('5353341229', 'whatsapp').trovato === true);
+  ok('ed e la STESSA persona',
+     R.destinatario('+5353341229', 'whatsapp').voce.nome === 'Jose Programmatore Cuba');
+
+  // E' questo che sbloccava il muro: `soloSeConosciuto` chiede proprio questo.
+  ok('e risulta conosciuto anche partendo dal numero',
+     R.conosciuto('+5353341229', 'whatsapp') === true);
+
+  // Ma un numero mai visto resta sconosciuto: la protezione non si allenta.
+  ok('un numero mai visto resta sconosciuto',
+     R.conosciuto('+390000000000', 'whatsapp') === false);
+  ok('e non viene scambiato per un altro',
+     R.destinatario('+390000000000', 'whatsapp').trovato === false);
+
+  fs.rmSync(tmp, { recursive: true, force: true });
+}
+
 console.log(`╚══════════════════════════════════════════╝`);
 process.exit(fail ? 1 : 0);

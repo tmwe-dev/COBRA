@@ -87,6 +87,53 @@ const _PROMESSE = new RegExp([
   '\\b(?:cerchero|invier|mander|scriver|contatter)\\w*\\b',
 ].join('|'), 'i');
 
+/**
+ * La risposta è un RIFIUTO, e il turno si chiude senza aver provato?
+ *
+ * ── PERCHÉ QUESTO CONTROLLO ESISTE ──
+ *
+ * Prova vera del 9 agosto. Richiesta: "manda un messaggio WhatsApp al numero
+ * +53...". Risposta del Collega, in modo conversazione:
+ *
+ *     "Non posso inviare messaggi WhatsApp utilizzando un numero di telefono.
+ *      Ho bisogno del nome del contatto salvato."
+ *
+ * È falso, ed è il contrario del vero: con un numero non c'è ambiguità
+ * possibile — /send?phone= apre QUELLA chat — e la descrizione dello strumento
+ * dice testualmente "il numero e' sempre piu' sicuro". Lo strumento c'era, era
+ * raggiungibile, e funzionava.
+ *
+ * È lo stesso "non posso" che il 7 agosto ha fatto perdere mezza giornata,
+ * con una differenza che lo rende peggiore: allora la causa era reale (il
+ * dominio non era in whitelist), adesso non c'è nessuna causa. È un limite
+ * immaginato dal modello.
+ *
+ * ── PERCHÉ UN RIFIUTO È PEGGIO DI UNA PROMESSA ──
+ *
+ * Una promessa non mantenuta lascia Luca in attesa; un rifiuto lo fa
+ * rinunciare. Chiude la conversazione convinto che una cosa non si possa fare,
+ * e non riprova più.
+ *
+ * Il Collega non ha gli strumenti in mano: li ha l'Esecutore. Quindi non è
+ * nella posizione di sapere cosa si può fare — e infatti sbaglia. Se dice di
+ * no senza aver provato, il lavoro passa a chi può provarci davvero.
+ */
+const _RIFIUTA = new RegExp([
+  '\\bnon\\s+(?:posso|riesco|sono in grado|e\' possibile|si puo)\\b',
+  '\\bmi\\s+e\'?\\s+impossibile\\b',
+  '\\bnon\\s+ho\\s+(?:accesso|la possibilita|gli strumenti|modo)\\b',
+  '\\bho\\s+bisogno\\s+(?:del|della|di un|di una)\\b',
+  '\\bserve\\s+(?:che|il nome|prima)\\b',
+  // "I cannot" come FRASE, non la "i" da sola: in italiano "i voli", "i
+  // prezzi", "i contatti" farebbero scattare il freno su ogni risposta.
+  '\\bi\\s+(?:cannot|can\'t|am unable|don\'t have)\\b',
+].join('|'), 'i');
+
+function rifiutaSenzaProvare(testo) {
+  const t = String(testo || '').normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return _RIFIUTA.test(t);
+}
+
 function prometteUnAzione(testo) {
   const t = String(testo || '')
     .normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -230,8 +277,9 @@ class Collega {
       // Non si corregge il testo e non si inventa un incarico: si passa
       // oltre. L'Esecutore riceve la richiesta e fa il lavoro davvero, e il
       // Collega parla comunque alla fine (collegaPassaOltre in chat.js).
-      if (prometteUnAzione(risposta) || chiedeSoloIlPermesso(risposta)) {
-        this.log('[Collega] Promessa o richiesta di permesso in modo conversazione: passo all\'Esecutore');
+      if (prometteUnAzione(risposta) || chiedeSoloIlPermesso(risposta)
+          || rifiutaSenzaProvare(risposta)) {
+        this.log('[Collega] Promessa, richiesta di permesso o rifiuto senza aver provato: passo all\'Esecutore');
         return { modo: 'passa_oltre', risposta: '' };
       }
       return { modo: 'conversazione', risposta, lingua };
@@ -408,4 +456,4 @@ class Collega {
   }
 }
 
-module.exports = { Collega, leggiJson, normalizzaLingua, prometteUnAzione, chiedeSoloIlPermesso, MASSIME_INSISTENZE };
+module.exports = { Collega, leggiJson, normalizzaLingua, prometteUnAzione, chiedeSoloIlPermesso, rifiutaSenzaProvare, MASSIME_INSISTENZE };
