@@ -37,6 +37,7 @@
 // ══════════════════════════════════════════════════════════════════════
 
 const { decidi, STATI } = require('./completamento');
+const { comeRecuperare, TIPI } = require('./recupero');
 
 /** Le parole con cui una persona dice "vai avanti con quella cosa di prima". */
 const _RIPRENDI = /^\s*(vai|continua|prosegui|riprendi|avanti|va bene|procedi|finisci|completa|dai)\b/i;
@@ -126,7 +127,36 @@ function pacchettoDiRipresa(lavoro, verdetto) {
     if (falliti.length) {
       righe.push('');
       righe.push('GIÀ PROVATI E FALLITI — cambia strada, non ripetere:');
-      for (const p of falliti) righe.push(`  ✗ ${p.n}. ${p.titolo} — ${p.motivo || 'senza motivo'}`);
+
+      // ── Quante volte lo STESSO guasto ──
+      //
+      // Il contatore del singolo passo non basta: dopo un fallimento il piano
+      // non riapre quel passo, quindi `tentativi` resta a uno anche se lo
+      // stesso muro e' stato preso quattro volte da passi diversi o da turni
+      // diversi. E la domanda che conta e' proprio quella: si ripete?
+      //
+      // Un guasto passeggero che si ripete non e' passeggero. L'8 agosto sono
+      // stati quattro "Extension timeout" identici, e ogni volta la risposta
+      // e' stata "riprova".
+      const _quanteVolte = new Map();
+      for (const p of falliti) {
+        const k = String(p.motivo || '').toLowerCase().replace(/\d+/g, '#').slice(0, 50);
+        _quanteVolte.set(k, (_quanteVolte.get(k) || 0) + Math.max(1, p.tentativi || 1));
+      }
+
+      for (const p of falliti) {
+        righe.push(`  ✗ ${p.n}. ${p.titolo} — ${p.motivo || 'senza motivo'}`);
+        // Non basta dire che è fallito: bisogna dire CHE TIPO di guasto era,
+        // perché la mossa giusta dipende da quello. Riprovare un guasto di
+        // strategia è il modo più comune di girare a vuoto; chiedere a Luca
+        // un guasto passeggero è il modo più comune di disturbarlo per niente.
+        const _k = String(p.motivo || '').toLowerCase().replace(/\d+/g, '#').slice(0, 50);
+        const r = comeRecuperare(p.motivo || '', _quanteVolte.get(_k) || 1);
+        righe.push(`     → ${r.tipo}: ${r.cosaFare}`);
+        if (r.tipo === TIPI.STRATEGIA && r.scaletta) {
+          for (const riga of r.scaletta.split('\n')) righe.push('     ' + riga);
+        }
+      }
     }
   }
 

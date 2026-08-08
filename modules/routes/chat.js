@@ -353,6 +353,46 @@ function register(router, ctx) {
             ctx.session.incaricoInSospeso = null;   // il lavoro parte: non è più in attesa
             incaricoCorrente = ascolto.incarico;
 
+            // ── La checklist: quello che la richiesta chiedeva e i criteri no ──
+            //
+            // Il Collega i criteri li scrive a occhio, e a occhio si perdono
+            // pezzi. Il caso tipico: "tutte le compagnie Cina → PHX, SAN e LAS
+            // con aeroporti, frequenze e aircraft" diventa "cerca voli,
+            // confronta, fai il report" — tre passi che si possono dichiarare
+            // fatti senza che nessuno sappia dire se manca LAS.
+            //
+            // Qui si CONTANO le cose nominate nella richiesta e si aggiungono
+            // i criteri che mancavano. Non sostituisce il Collega: lui capisce
+            // l'intenzione, che il codice non sa fare; contare gli elenchi in
+            // una frase invece il codice lo fa meglio, perche' non si distrae
+            // e non decide che tre citta' su quattro bastano.
+            //
+            // Il caso peggiore che intercetta non e' il criterio assente: e'
+            // quello INCOMPLETO — tre soggetti su quattro passano la verifica,
+            // e il lavoro sembra controllato.
+            try {
+              const { requisitiMancanti, checklistInChiaro } = require('../collega/requisiti');
+              const r = requisitiMancanti(
+                incaricoCorrente.obiettivo + ' ' + message, incaricoCorrente.criteri || []);
+              if (r.mancanti.length) {
+                const criteriNuovi = [...(incaricoCorrente.criteri || [])];
+                for (const m of r.mancanti) {
+                  const i = criteriNuovi.findIndex(c => c.tipo === m.tipo);
+                  const { perche, ...criterio } = m;
+                  if (i >= 0) criteriNuovi[i] = criterio; else criteriNuovi.push(criterio);
+                  ctx.log(`[Checklist] + ${m.tipo}: ${perche}`);
+                }
+                incaricoCorrente.criteri = criteriNuovi;
+                ctx.emitReasoning(
+                  `La richiesta chiedeva ${r.checklist.length} cose contabili: ne aggiungo ${r.mancanti.length} ai criteri`,
+                  '☑️');
+              }
+              const lista = checklistInChiaro(incaricoCorrente.obiettivo + ' ' + message, []);
+              if (lista) { ctx.session._checklist = lista; ctx.log('[Checklist]\n' + lista); }
+            } catch (e) {
+              ctx.log(`[Checklist] saltata (${e.message}): si procede coi criteri del Collega`);
+            }
+
             // ── Si apre il cantiere, con le misure prese dall'incarico ──
             //
             // I criteri dicono già quanti soggetti servono e quali campi:
