@@ -205,18 +205,77 @@ async function runTask(args, ctx) {
   ctx.emitThinking(`Eseguo job: ${task.name}...`);
   ctx.emitReasoning(`Avvio job "${task.name}" (${task.steps.length} step)`, '🚀');
   ctx.wsBroadcast({ type: 'job_started', taskId: task.id, name: task.name });
+  // ── UNA SOLA DEFINIZIONE DI "COMPLETATO" ──
+  //
+  // Qui ce n'era una seconda, e piu' generosa di quella del motore Processo.
+  // Tre punti, tutti nella stessa direzione:
+  //
+  //   1. `ok: true` veniva scritto appena lo strumento NON lanciava
+  //      un'eccezione. Uno strumento che risponde {"ok":false} — cioe' che
+  //      dichiara di non avercela fatta — passava per riuscito. E' lo stesso
+  //      difetto di `!rawResult.includes('"error"')`, in un altro file.
+  //
+  //   2. uno step senza strumento veniva segnato riuscito con la nota "Step
+  //      descrittivo". Quindi un job fatto di tre frasi — "cerca dieci
+  //      aziende", "confrontale", "produci il report" — risultava completato
+  //      senza che fosse successo niente.
+  //
+  //   3. `task.status = 'completed'` era incondizionato: veniva scritto dopo
+  //      il ciclo, qualunque cosa fosse successa dentro.
+  //
+  // Il motore Processo ha la regola giusta: un passo non si chiude senza la
+  // prova di uno strumento eseguito davvero. Questa e' la stessa regola,
+  // applicata qui — perche' due definizioni di "fatto" significano che vince
+  // sempre la piu' comoda.
+  const { esitoRiuscito } = require('../../utils/esito');
   const results = [];
   for (let i = 0; i < task.steps.length; i++) {
     const step = task.steps[i], desc = step.description || step.tool || `Step ${i+1}`;
     ctx.emitReasoning(`Step ${i+1}/${task.steps.length}: ${desc}`, '⚙️');
-    if (step.tool && ctx.executeTool) {
-      try { const r = await ctx.executeTool(step.tool, step.args || {}); results.push({ step: i+1, tool: step.tool, ok: true, result: typeof r === 'string' ? r.substring(0, 500) : r }); }
-      catch (e) { results.push({ step: i+1, tool: step.tool, ok: false, error: e.message }); ctx.emitReasoning(`Step ${i+1} fallito: ${e.message}`, '❌'); }
-    } else { results.push({ step: i+1, description: desc, ok: true, note: 'Step descrittivo' }); }
+
+    if (!step.tool || !ctx.executeTool) {
+      results.push({ step: i + 1, description: desc, ok: false, senzaProva: true,
+        motivo: 'nessuno strumento: questo passo descrive un lavoro, non lo fa' });
+      ctx.emitReasoning(`Step ${i+1} non fa niente: manca lo strumento`, '⚠️');
+      continue;
+    }
+
+    try {
+      const r = await ctx.executeTool(step.tool, step.args || {});
+      const grezzo = typeof r === 'string' ? r : JSON.stringify(r);
+      const riuscito = esitoRiuscito(grezzo);
+      results.push({ step: i + 1, tool: step.tool, ok: riuscito,
+        result: String(grezzo || '').substring(0, 500) });
+      if (!riuscito) ctx.emitReasoning(`Step ${i+1}: ${step.tool} non ce l'ha fatta`, '❌');
+    } catch (e) {
+      results.push({ step: i + 1, tool: step.tool, ok: false, error: e.message });
+      ctx.emitReasoning(`Step ${i+1} fallito: ${e.message}`, '❌');
+    }
   }
-  task.runs = (task.runs || 0) + 1; task.lastRun = new Date().toISOString(); task.status = 'completed'; ctx.persistTasks();
-  ctx.wsBroadcast({ type: 'job_completed', taskId: task.id, name: task.name });
-  return JSON.stringify({ ok: true, taskId: task.id, name: task.name, runs: task.runs, results });
+
+  const falliti = results.filter(r => !r.ok);
+  const tutto = falliti.length === 0;
+
+  task.runs = (task.runs || 0) + 1;
+  task.lastRun = new Date().toISOString();
+  task.status = tutto ? 'completed' : 'incompleto';
+  ctx.persistTasks();
+
+  ctx.wsBroadcast({ type: tutto ? 'job_completed' : 'job_incompleto',
+    taskId: task.id, name: task.name, falliti: falliti.length });
+
+  return JSON.stringify({
+    ok: tutto,
+    taskId: task.id, name: task.name, runs: task.runs,
+    stato: task.status,
+    passiFalliti: falliti.length,
+    // Il modello legge questa riga e la riferisce a Luca: deve dire la verita'
+    // anche quando la verita' e' che meta' del lavoro non e' stata fatta.
+    motivo: tutto ? undefined
+      : `${falliti.length} passi su ${results.length} non sono riusciti: `
+        + falliti.map(f => `#${f.step} ${f.tool || '(nessuno strumento)'}`).join(', '),
+    results,
+  });
 }
 
 async function deleteTask(args, ctx) {

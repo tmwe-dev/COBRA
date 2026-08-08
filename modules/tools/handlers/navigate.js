@@ -6,6 +6,10 @@ const { assertSSRFSafe } = require('../../security/ssrf');
 const { Sorveglianza } = require('../../collega/sorveglianza');
 
 async function handle(args, ctx) {
+  // Cambiando pagina, il modulo guardato prima non c'entra piu' niente: i
+  // campi sono altri. Senza questo, il freno di fill_form si lascerebbe
+  // convincere da una lettura fatta su un altro sito.
+  if (ctx && ctx.session) ctx.session._moduloLetto = null;
   const url = args.url;
 
   // GUARDRAIL: blocca navigate verso google.com generico per task di azione

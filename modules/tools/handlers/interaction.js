@@ -65,6 +65,36 @@ async function fillForm(args, ctx) {
   const blocked = [];
   for (const [s, v] of Object.entries(fieldsToCheck || {})) { if (PAYMENT_SELECTORS.test(s) || PAYMENT_SELECTORS.test(String(v))) blocked.push(s); }
   if (blocked.length > 0) return JSON.stringify({ error: 'BLOCCATO: Non posso compilare campi di pagamento.', blocked_fields: blocked, security: 'payment_block' });
+
+  // ── GUARDA IL MODULO PRIMA DI SCRIVERCI ──
+  //
+  // Questa regola c'era gia', scritta nella descrizione dello strumento:
+  // "Usalo sempre prima di fill_form". Ma una regola scritta non e' un freno:
+  // il modello puo' sempre non ubbidire, e la giornata dell'8 agosto e' fatta
+  // di divieti scritti che sono stati saltati.
+  //
+  // Senza aver letto il modulo, i selettori il modello se li INVENTA — e un
+  // selettore inventato non da' errore: da' un campo che non esiste, quindi
+  // zero campi compilati e un modulo che parte vuoto.
+  //
+  // Il freno vale per pagina: si legge il modulo di QUESTA pagina. Se si
+  // naviga altrove, la lettura di prima non conta piu' — i campi sono altri.
+  const _letto = ctx.session._moduloLetto;
+  const _paginaOra = ctx.session.lastPage?.url || '';
+  const _stessaPagina = _letto && (!_letto.pagina || !_paginaOra
+    || _letto.pagina.split('?')[0] === _paginaOra.split('?')[0]);
+  if (!_letto || !_stessaPagina) {
+    ctx.emitReasoning('Non ho ancora guardato questo modulo: lo leggo prima di scriverci', '📋');
+    return JSON.stringify({
+      ok: false,
+      motivo: _letto
+        ? 'il modulo che avevo guardato era su un\'altra pagina: i campi sono altri'
+        : 'non ho ancora guardato questo modulo',
+      cosaFare: 'Chiama leggi_modulo su questa pagina, guarda i campi VERI che ti '
+        + 'restituisce, e richiama fill_form con quei selettori. I selettori '
+        + 'inventati non danno errore: danno un modulo vuoto.',
+    });
+  }
   // Bridge: 3 methods
   if (ctx.isBridgeReady()) {
     try {
@@ -131,7 +161,32 @@ async function fillForm(args, ctx) {
     }
   }
   await ctx.takeActiveScreenshot(ctx.session.lastPage?.url, ctx.session.lastPage?.title);
-  return JSON.stringify({ ok: true, filled: results.filter(r=>r.ok).length, total: results.length, results });
+
+  // ── Un modulo compilato a meta' non e' un modulo compilato ──
+  //
+  // Qui c'era `ok: true` fisso, con il conteggio dei campi riusciti accanto.
+  // Cioe': tre campi su cinque compilati e la risposta diceva comunque
+  // "riuscito", lasciando al modello il compito di accorgersi guardando i
+  // numeri. Non se ne accorge: legge `ok` e va avanti, e il modulo parte
+  // senza la data o senza la citta'.
+  //
+  // La strada del ponte, dieci righe piu' su, faceva gia' la cosa giusta
+  // (`allOk = results.every(...)`). Le due strade dicevano cose diverse sullo
+  // stesso fatto — ed e' il difetto della giornata, in miniatura.
+  const nonRiusciti = results.filter(r => !r.ok);
+  return JSON.stringify({
+    ok: nonRiusciti.length === 0,
+    filled: results.filter(r => r.ok).length,
+    total: results.length,
+    motivo: nonRiusciti.length
+      ? `${nonRiusciti.length} campi su ${results.length} non sono stati compilati: `
+        + nonRiusciti.map(r => r.selector).join(', ')
+      : undefined,
+    cosaFare: nonRiusciti.length
+      ? 'Chiama leggi_modulo per vedere i campi veri della pagina, poi riprova con quelli.'
+      : undefined,
+    results,
+  });
 }
 
 async function selectOption(args, ctx) {
@@ -185,6 +240,15 @@ async function leggiModulo(args, ctx) {
   try {
     const r = await ctx.bridgeCommand('leggi_modulo', {});
     const esito = r?.result || r;
+    // Si segna CHE COSA e' stato guardato, e dove: serve al freno di
+    // fill_form, che rifiuta di scrivere su un modulo mai letto.
+    if (esito && esito.ok !== false) {
+      ctx.session._moduloLetto = {
+        quando: Date.now(),
+        pagina: ctx.session.lastPage?.url || '',
+        campi: (esito.campi || []).map(c => c.selettore || c.selector || c.nome).filter(Boolean),
+      };
+    }
     if (!esito?.ok) return JSON.stringify({ error: 'Non sono riuscito a leggere il modulo', dettaglio: esito });
     ctx.emitReasoning(`Il modulo ha ${esito.quanti} campi: li guardo prima di scrivere`, '📋');
     return JSON.stringify({
