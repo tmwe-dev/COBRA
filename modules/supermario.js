@@ -969,7 +969,19 @@ async function assemble({ intent, scopes, operationLevel, userMessage, conversat
   const preflight = preflightAudit(finalPrompt, scopes.join(','), selectedTools.length);
   if (preflight.warnings.length > 0) log(`[SuperMario] Pre-flight: ${preflight.warnings.join(', ')}`);
 
-  return { systemPrompt: finalPrompt, tools: selectedTools, selectedToolNames, trace_id, preflight, startTime, scope: scopes.join(','), intent, scopes };
+  // `agenteLavoro` esce da qui perche' fino al 9 agosto NESSUNO sapeva quale
+  // prompt di lavoro fosse stato scelto. Ce ne sono sei — searcher, navigator,
+  // communicator, admin, scout, full — e resolveAgent() prende il PRIMO che
+  // corrisponde: `navigator` vince ogni volta che c'e' interact o browse.
+  //
+  // Per la prova voli gli ambiti erano [search, browse, interact, file, data]:
+  // quindi sempre navigator, mai scout — che e' quello specializzato
+  // nell'estrarre dati, cioe' esattamente il lavoro in corso. Il prompt giusto
+  // esisteva e non veniva mai scelto, ed era invisibile.
+  //
+  // Prima di riscrivere i prompt bisogna sapere quali vengono davvero usati:
+  // e' la stessa lezione dei 40 strumenti mai chiamati.
+  return { systemPrompt: finalPrompt, tools: selectedTools, selectedToolNames, trace_id, preflight, startTime, scope: scopes.join(','), intent, scopes, agenteLavoro: agent };
 }
 
 // ══════════════════════════════════════════════════════════════

@@ -18,6 +18,9 @@ const supervisore = require('../collega/ripresa');
 // nota del Collega dice "manca questo" a qualcuno che non ricorda più cosa
 // aveva già fatto, e che quindi rifà tutto da capo. Con otto soggetti da
 // raccogliere, rifare da capo significa non arrivare mai in fondo.
+const fs = require('fs');
+const path = require('path');
+
 function _bloccoCantiere(ctx) {
   const c = ctx.session && ctx.session.cantiere;
   if (!c) return '';
@@ -171,6 +174,32 @@ function register(router, ctx) {
         // costa un giro, farla male costa il lavoro.
         ctx.log(`[Supervisore] Ripresa saltata (${e.message}): procedo normalmente`);
       }
+
+      // ── "parla in inglese" non e' un incarico: e' cambiare interlocutore ──
+      //
+      // Prima serviva aprire un menu. Una cosa che serve piu' volte al giorno
+      // — Brandon parla inglese, Jose spagnolo — costava tre clic.
+      //
+      // Sta QUI, prima del routing, perche' non e' un lavoro da fare: e' una
+      // preferenza. Mandarla all'Esecutore significherebbe fargli cercare
+      // qualcosa su internet.
+      try {
+        const { riconosci, conferma } = require('../config/scelta-agente');
+        const cambio = riconosci(message);
+        if (cambio && cambio.agente.id !== ctx._agenteScelto) {
+          ctx._agenteScelto = cambio.agente.id;
+          try {
+            fs.writeFileSync(path.join(ctx.dataDir, 'agente_scelto.json'),
+              JSON.stringify({ id: cambio.agente.id, nome: cambio.agente.nome,
+                quando: new Date().toISOString(), come: cambio.come }, null, 2));
+          } catch (_) { /* la scelta vale comunque per questa sessione */ }
+          ctx.log(`[Agente] "${cambio.frase}" → adesso parla ${cambio.agente.nome} (${cambio.come})`);
+          ctx.wsBroadcast({ type: 'agente_cambiato', agente: cambio.agente });
+          _invia(200, { response: conferma(cambio.agente), agente: cambio.agente,
+            intent: 'chat', toolsUsed: [] });
+          return;
+        }
+      } catch (e) { ctx.log(`[Agente] riconoscimento saltato: ${e.message}`); }
 
       // 4. SuperMario pipeline — route intent
       let routing = ctx.SuperMario.routeIntent(message);
@@ -1051,7 +1080,7 @@ function register(router, ctx) {
         } catch (e) { ctx.log(`[Diario] non sono riuscito a chiudere la missione: ${e.message}`); }
       }
 
-      ctx.ResponseRecorder.recordChat({ userMessage: message, intent, systemPromptLength: systemPrompt.length, provider: result.provider, model: result.model || '', response: result.content, toolsUsed: result.toolsUsed || [], durationMs: Date.now() - _chatStart, kbEntries: (ctx.session.kbSnippets || []).length, repetitionDetected: !!repetitionWarning, marioScope: marioResult.scope, marioTraceId: marioResult.trace_id, taskPlanSteps: taskPlan ? taskPlan.steps.length : 0 });
+      ctx.ResponseRecorder.recordChat({ userMessage: message, intent, systemPromptLength: systemPrompt.length, provider: result.provider, model: result.model || '', response: result.content, toolsUsed: result.toolsUsed || [], durationMs: Date.now() - _chatStart, kbEntries: (ctx.session.kbSnippets || []).length, repetitionDetected: !!repetitionWarning, marioScope: marioResult.scope, marioTraceId: marioResult.trace_id, agenteLavoro: marioResult.agenteLavoro, agenteVoce: ctx._agenteScelto, taskPlanSteps: taskPlan ? taskPlan.steps.length : 0 });
 
       // Le pagine consultate diventano collegamenti: da lì l'utente prosegue
       // per conto suo, per esempio per completare una prenotazione.
