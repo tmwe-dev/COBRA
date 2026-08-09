@@ -60,6 +60,15 @@ const VERI = [
     'PREREQUISITO_MANCANTE', 'DEPENDENCY'],
   ['{"ok":false,"motivo":"URL bloccato: Hostname o protocollo non consentito"}',
     'AZIONE_RIFIUTATA', 'PERMISSION'],
+
+  // ── Prova voli del 9 agosto, dopo il diario ──
+  //
+  // Erano finiti in SCONOSCIUTO. Sono due messaggi che portano gia' la
+  // soluzione con se': dirli "sconosciuti" sprecava un suggerimento scritto.
+  ['{"ok":false,"motivo":"inspect_dom_js è read-only. Per modifiche usa mutate_dom_js."}',
+    'STRUMENTO_SBAGLIATO', 'STRATEGY'],
+  ['{"ok":false,"motivo":"\\"E7\\" non e\' fra gli elementi che ho visto"}',
+    'ELEMENTO_NON_VISTO', 'STRATEGY'],
 ];
 
 prova('i fallimenti veri sono tutti riconosciuti', () => {

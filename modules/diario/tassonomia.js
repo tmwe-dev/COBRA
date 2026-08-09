@@ -131,6 +131,20 @@ const CODICI = [
   { code: 'DATO_ASSENTE',        famiglia: 'STRATEGY',   dove: 'dati',
     dice: /nessun risultato|nessun dato|non ho trovato|almeno due risultati|niente da/i,
     poi: 'la fonte non aveva il dato: cambia fonte, non riformulare la stessa' },
+  { code: 'STRUMENTO_SBAGLIATO', famiglia: 'STRATEGY',   dove: 'esecutore',
+    // "inspect_dom_js e' read-only. Per modifiche usa mutate_dom_js" — visto
+    // nella prova voli del 9 agosto. Non e' un guasto: e' lo strumento
+    // sbagliato per il lavoro, e il messaggio dice gia' quale sia quello
+    // giusto. Metterlo fra gli SCONOSCIUTO sarebbe sprecare un suggerimento
+    // che l'handler aveva gia' scritto.
+    dice: /e' read-only|è read-only|per modifiche usa|usa invece|strumento sbagliato|non e' lo strumento/i,
+    poi: 'lo strumento giusto e\' quello che ti ha nominato il messaggio: chiama quello' },
+  { code: 'ELEMENTO_NON_VISTO',  famiglia: 'STRATEGY',   dove: 'pagina',
+    // L'estensione risponde cosi' quando l'id non e' fra quelli dell'ultimo
+    // sguardo, e insieme elenca quelli che ci sono: e' un fallimento che
+    // porta gia' la soluzione con se'.
+    dice: /non e' fra gli elementi|non è fra gli elementi|gli elementi sono altri/i,
+    poi: 'guarda di nuovo la pagina e scegli un id fra quelli che ti elenca' },
   { code: 'ARGOMENTO_SBAGLIATO', famiglia: 'STRATEGY',   dove: 'esecutore',
     dice: /manca il|non mi hai detto|argomento|parametro|richiesto:|obbligatorio/i,
     poi: 'rileggi cosa vuole lo strumento e richiamalo con l\'argomento giusto' },

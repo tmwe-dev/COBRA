@@ -68,13 +68,33 @@ async function agisciSuElemento(args, ctx) {
   // Stessa regola di leggi_modulo → fill_form, e per la stessa ragione: senza
   // aver guardato, "E7" non significa niente e il modello lo starebbe
   // inventando come inventava i selettori.
-  const g = ctx.session._paginaGuardata;
-  const oraUrl = ctx.session.lastPage?.url || '';
-  const stessaPagina = g && (!g.url || !oraUrl || g.url.split('?')[0] === oraUrl.split('?')[0]);
-  if (!g || !stessaPagina) {
+  // ── Chi decide se gli id valgono ancora ──
+  //
+  // Prova vera del 9 agosto, Skyscanner: `guarda_pagina` riesce, e subito
+  // dopo `agisci` fallisce QUATTRO volte con "ho guardato un'altra pagina".
+  // Non era vero: era la stessa pagina.
+  //
+  // Il guaio era il confronto. Qui si paragonava l'url che l'ESTENSIONE aveva
+  // riportato guardando, con `session.lastPage.url`, che e' l'idea che se ne
+  // fa il SERVER dopo navigate. Su un sito che redirige, aggiunge la lingua o
+  // cambia i parametri — cioe' su qualunque sito di viaggi — i due non
+  // coincidono mai, e ogni azione risultava fuori pagina.
+  //
+  // Due autorita' per la stessa domanda, e vinceva quella sbagliata: e' la
+  // forma esatta del difetto di bridgeCommand in due copie.
+  //
+  // L'autorita' vera e' l'estensione: e' li' che vivono gli id E1..En, in
+  // `_ultimoSguardo` per scheda. Se la pagina e' cambiata lo sa lei, e lo dice
+  // meglio di qualunque confronto di stringhe fatto da questa parte del ponte.
+  //
+  // Qui resta solo la domanda a cui il server puo' rispondere davvero: hai
+  // guardato, almeno una volta? Serve a impedire che il modello inventi "E7"
+  // senza aver mai guardato, che era lo scopo originale del freno.
+  if (!ctx.session._paginaGuardata) {
     return JSON.stringify({
       ok: false,
-      motivo: g ? 'ho guardato un\'altra pagina: gli elementi sono altri' : 'non ho ancora guardato questa pagina',
+      code: 'PREREQUISITO_MANCANTE',
+      motivo: 'non ho ancora guardato questa pagina',
       cosaFare: 'Chiama guarda_pagina, poi agisci su uno degli id che ti restituisce.',
     });
   }
