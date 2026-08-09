@@ -68,6 +68,9 @@ const { CobraSupervisor } = require('./supervisor/cobra');
 // ── 10b. Diario delle esecuzioni ──
 const { Giornale } = require('./diario/giornale');
 
+// ── 10c. Il cancello d'avvio ──
+const { verificaCapacita, righeDaStampare } = require('./integrita/verifica');
+
 // ── 12. Utils ──
 const { estimateTokens } = require('./utils/tokens');
 const { detectRepetition } = require('./utils/repetition');
@@ -583,6 +586,34 @@ async function _avviaConPazienza(tentativo = 0) {
   }
   server.listen(PORT, '127.0.0.1', async () => {
     console.log(`\n  COBRA v11 — http://127.0.0.1:${PORT} (localhost only)`);
+
+    // ── Il cancello ──
+    //
+    // Si confrontano i sei registri PRIMA di dire al modello cosa sa fare.
+    // Una capacita' incompleta ma raggiungibile non viene consegnata: il
+    // danno non e' mai stato che COBRA partisse, e' che offrisse uno
+    // strumento che non poteva funzionare e ci perdesse due minuti sopra.
+    //
+    // L'avvio si ferma solo se manca un pezzo del nucleo, perche' un COBRA
+    // che si rifiuta di accendersi e' un COBRA che non c'e'.
+    try {
+      const integrita = verificaCapacita();
+      for (const riga of righeDaStampare(integrita)) log(riga);
+      for (const d of integrita.daDisabilitare) {
+        const i = COBRA_TOOLS.findIndex((t) => t.function && t.function.name === d.capacita);
+        if (i >= 0) COBRA_TOOLS.splice(i, 1);
+      }
+      if (!integrita.ok) {
+        log('[Integrità] Manca un pezzo del nucleo: non parto. Correggi e riavvia.');
+        process.exitCode = 1;
+        server.close();
+        return;
+      }
+    } catch (e) {
+      // Il cancello che si rompe non deve impedire il lavoro: si dice e si va.
+      log(`[Integrità] la verifica non e' riuscita (${e.message}): proseguo senza`);
+    }
+
     console.log(`  Tools: ${COBRA_TOOLS.length} | Handlers: ${Object.keys(allHandlers).length}\n`);
     await loadAPIKeys();
     await loadOperatorConfig();

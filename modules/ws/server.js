@@ -71,6 +71,30 @@ function setupWebSocket(httpServer, ctx) {
           _bridgeClient = ws;
           _bridgeCapabilities = msg.capabilities || [];
           ctx.log(`[Bridge] Chrome extension connected: ${(msg.userAgent || '').substring(0, 50)}`);
+
+          // ── L'unica verifica che avrebbe preso guarda_pagina ──
+          //
+          // L'estensione manda questo elenco da sempre, e da sempre nessuno lo
+          // guardava. Il 9 agosto `guarda_pagina` e' fallito tre volte su tre:
+          // il file c'era sul disco, ma il service worker in esecuzione non
+          // l'aveva caricato. Nessuna lettura dei sorgenti puo' accorgersene —
+          // solo chiedere a chi sta girando davvero.
+          //
+          // Non si blocca niente: si DICE, forte, subito. Chi legge il log sa
+          // in un secondo che deve premere ricarica su chrome://extensions,
+          // invece di scoprirlo dopo due minuti di tentativi.
+          try {
+            const { verificaPonte } = require('../integrita/verifica');
+            const p = verificaPonte(_bridgeCapabilities);
+            if (!p.ok) {
+              ctx.log(`[Integrità] ✗ ${p.dice}`);
+              wsBroadcast({ type: 'ai_reasoning',
+                text: `⚠️ L'estensione non sa fare: ${p.mancanti.join(', ')} — ricaricala da chrome://extensions`,
+                icon: '⚠️' });
+            } else if (_bridgeCapabilities.length) {
+              ctx.log(`[Integrità] ✓ l'estensione sa fare tutto quello che gli handler le chiedono (${_bridgeCapabilities.length} comandi)`);
+            }
+          } catch (e) { ctx.log(`[Integrità] confronto col ponte non riuscito: ${e.message}`); }
           ws.send(JSON.stringify({ type: 'bridge_auth_ok', ts: Date.now() }));
           wsBroadcast({ type: 'ai_reasoning', text: '🔌 Estensione Chrome COBRA Bridge connessa', icon: '✅' });
           wsBroadcast({ type: 'bridge_status', connected: true, capabilities: _bridgeCapabilities });

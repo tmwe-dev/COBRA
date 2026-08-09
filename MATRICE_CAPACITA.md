@@ -1,6 +1,6 @@
 # Matrice delle capacita'
 
-*generata il 2026-08-09 02:32 da `attrezzi/matrice-capacita.js`*
+*generata il 2026-08-09 02:48 da `attrezzi/matrice-capacita.js`*
 
 ## Riepilogo
 
@@ -15,6 +15,8 @@
 | handler chiusi apposta (documentati) | 7 |
 | **comandi estensione che nessuno chiama** | **76** |
 | **comandi chiesti che l'estensione non espone** | **0** |
+| **il cancello d'avvio disabiliterebbe** | **0** |
+| **il cancello d'avvio bloccherebbe** | **0** |
 
 | classe | quante |
 |---|---|

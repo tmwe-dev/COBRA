@@ -29,112 +29,21 @@ const fs = require('fs');
 const path = require('path');
 
 const RADICE = path.resolve(__dirname, '..');
+/* eslint-disable no-unused-vars */
 const leggi = (p) => { try { return fs.readFileSync(path.join(RADICE, p), 'utf8'); } catch (_) { return ''; } };
 
-// ── I sei registri, letti uno per uno ──────────────────────────────────
+// ── I registri: si leggono da modules/integrita/registri.js ──
+//
+// NON qui. Sarebbe grottesco curare "la stessa cosa scritta in sei posti"
+// scrivendo due lettori di quei sei posti, uno per l'attrezzo e uno per il
+// cancello d'avvio: divergerebbero, e un giorno l'attrezzo direbbe "tutto a
+// posto" mentre l'avvio dice il contrario.
+//
+// E' esattamente cio' che e' successo con bridgeCommand: due copie, e per
+// giorni ho corretto quella che non veniva usata.
 
-/** 1. Gli schemi: quello che il modello vede. */
-function schemiDichiarati() {
-  const t = leggi('modules/tools/schemas.js');
-  return [...new Set([...t.matchAll(/name:\s*'([a-z0-9_]+)'/g)].map((m) => m[1]))];
-}
-
-/** 2. Gli ambiti: quando la capacita' viene consegnata. */
-function ambitiPerStrumento() {
-  const t = leggi('modules/supermario.js');
-  const blocco = t.slice(t.indexOf('const TOOL_SCOPES'), t.indexOf('full: null'));
-  const mappa = {};
-  // Ogni ambito e' "nome: [ ... ]": si prende il nome e poi i suoi strumenti.
-  for (const m of blocco.matchAll(/^\s{2}([a-z]+):\s*\[([\s\S]*?)\],\s*$/gm)) {
-    const ambito = m[1];
-    for (const s of m[2].matchAll(/'([a-z0-9_]+)'/g)) {
-      (mappa[s[1]] = mappa[s[1]] || []).push(ambito);
-    }
-  }
-  return mappa;
-}
-
-/** 3. Il rischio: se serve conferma prima di eseguire. */
-function conVoceDiRischio() {
-  const t = leggi('modules/risk/taxonomy.js');
-  return new Set([...t.matchAll(/^\s{2}([a-z0-9_]+):\s*\{\s*level/gm)].map((m) => m[1]));
-}
-
-/**
- * 4. Gli handler: chi esegue davvero. Si carica il modulo, non si indovina.
- *
- * Solo le FUNZIONI. La prima versione prendeva tutte le chiavi esportate e
- * contava anche `A_SESSIONE`, che e' una costante: risultava un handler senza
- * schema che non era ne' un handler ne' un problema. Un allarme falso su nove
- * ne rende sospetti altri otto.
- */
-function handlerRegistrati() {
-  try {
-    const m = require(path.join(RADICE, 'modules/tools/handlers'));
-    return new Set(Object.entries(m).filter(([, v]) => typeof v === 'function').map(([k]) => k));
-  } catch (e) { console.error('[matrice] handlers non caricabili:', e.message); return new Set(); }
-}
-
-/**
- * Gli handler che NON devono avere uno schema, e per quale ragione.
- *
- * Non e' una lista di perdoni: e' la differenza fra "manca" e "e' stato deciso
- * cosi'". Senza, i due gemelli d'invio senza regole risultano una dimenticanza
- * invece che una porta chiusa apposta — e prima o poi qualcuno la "aggiusta".
- */
-const SENZA_SCHEMA_APPOSTA = {
-  whatsapp_send:         'seconda strada senza regole d\'invio: il 7 agosto ne uscirono sette fuori conteggio',
-  linkedin_send_message: 'idem, lato LinkedIn',
-  send_whatsapp:         'alias interno della vecchia strada',
-  send_linkedin:         'alias interno della vecchia strada',
-  web_search:            'alias interno di google_search',
-  execute_js:            'esecuzione arbitraria: resta per i flussi interni, mai in mano al modello',
-  read_inbox:            'alias interno di check_emails',
-};
-
-/**
- * 5. I comandi dell'estensione: chi tocca la pagina.
- *
- * Si guarda in DUE posti, e non e' pignoleria. La prima versione leggeva solo
- * `esterni/comandi/`, e ha subito accusato `verify_action` di non esistere:
- * esiste, sta ancora nello switch di background.js insieme a wait_for e retry,
- * gli ultimi tre rimasti dopo lo spostamento dell'8 agosto.
- *
- * Un attrezzo che misura e' inutile se sbaglia la misura: meglio nessun
- * allarme che un allarme falso, perche' al terzo falso non li guardi piu'.
- */
-function comandiEstensione() {
-  const fuori = new Set();
-  const d = path.join(RADICE, 'cobra-extension/esterni/comandi');
-  try {
-    for (const f of fs.readdirSync(d).filter((x) => x.endsWith('.js'))) {
-      for (const m of fs.readFileSync(path.join(d, f), 'utf8').matchAll(/comandi\['([a-z0-9_]+)'\]/g)) fuori.add(m[1]);
-    }
-  } catch (_) { /* estensione assente: si segnala a valle */ }
-  // I superstiti dello switch di background.js.
-  const bg = leggi('cobra-extension/background.js');
-  for (const m of bg.matchAll(/case\s+'([a-z0-9_]+)'\s*:/g)) fuori.add(m[1]);
-  return fuori;
-}
-
-/** 6. I comandi che gli handler chiedono davvero al ponte. */
-function comandiChiestiDagliHandler() {
-  const d = path.join(RADICE, 'modules/tools/handlers');
-  const fuori = new Set();
-  for (const f of fs.readdirSync(d).filter((x) => x.endsWith('.js'))) {
-    const t = fs.readFileSync(path.join(d, f), 'utf8');
-    for (const m of t.matchAll(/(?:bridgeCommand|_ponte)\(\s*(?:ctx,\s*)?'([a-z0-9_]+)'/g)) fuori.add(m[1]);
-  }
-  return fuori;
-}
-
-/** I gemelli dichiarati perdenti: fuori dagli ambiti normali per scelta. */
-function gemelliPerdenti() {
-  const t = leggi('modules/supermario.js');
-  const blocco = t.slice(t.indexOf('const GEMELLI'), t.indexOf('const _PERDENTI'));
-  return new Set([...blocco.matchAll(/perdono:\s*\[([^\]]*)\]/g)]
-    .flatMap((m) => [...m[1].matchAll(/'([a-z0-9_]+)'/g)].map((x) => x[1])));
-}
+const R = require('../modules/integrita/registri');
+const { verificaCapacita } = require('../modules/integrita/verifica');
 
 // ── Cosa e' successo davvero ───────────────────────────────────────────
 
@@ -166,13 +75,15 @@ function classifica(s) {
 }
 
 function costruisci() {
-  const schemi = schemiDichiarati();
-  const ambiti = ambitiPerStrumento();
-  const rischio = conVoceDiRischio();
-  const handler = handlerRegistrati();
-  const ext = comandiEstensione();
-  const chiesti = comandiChiestiDagliHandler();
-  const perdenti = gemelliPerdenti();
+  const reg = R.tuttiIRegistri();
+  const schemi = reg.schemi;
+  const ambiti = reg.ambiti;
+  const rischio = reg.rischi;
+  const handler = reg.handler;
+  const ext = reg.comandiEstensione;
+  const chiesti = reg.comandiChiesti;
+  const perdenti = reg.gemelliPerdenti;
+  const SENZA_SCHEMA_APPOSTA = reg.SENZA_SCHEMA_APPOSTA;
   const { uso, turni } = usoInProduzione();
 
   const righe = schemi.sort().map((nome) => {
@@ -218,6 +129,9 @@ function riepilogo(m) {
   L.push(`| handler chiusi apposta (documentati) | ${m.chiusiApposta.length} |`);
   L.push(`| **comandi estensione che nessuno chiama** | **${m.extSenzaChiamante.length}** |`);
   L.push(`| **comandi chiesti che l'estensione non espone** | **${m.chiestiSenzaExt.length}** |`);
+  const g = verificaCapacita();
+  L.push(`| **il cancello d'avvio disabiliterebbe** | **${g.daDisabilitare.length}** |`);
+  L.push(`| **il cancello d'avvio bloccherebbe** | **${g.bloccanti.length}** |`);
   L.push('');
   L.push('| classe | quante |');
   L.push('|---|---|');
@@ -243,7 +157,7 @@ if (process.argv.includes('--md')) {
     '## Handler senza schema — non voluti', '',
     m.handlerSenzaSchema.map((x) => `- \`${x}\``).join('\n') || '_nessuno_', '',
     '## Handler chiusi apposta — il modello non deve vederli', '',
-    m.chiusiApposta.map((x) => `- \`${x}\` — ${SENZA_SCHEMA_APPOSTA[x]}`).join('\n') || '_nessuno_', '',
+    m.chiusiApposta.map((x) => `- \`${x}\` — ${R.SENZA_SCHEMA_APPOSTA[x]}`).join('\n') || '_nessuno_', '',
     '## Comandi dell\'estensione che nessun handler chiama', '',
     m.extSenzaChiamante.map((x) => `- \`${x}\``).join('\n') || '_nessuno_', '',
     '## Comandi chiesti al ponte che l\'estensione non espone', '',
