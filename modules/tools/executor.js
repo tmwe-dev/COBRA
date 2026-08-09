@@ -6,6 +6,7 @@ const { spiega } = require('../security/spiegazioni');
 const { isDomainWhitelisted } = require('../config/whitelist');
 const { auditToolCall, auditSecurityEvent } = require('../security/audit-log');
 const { classifica: classificaEsito } = require('../diario/tassonomia');
+const { daRisultato, posaNelCantiere } = require('../cantiere/raccolta');
 
 /**
  * Quante volte questa stessa chiamata e' gia' stata tentata in questo turno.
@@ -209,6 +210,23 @@ async function executeTool(name, args, ctx) {
         }
       }
     } catch (_) { /* il diario non deve mai bloccare uno strumento */ }
+
+    // ── La raccolta ──
+    //
+    // Qui, accanto al diario, e per la stessa ragione: e' l'unico punto da cui
+    // passano tutte le esecuzioni.
+    //
+    // Un dato che il sistema ha gia' in mano non si chiede al modello di
+    // ricopiarlo. `annota` restava a 5 chiamate su 880 e il cantiere a zero
+    // voci: non per pigrizia, ma perche' annotare costa subito e serve fra tre
+    // passi, ed e' esattamente il tipo di cosa che si salta.
+    try {
+      if (ctx.session && ctx.session.cantiere) {
+        const raccolto = daRisultato(name, args, _toolResult, ctx.session.lastPage && ctx.session.lastPage.url);
+        const c = posaNelCantiere(ctx.session.cantiere, raccolto);
+        if (c.annotate) ctx.log(`[Cantiere] ${c.annotate} voci raccolte da ${name}, senza chiederlo a nessuno`);
+      }
+    } catch (_) { /* raccogliere e' un servizio, non una condizione per lavorare */ }
 
     try { ctx.SuperMario.logToolExecution(name, args, (_toolResult || '').substring(0, 500), guard.effective_risk, guard.kind, _toolLatency); } catch (_) { /* best-effort */ }
     // P0.2: Persistent audit log

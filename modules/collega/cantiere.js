@@ -71,6 +71,14 @@ class Cantiere {
     this.campiAttesi = campiAttesi.map(c => String(c).trim()).filter(Boolean);
     this.quanteVoci = quanteVoci;
     this.note = [];                 // cose imparate che non sono voci
+    // ── Le pagine passate senza lasciare niente ──
+    //
+    // Il 6 agosto sono state aperte sette pagine e annotata zero voci, e
+    // quella sproporzione non compariva da nessuna parte: si vedeva solo un
+    // cantiere vuoto, che sembra "non ho ancora iniziato" invece di "ho
+    // guardato sette volte e non ho preso niente". Sono due situazioni
+    // opposte e chiedono due mosse opposte.
+    this.letteAVuoto = [];
   }
 
   /**
@@ -100,6 +108,24 @@ class Cantiere {
     this.voci.set(chiave, esistente);
     return { ok: true, voce: esistente, quante: this.voci.size };
   }
+
+  /**
+   * Una pagina e' stata letta e non ne e' uscito niente di strutturato.
+   *
+   * Non e' un fallimento: da una pagina di testo non si estraggono voci in
+   * modo deterministico, e va bene cosi'. E' un FATTO da mostrare, perche' il
+   * rapporto fra pagine lette e voci raccolte dice, senza interpretazioni, se
+   * si sta lavorando o si sta girando.
+   */
+  letta(url) {
+    const u = String(url || '').split('?')[0].trim();
+    if (!u || this.letteAVuoto.includes(u)) return;
+    this.letteAVuoto.push(u);
+    if (this.letteAVuoto.length > 60) this.letteAVuoto.shift();
+  }
+
+  /** Un file prodotto durante il lavoro. */
+  nota(testo) { this.ricorda(testo); }
 
   ricorda(nota) {
     const t = String(nota || '').trim();
@@ -144,7 +170,20 @@ class Cantiere {
     // regola che non si vede non esiste: quando c'e' un cantiere aperto, deve
     // essere la prima cosa che si legge.
     if (this.voci.size === 0 && this.note.length === 0) {
-      return ['# PRIMA DI TUTTO: QUESTO È UN LAVORO DA POSARE MENTRE LO FAI', '',
+      // ── Zero voci dopo N pagine non e' come zero voci all'inizio ──
+      //
+      // Sono due situazioni opposte che chiedono due mosse opposte: la prima
+      // dice "cambia strada", la seconda dice "comincia". Prima si vedevano
+      // uguali, ed e' per questo che il 6 agosto il modello ha aperto dieci
+      // pagine continuando a fare la stessa cosa.
+      const avviso = this.letteAVuoto.length >= 2
+        ? [`ATTENZIONE: hai gia' letto ${this.letteAVuoto.length} pagine e il cantiere e' ancora VUOTO.`,
+           `Ultime: ${this.letteAVuoto.slice(-3).join(', ')}`,
+           'Leggere altre pagine cosi\' non cambiera\' niente. O i dati stanno dietro un modulo',
+           'da compilare, o vanno cercati altrove: cambia strada, non ripetere.', '']
+        : [];
+      return [...avviso,
+        '# PRIMA DI TUTTO: QUESTO È UN LAVORO DA POSARE MENTRE LO FAI', '',
         `Devi raccogliere ${this.quanteVoci || 'piu\''} soggetti`
           + (this.campiAttesi.length ? `, ognuno con: ${this.campiAttesi.join(', ')}.` : '.'),
         '',
@@ -157,6 +196,13 @@ class Cantiere {
       ].join('\n');
     }
     const righe = ['# IL LAVORO CHE HAI GIÀ IN MANO', ''];
+
+    // Il rapporto fra pagine lette e voci raccolte, quando e' brutto, si dice.
+    if (this.letteAVuoto.length >= 3 && this.letteAVuoto.length > this.voci.size * 2) {
+      righe.push(`Hai letto ${this.letteAVuoto.length} pagine e raccolto ${this.voci.size} voci: `
+        + 'la strada che stai usando rende poco. Prova a compilare il modulo di ricerca '
+        + 'del sito invece di leggere le pagine cosi\' come arrivano.', '');
+    }
 
     if (this.voci.size > 0) {
       righe.push(`Hai già raccolto ${this.voci.size} voci${this.quanteVoci ? ` su ${this.quanteVoci}` : ''}. `
@@ -208,6 +254,7 @@ class Cantiere {
       quanteVoci: this.quanteVoci,
       aperto: this.aperto || Date.now(),
       note: this.note,
+      letteAVuoto: this.letteAVuoto,
       voci: [...this.voci.entries()].map(([k, v]) => [k, v]),
     };
   }
@@ -219,6 +266,7 @@ class Cantiere {
     c.obiettivo = dati.obiettivo || '';
     c.aperto = dati.aperto || Date.now();
     c.note = Array.isArray(dati.note) ? dati.note : [];
+    c.letteAVuoto = Array.isArray(dati.letteAVuoto) ? dati.letteAVuoto : [];
     for (const [k, v] of dati.voci) c.voci.set(k, v);
     return c;
   }
@@ -230,6 +278,7 @@ class Cantiere {
       attese: this.quanteVoci,
       campiAttesi: this.campiAttesi,
       buchi: this.buchi().length,
+      pagineLetteSenzaRaccolto: this.letteAVuoto.length,
       finito: this.finito(),
     };
   }
