@@ -61,13 +61,34 @@ const CODICE = SGUARDO.replace(/\/\/[^\n]*/g, '');
     ok('senza aver guardato non agisce', r.ok === false);
     ok('e dice cosa fare', /guarda_pagina/.test(r.cosaFare || ''));
 
-    // Guardato un'altra pagina: gli id sono di un altro posto.
-    const ctx2 = { session: { _paginaGuardata: { url: 'https://a.it/x' }, lastPage: { url: 'https://b.it/y' } },
+    // ── Chi decide se gli id valgono ancora ──
+    //
+    // Questa prova difendeva un confronto fatto QUI, fra l'url dello sguardo e
+    // session.lastPage.url. Il 9 agosto quel confronto ha bloccato agisci
+    // quattro volte di fila su Skyscanner dicendo "ho guardato un'altra
+    // pagina" — mentre era la stessa. Su un sito che redirige o aggiunge la
+    // lingua i due url non coincidono mai, e nessuna azione passava piu'.
+    //
+    // Il test era verde e il comportamento sbagliato: difendeva una regola
+    // che in produzione impediva di lavorare. Adesso difende quella giusta —
+    // l'autorita' e' l'estensione, che gli id ce li ha in mano.
+    const ctx2 = { session: { _paginaGuardata: { url: 'https://a.it/x' }, lastPage: { url: 'https://b.it/y?lang=it' } },
       log() {}, emitReasoning() {}, isBridgeReady: () => true,
-      bridgeCommand: async () => ({ result: { ok: true } }) };
+      bridgeCommand: async () => ({ result: { ok: true, elemento: 'E7 pulsante "Cerca"' } }) };
     const r2 = JSON.parse(await handlers.agisci({ id: 'E7' }, ctx2));
-    ok('gli id di un altra pagina non valgono', r2.ok === false);
-    ok('e lo dice chiaramente', /altra pagina/.test(r2.motivo || ''));
+    ok('due url diversi NON bloccano piu l azione',
+       r2.ok === true, `bloccata con: ${r2.motivo || ''}`);
+
+    // Quando un id davvero non c'e', a dirlo e' l'estensione — e insieme
+    // elenca quelli che ci sono, cosi' il fallimento porta la soluzione.
+    const ctx3 = { session: { _paginaGuardata: { url: 'https://a.it' } },
+      log() {}, emitReasoning() {}, isBridgeReady: () => true,
+      bridgeCommand: async () => ({ result: { ok: false,
+        motivo: '"E7" non e\' fra gli elementi che ho visto',
+        disponibili: ['E1 campo "Da"', 'E2 campo "A"'] } }) };
+    const r3 = JSON.parse(await handlers.agisci({ id: 'E7' }, ctx3));
+    ok('un id inesistente lo dice l estensione', r3.ok === false);
+    ok('elencando quelli che ci sono', Array.isArray(r3.disponibili) && r3.disponibili.length > 0);
   }
 
   sezione('Dopo un click la pagina non e piu quella di prima');
