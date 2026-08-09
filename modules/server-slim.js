@@ -181,6 +181,19 @@ const learningStore = new LearningStore(dataDir);
 // Il diario: una riga per ogni esecuzione, col motivo quando va storta.
 // Prima di questo, di 880 chiamate e 67 fallimenti restava solo `ok:false`.
 const giornale = new Giornale(dataDir);
+
+// ── Chi parla, deciso prima che qualcuno chieda ──
+//
+// Restava vuoto fino a che Luca non apriva il menu, e allora la voce cadeva su
+// una costante che non appartiene a nessun agente, e il carattere di COBRA non
+// entrava nel prompt. Adesso si riprende la scelta di ieri, e in mancanza si
+// parte dal predefinito: non esiste il caso "nessuno".
+const _agenti = require('./config/agenti');
+let _agenteScelto = _agenti.predefinito().id;
+try {
+  const d = readJsonSafeSync(path.join(dataDir, 'agente_scelto.json'), null);
+  if (d && d.id) _agenteScelto = _agenti.quello(d.id).id;
+} catch (_) { /* nessuna scelta salvata: resta il predefinito */ }
 // Dove cercare, imparato dalle letture fatte davvero: Kayak vuoto, Google
 // Voli pieno — scoperto una volta, scritto per sempre.
 const registroFonti = new RegistroFonti(dataDir);
@@ -487,6 +500,7 @@ const ctx = {
   executeTool: null, // set below after ctx is created
   callAI, digestToolResult,
   conversationEngine, learningStore, giornale, registroFonti, SuperMario, CobraSupervisor,
+  _agenteScelto,
   // Il Collega si puo' spegnere senza toccare il codice: se un giorno dovesse
   // dare problemi, COLLEGA=off riporta il sistema al comportamento diretto.
   CollegaAttivo: String(process.env.COLLEGA || '').toLowerCase() !== 'off',

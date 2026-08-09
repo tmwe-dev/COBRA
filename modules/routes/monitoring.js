@@ -384,7 +384,21 @@ function register(router, ctx) {
     const { quello } = require('../config/agenti');
     const a = quello(d.id);
     ctx._agenteScelto = a.id;
-    ctx.log(`[Agente] adesso parla ${a.nome} (${a.lingua})`);
+
+    // ── La scelta va su disco ──
+    //
+    // Viveva solo in `ctx`, cioe' in memoria. Un riavvio del server e Luca
+    // tornava a sentire la voce predefinita senza aver toccato niente: dieci
+    // riavvii in una notte, dieci volte da rifare.
+    //
+    // Una preferenza che si perde e' peggio di una preferenza che non esiste:
+    // la prima volta la imposti, la seconda ti chiedi se l'avevi impostata.
+    try {
+      fs.writeFileSync(path.join(ctx.dataDir, 'agente_scelto.json'),
+        JSON.stringify({ id: a.id, nome: a.nome, quando: new Date().toISOString() }, null, 2));
+    } catch (e) { ctx.log(`[Agente] non ho potuto ricordare la scelta: ${e.message}`); }
+
+    ctx.log(`[Agente] adesso parla ${a.nome} (${a.lingua}) — e me lo ricordo anche dopo un riavvio`);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ok: true, agente: a }));
   });

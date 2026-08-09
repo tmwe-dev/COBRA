@@ -931,10 +931,14 @@ async function assemble({ intent, scopes, operationLevel, userMessage, conversat
 
   let bloccoAgente = '';
   try {
-    if (ctx && ctx._agenteScelto) {
+    // Anche senza scelta esplicita: `quello()` cade sul predefinito, cioe' su
+    // COBRA. Prima il blocco stava dentro `if (ctx._agenteScelto)`, che era
+    // falso quasi sempre — quindi il carattere dell'agente non arrivava MAI
+    // al modello, e nemmeno la sua lingua.
+    {
       const { quello } = require('./config/agenti');
-      const ag = quello(ctx._agenteScelto);
-      if (ag && !ag.predefinito) {
+      const ag = quello(ctx && ctx._agenteScelto);
+      if (ag) {
         const lingue = { it: 'italiano', en: 'inglese', es: 'spagnolo' };
         bloccoAgente = `# CHI SEI ADESSO: ${ag.nome}\n`
           + `Rispondi SEMPRE in ${lingue[ag.lingua] || ag.lingua}, anche se Luca ti scrive in un'altra lingua.\n`

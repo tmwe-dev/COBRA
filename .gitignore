@@ -52,3 +52,4 @@ conversations.json
 # Il diario delle esecuzioni: si rigenera, non si versiona.
 data/diario.jsonl
 data/diario.jsonl.1
+data/agente_scelto.json

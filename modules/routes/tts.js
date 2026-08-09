@@ -20,7 +20,18 @@ function register(router, ctx) {
       // Adesso chi scrive la frase decide anche come va detta; se non lo
       // dichiara, valgono le impostazioni di sempre.
       const vociNote = ctx.session.vociDisponibili || null;
-      let voiceId = ctx.aiKeys.elevenlabsVoiceId || COBRA_DEFAULTS.ELEVENLABS_VOICE_ID;
+      // ── La voce e' SEMPRE quella di un agente ──
+      //
+      // Prima: `ctx.aiKeys.elevenlabsVoiceId || COBRA_DEFAULTS.ELEVENLABS_VOICE_ID`.
+      // Il primo e' sempre stato vuoto (nessuno lo riempie), quindi valeva la
+      // costante — uScy1bXtKz8vPzfdFsFw, che non e' la voce di nessuno dei
+      // quattro agenti. COBRA parlava con la voce di uno sconosciuto, sempre.
+      //
+      // Adesso il punto di partenza e' l'agente predefinito, cioe' COBRA.
+      // Nessuna voce senza un nome dietro.
+      const { quello, predefinito } = require('../config/agenti');
+      let voiceId = quello(ctx._agenteScelto).voce || ctx.aiKeys.elevenlabsVoiceId
+        || predefinito().voce || COBRA_DEFAULTS.ELEVENLABS_VOICE_ID;
 
       // ── L'agente scelto nel menu in alto ──
       //
@@ -32,16 +43,11 @@ function register(router, ctx) {
       //
       // Sta prima della voce esplicita: se chi scrive la frase dichiara una
       // voce, quella vince: e' una scelta piu' vicina al singolo messaggio.
-      if (ctx._agenteScelto) {
-        try {
-          const { quello } = require('../config/agenti');
-          const ag = quello(ctx._agenteScelto);
-          if (ag) {
-            if (ag.voce) voiceId = ag.voce;
-            if (ag.lingua && !richiesta.lingua) richiesta.lingua = ag.lingua;
-          }
-        } catch (_) { /* senza elenco agenti si resta sulla voce predefinita */ }
-      }
+      // La lingua segue l'agente, scelto o predefinito che sia.
+      try {
+        const ag = quello(ctx._agenteScelto);
+        if (ag && ag.lingua && !richiesta.lingua) richiesta.lingua = ag.lingua;
+      } catch (_) { /* senza elenco agenti si resta sulla lingua della richiesta */ }
 
       if (richiesta.voce && /^[A-Za-z0-9]{8,40}$/.test(String(richiesta.voce))) {
         // Se conosciamo l'elenco delle voci dell'account, si accetta solo una

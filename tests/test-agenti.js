@@ -20,8 +20,19 @@ let p=0,f=0; const ok=(n,c,d='')=>{c?(p++,console.log('  ✓ '+n)):(f++,console.
   const fai=async(ctx)=>(await sm.assemble({intent:r.intent,scopes:r.scopes,operationLevel:r.operationLevel,
     userMessage:msg,conversationHistory:[],lastToolResult:null,voiceMode:false,allTools:COBRA_TOOLS,ctx})).systemPrompt;
 
+  // ── Senza scelta parla COBRA, non "nessuno" ──
+  //
+  // Questa prova pretendeva che senza scelta esplicita il prompt NON nominasse
+  // nessun agente. Era il comportamento che il 9 agosto faceva dire a Luca
+  // "il collega non usa l'agente cobra": con ctx._agenteScelto vuoto — cioe'
+  // quasi sempre, perche' la scelta non sopravviveva ai riavvii — il carattere
+  // di COBRA non entrava nel prompt e la voce cadeva su una costante che non
+  // appartiene a nessuno dei quattro agenti.
+  //
+  // Non esiste il caso "nessun agente": o parla COBRA, o parla uno degli altri.
   const base=await fai({});
-  ok('senza scelta il prompt non nomina nessun agente extra', !/CHI SEI ADESSO/.test(base));
+  ok('senza scelta parla comunque COBRA', /CHI SEI ADESSO: COBRA/.test(base));
+  ok('e nella sua lingua', /italiano/.test(base));
 
   for (const a of elenco().filter(x=>!x.predefinito)) {
     const t=await fai({_agenteScelto:a.id});

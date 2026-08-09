@@ -86,4 +86,28 @@ function quello(id) {
   return AGENTI.find(a => a.id === id) || AGENTI.find(a => a.predefinito) || AGENTI[0];
 }
 
-module.exports = { AGENTI, elenco, quello };
+/**
+ * Chi parla quando nessuno ha scelto.
+ *
+ * ── PERCHE' SERVE UNA FUNZIONE, INVECE DI UN `if` ──
+ *
+ * Fino al 9 agosto `ctx._agenteScelto` partiva vuoto, e tanto tts.js quanto
+ * supermario.js facevano `if (ctx._agenteScelto)`. Con quel campo vuoto:
+ *
+ *   - la voce cadeva su ELEVENLABS_VOICE_ID nelle costanti, che non e' la
+ *     voce di NESSUNO dei quattro agenti;
+ *   - il blocco "# CHI SEI ADESSO" non entrava mai nel prompt.
+ *
+ * Cioe': COBRA parlava con la voce di uno sconosciuto e senza il proprio
+ * carattere, sempre, salvo che Luca aprisse il menu — e anche allora la
+ * scelta viveva in memoria e moriva al primo riavvio. Ne abbiamo fatti dieci
+ * in una notte.
+ *
+ * `quello()` sapeva gia' cadere sul predefinito. Semplicemente nessuno la
+ * chiamava, perche' la si chiamava solo dentro un `if` che era falso.
+ */
+function predefinito() {
+  return AGENTI.find(a => a.predefinito) || AGENTI[0];
+}
+
+module.exports = { AGENTI, elenco, quello, predefinito };
