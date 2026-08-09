@@ -107,9 +107,32 @@
       display: flex; gap: 9px; padding: 9px 10px; border-radius: 9px;
       cursor: pointer; align-items: flex-start; transition: background .15s;
     }
-    .agente-voce:hover { background: var(--glass); }
-    .agente-voce.attuale { background: rgba(167,139,250,.14); }
-    .agente-voce .bandiera { font-size: 17px; line-height: 1.2; }
+    .agente-voce:hover { background: rgba(255,255,255,.05); }
+
+    /* ── Ogni lingua ha il suo colore ──
+       Il menu mostrava quattro righe uguali su fondo bianco, e per capire
+       quale fosse lo spagnolo bisognava leggere. Con un fondo a tono la
+       lingua si riconosce prima di leggere il nome: la bandiera dice quale,
+       il colore dice "sono diversi".
+       Tinte basse, non colori pieni: e' un menu, non un semaforo. */
+    .agente-voce[data-lingua="it"] { background: linear-gradient(90deg, rgba(0,140,69,.13), rgba(206,43,55,.10)); }
+    .agente-voce[data-lingua="en"] { background: linear-gradient(90deg, rgba(1,33,105,.16), rgba(200,16,46,.10)); }
+    .agente-voce[data-lingua="es"] { background: linear-gradient(90deg, rgba(198,11,30,.13), rgba(255,196,0,.12)); }
+    .agente-voce[data-lingua="it"]:hover { background: linear-gradient(90deg, rgba(0,140,69,.20), rgba(206,43,55,.16)); }
+    .agente-voce[data-lingua="en"]:hover { background: linear-gradient(90deg, rgba(1,33,105,.24), rgba(200,16,46,.16)); }
+    .agente-voce[data-lingua="es"]:hover { background: linear-gradient(90deg, rgba(198,11,30,.20), rgba(255,196,0,.18)); }
+
+    /* Quello attivo si vede da lontano: barra a sinistra, non solo un fondo
+       leggermente diverso — di notte quella differenza non si distingue. */
+    .agente-voce.attuale {
+      box-shadow: inset 3px 0 0 var(--accent, #a78bfa);
+      outline: 1px solid rgba(167,139,250,.35);
+    }
+    .agente-voce.attuale .nome::after {
+      content: ' · in uso'; font-weight: 400; font-size: 10px;
+      color: var(--accent, #a78bfa); letter-spacing: .02em;
+    }
+    .agente-voce .bandiera { font-size: 19px; line-height: 1.2; }
     .agente-voce .testi { flex: 1; min-width: 0; }
     .agente-voce .nome { font-size: 12px; font-weight: 600; color: var(--text); }
     .agente-voce .carattere { font-size: 11px; color: var(--text2); line-height: 1.45; margin-top: 2px; }
@@ -1129,13 +1152,13 @@
 
       <button class="voice-btn active" id="speakerBtn" title="Attiva/disattiva voce">&#x1f50a;</button>
       <input type="range" class="voice-speed" id="voiceSpeed" min="0.5" max="2" step="0.1" value="1" title="Velocita voce" />
-      <!-- Il server ha 250 voci in 16 lingue e nessuno poteva sceglierle:
-           la capacità c'era ed era irraggiungibile. -->
-      <select id="sceltaVoce" title="Voce di COBRA"
-        style="background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);color:#cbd5e1;
-               border-radius:8px;padding:3px 6px;font-size:11px;max-width:150px;cursor:pointer;">
-        <option value="">Voce: automatica</option>
-      </select>
+      <!-- ── Qui c'era un menu con 250 voci ElevenLabs ──
+           Ed era la causa vera della voce sbagliata: la scelta finiva in
+           localStorage e il client la mandava a OGNI sintesi, scavalcando la
+           voce dell'agente. Due controlli per la stessa cosa, e vinceva quello
+           che non sapeva chi stesse parlando.
+           La voce appartiene all'agente: si sceglie dal menu degli agenti,
+           che ha i nomi, le bandiere e i caratteri. Un controllo solo. -->
 
       <div class="token-meter" id="tokenMeter" onclick="toggleTokenDetail()">
         <div class="meter-label"><span class="pct green" id="tokenPct">0%</span> <span id="tokenTotal">0</span></div>
@@ -1954,68 +1977,24 @@
       setTimeout(() => attendi(), 2000);
     });
 
-    // ── Le voci di COBRA ──
+    // ── La voce non si sceglie qui ──
     //
-    // Il server ne conosce 250 in 16 lingue (/api/tts/voices) e accetta già il
-    // parametro "voce" nella sintesi: mancava solo il modo di sceglierne una.
-    // La scelta resta anche dopo un riavvio, altrimenti andrebbe rifatta ogni
-    // volta e tanto varrebbe non averla.
-    let voceScelta = localStorage.getItem('cobra_voce') || '';
-    (async () => {
-      const sel = document.getElementById('sceltaVoce');
-      if (!sel) return;
-      try {
-        const dati = await fetch('/api/tts/voices').then(r => r.json());
-        const voci = dati.voices || [];
-        if (!voci.length) return;
-
-        // Prima l'italiano, poi il resto: si cerca quasi sempre la propria lingua.
-        const ordine = { it: 0, en: 1, es: 2, fr: 3, de: 4 };
-        voci.sort((a, b) => (ordine[a.language] ?? 9) - (ordine[b.language] ?? 9)
-          || String(a.name).localeCompare(String(b.name)));
-
-        let linguaCorrente = null;
-        for (const v of voci) {
-          const lingua = v.language || 'altre';
-          if (lingua !== linguaCorrente) {
-            linguaCorrente = lingua;
-            const gruppo = document.createElement('optgroup');
-            gruppo.label = ({ it: 'Italiano', en: 'Inglese', es: 'Spagnolo', fr: 'Francese',
-              de: 'Tedesco', ja: 'Giapponese', zh: 'Cinese', ar: 'Arabo', ru: 'Russo',
-              nl: 'Olandese', tr: 'Turco', hi: 'Hindi', hu: 'Ungherese', bg: 'Bulgaro',
-              th: 'Thai' })[lingua] || 'Altre lingue';
-            gruppo.id = 'gruppo_' + lingua;
-            sel.appendChild(gruppo);
-          }
-          const o = document.createElement('option');
-          o.value = v.id;
-          // I nomi arrivano come "Sarah - Mature, Reassuring, Confident":
-          // in un menu stretto conta il nome, il resto sta nel suggerimento.
-          o.textContent = String(v.name).split(' - ')[0];
-          o.title = v.name;
-          if (v.id === voceScelta) o.selected = true;
-          (sel.querySelector('#gruppo_' + lingua) || sel).appendChild(o);
-        }
-        sel.title = voci.length + ' voci disponibili';
-      } catch (_) { /* senza chiave ElevenLabs il menu resta com'è */ }
-
-      sel.addEventListener('change', async () => {
-        voceScelta = sel.value;
-        localStorage.setItem('cobra_voce', voceScelta);
-        // Si prova subito: scegliere una voce senza sentirla è comprare a scatola chiusa.
-        if (!voceScelta || !speakerOn) return;
-        try {
-          const r = await fetch('/api/tts', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: 'Sono io. Da adesso ti parlo così.', voce: voceScelta }) });
-          if (r.ok) {
-            const b = await r.blob();
-            const a = new Audio(URL.createObjectURL(b));
-            a.playbackRate = voiceSpeed;
-            a.play().catch(() => { /* il browser chiede un gesto: pazienza */ });
-          }
-        } catch (_) { /* la prova è un di più */ }
-      });
-    })();
+    // Qui c'era il caricamento delle 250 voci ElevenLabs e la loro scelta,
+    // salvata in localStorage come `cobra_voce` e rimandata al server a OGNI
+    // sintesi. Il server la accetta e la fa vincere sulla voce dell'agente:
+    // quindi bastava aver toccato quel menu una volta, mesi fa, per sentire
+    // per sempre una voce che non e' quella di COBRA.
+    //
+    // E' lo stesso difetto dei sei registri delle capacita': due posti che
+    // decidono la stessa cosa, e vince quello che ne sa di meno. La voce
+    // appartiene all'agente — si sceglie dal menu degli agenti, dove ci sono
+    // il nome, la bandiera e il carattere.
+    let voceScelta = '';
+    try {
+      // Si toglie anche la scelta vecchia: finche' resta li' continua a
+      // scavalcare l'agente a ogni riavvio del browser.
+      if (localStorage.getItem('cobra_voce')) localStorage.removeItem('cobra_voce');
+    } catch (_) { /* senza localStorage non c'e' niente da ripulire */ }
 
     function setMonitorIdle() {
       monStatus.className = 'mon-status';
@@ -2653,7 +2632,7 @@
       document.getElementById('agenteNome').textContent = attuale.nome;
 
       box.innerHTML = _agenti.map(a => `
-        <div class="agente-voce ${a.id === _agenteScelto ? 'attuale' : ''}" data-id="${a.id}">
+        <div class="agente-voce ${a.id === _agenteScelto ? 'attuale' : ''}" data-id="${a.id}" data-lingua="${a.lingua}">
           <span class="bandiera">${a.bandiera}</span>
           <div class="testi">
             <div class="nome">${a.nome} <span style="font-weight:400;opacity:.6">· ${a.nomeVoce}</span></div>

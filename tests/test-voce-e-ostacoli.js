@@ -33,24 +33,25 @@ const ext = require('./_estensione').sorgenteEstensione();
 
 console.log('\n=== LE VOCI SI SCELGONO, I BANNER SI TOLGONO ===');
 
-sezione('Le 250 voci sono raggiungibili');
-{
-  ok('c e il selettore nella barra', /id="sceltaVoce"/.test(ui));
-  ok('le voci vengono chieste al server', /fetch\('\/api\/tts\/voices'\)/.test(ui));
-  ok('sono raggruppate per lingua', /createElement\('optgroup'\)/.test(ui));
-  ok('con l italiano per primo', /ordine = \{ it: 0/.test(ui));
-  ok('e i nomi accorciati per stare nel menu', /String\(v\.name\)\.split\(' - '\)\[0\]/.test(ui));
-  ok('il nome intero resta nel suggerimento', /o\.title = v\.name/.test(ui));
-}
+// ── Qui c'erano due sezioni che difendevano il menu delle 250 voci ──
+//
+// Erano verdi, e proteggevano la causa vera della voce sbagliata: la scelta
+// finiva in localStorage e il client la rimandava al server a OGNI sintesi,
+// scavalcando la voce dell'agente. Bastava aver toccato quel menu una volta
+// per sentire per sempre una voce che non e' quella di COBRA, e nessuna
+// correzione lato server poteva rimediare — il client sovrascriveva dopo.
+//
+// Seconda volta oggi che un test verde difende un comportamento sbagliato.
+// La verifica di adesso sta in tests/test-una-voce-sola.js e difende la regola
+// giusta: un controllo solo, e la voce appartiene all'agente.
 
-sezione('La scelta viene ricordata e usata davvero');
+sezione('Una voce sola, e appartiene all agente');
 {
-  ok('viene salvata', /localStorage\.setItem\('cobra_voce', voceScelta\)/.test(ui));
-  ok('e ripresa al riavvio', /localStorage\.getItem\('cobra_voce'\)/.test(ui));
-  ok('la voce scelta risulta gia selezionata nel menu', /if \(v\.id === voceScelta\) o\.selected = true/.test(ui));
-  ok('e finisce nella richiesta di sintesi', /voceScelta \? \{ voce: voceScelta \} : \{\}/.test(ui));
-  ok('scegliendola la si sente subito', /Da adesso ti parlo così/.test(ui));
-  ok('senza chiave ElevenLabs il menu non si rompe', /senza chiave ElevenLabs il menu resta/.test(ui));
+  ok('il menu delle 250 voci non c e piu', !/id="sceltaVoce"/.test(ui));
+  ok('e non le chiede piu al server', !/api\/tts\/voices/.test(ui));
+  ok('la scelta vecchia viene ripulita', /removeItem\('cobra_voce'\)/.test(ui));
+  ok('chi parla si sceglie dal menu degli agenti', /api\/agenti\/scegli/.test(ui));
+  ok('ogni lingua ha il suo fondo', /\.agente-voce\[data-lingua="es"\]/.test(ui));
 }
 
 sezione('Il difetto che lasciava i banner a schermo');
