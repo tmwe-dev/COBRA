@@ -70,7 +70,10 @@ function setupWebSocket(httpServer, ctx) {
           ws._authenticated = true;
           _bridgeClient = ws;
           _bridgeCapabilities = msg.capabilities || [];
-          ctx.log(`[Bridge] Chrome extension connected: ${(msg.userAgent || '').substring(0, 50)}`);
+          // La versione nel log: con trenta cartelle di estensione in
+          // Downloads, sapere QUALE sta girando e' meta' della diagnosi.
+          ctx.log(`[Bridge] Chrome extension connected: v${msg.version || '?'} · `
+            + `${(msg.capabilities || []).length} comandi dichiarati`);
 
           // ── L'unica verifica che avrebbe preso guarda_pagina ──
           //
@@ -86,12 +89,25 @@ function setupWebSocket(httpServer, ctx) {
           try {
             const { verificaPonte } = require('../integrita/verifica');
             const p = verificaPonte(_bridgeCapabilities);
-            if (!p.ok) {
+            // ── Tre esiti, tre righe. Mai il silenzio. ──
+            //
+            // La prima versione taceva quando l'estensione non dichiarava
+            // niente, e il silenzio non distingue "tutto a posto" da "sto
+            // parlando con una versione vecchia". Ho passato dieci minuti a
+            // chiedermi perche' la riga non usciva: era il caso muto.
+            //
+            // Un controllo che in un caso su tre non dice niente e' un
+            // controllo di cui non ci si puo' fidare.
+            if (!_bridgeCapabilities.length) {
+              ctx.log('[Integrità] ? l\'estensione collegata non dichiara cosa sa fare — '
+                + 'e\' una versione precedente al 9 agosto, oppure Chrome sta caricando '
+                + 'un\'altra cartella. Non posso confrontare niente.');
+            } else if (!p.ok) {
               ctx.log(`[Integrità] ✗ ${p.dice}`);
               wsBroadcast({ type: 'ai_reasoning',
                 text: `⚠️ L'estensione non sa fare: ${p.mancanti.join(', ')} — ricaricala da chrome://extensions`,
                 icon: '⚠️' });
-            } else if (_bridgeCapabilities.length) {
+            } else {
               ctx.log(`[Integrità] ✓ l'estensione sa fare tutto quello che gli handler le chiedono (${_bridgeCapabilities.length} comandi)`);
             }
           } catch (e) { ctx.log(`[Integrità] confronto col ponte non riuscito: ${e.message}`); }
