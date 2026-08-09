@@ -182,7 +182,7 @@ function register(router, ctx) {
     'whatsapp_sessione', 'whatsapp_elenco_chat', 'whatsapp_non_letti', 'whatsapp_diagnosi',
     'linkedin_posta', 'linkedin_diagnosi', 'linkedin_elenco_chat',
     'linkedin_leggi_conversazione', 'whatsapp_leggi_conversazione',
-    'diagnosi_selettori', 'mappa_pagine', 'sblocca_coda',
+    'diagnosi_selettori', 'mappa_pagine', 'sblocca_coda', 'stato_permessi',
   // Il registro delle durate: serve a rispondere a "perche' ci ha messo tre
   // minuti" con un numero invece che con un'ipotesi. E' in sola lettura come
   // tutti gli altri qui: nessuno di questi comandi manda niente fuori.

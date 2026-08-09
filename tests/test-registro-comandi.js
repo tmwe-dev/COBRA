@@ -146,10 +146,20 @@ sezione('Nessun file di comandi e troppo grosso');
 
 sezione('Nessun comando in due posti, e nessuno perso');
 {
-  // Il conto: novantanove comandi c'erano prima del trasloco, novantanove
-  // devono esserci dopo. Un comando perso resterebbe verde in tutti gli altri
-  // test — nessuno esegue il service worker — e si scoprirebbe al primo uso.
-  const PRIMA = 99;
+  // Il conto: novantanove comandi c'erano prima del trasloco dell'8 agosto,
+  // novantanove dovevano esserci dopo. Un comando perso resterebbe verde in
+  // tutti gli altri test — nessuno esegue il service worker — e si
+  // scoprirebbe al primo uso.
+  //
+  // Questo numero si alza SOLO quando si aggiunge un comando davvero nuovo, e
+  // va scritto qui insieme al perche'. Se sale senza che nessuno l'abbia
+  // deciso, e' un comando comparso per sbaglio.
+  //
+  //   99 → 100  il 9 agosto: stato_permessi, che chiede a Chrome com'e' messo
+  //             con posizione, notifiche, microfono e telecamera. Serviva
+  //             perche' i permessi ora si decidono a livello di browser e
+  //             l'unico modo onesto di sapere se ha funzionato e' chiederlo.
+  const PRIMA = 100;
   const daAree = areeEsistenti().flatMap(registrati);
   const nelVecchio = nelloSwitch();
   ok(`i comandi sono ancora ${PRIMA}`, daAree.length + nelVecchio.length === PRIMA,
