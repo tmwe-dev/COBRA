@@ -25,6 +25,30 @@ function _bloccoCantiere(ctx) {
   return blocco ? '\n\n' + blocco : '';
 }
 
+// ── La contabilita' della ricerca, davanti agli occhi ──
+//
+// Trentuno ricerche di voli in cinque giorni, e nessuna che sapesse cosa
+// avevano trovato le trenta precedenti. Il modello ripeteva le stesse domande
+// perche' non aveva modo di sapere di averle gia' fatte: quando il contesto si
+// riempie, la prima cosa che esce e' proprio la contabilita'.
+//
+// Qui non si chiede al modello di ricordare. Si scrive: cosa hai gia' chiesto,
+// quali domini non hanno mai reso, cosa manca ancora, e la ricerca che
+// chiuderebbe una di quelle lacune.
+//
+// Sta accanto al Cantiere e non altrove perche' sono la stessa cosa vista da
+// due lati: il Cantiere dice cosa HAI, questo dice cosa MANCA e dove cercarlo.
+function _bloccoRicerca(ctx) {
+  const i = ctx.session && ctx.session.indagine;
+  const c = ctx.session && ctx.session.cantiere;
+  if (!i || !c) return '';
+  try {
+    const blocco = i.perIlPrompt(c, ctx.session._soggettiAttesi || [],
+      (c.campiAttesi || []), ctx.session._contestoRicerca || '');
+    return blocco ? '\n\n' + blocco : '';
+  } catch (_) { return ''; }
+}
+
 function register(router, ctx) {
   // ── /api/chat — main chat endpoint ──
   router.post('/api/chat', async (body, res) => {
@@ -672,7 +696,7 @@ function register(router, ctx) {
       // Il cantiere va davanti al modello dal PRIMO giro, non solo quando si
       // insiste: altrimenti la prima passata — quella che apre dieci pagine —
       // la fa senza sapere che deve posare quello che trova.
-      let result = await ctx.callAI(systemPrompt + _bloccoCantiere(ctx), msgs, useTools,
+      let result = await ctx.callAI(systemPrompt + _bloccoCantiere(ctx) + _bloccoRicerca(ctx), msgs, useTools,
         { ...ctx, modelTier: modelSelection.tier });
 
       // ── 8a. IL COLLEGA GIUDICA ──
@@ -833,7 +857,7 @@ function register(router, ctx) {
           });
           try {
             const ripresa = await ctx.callAI(
-              systemPrompt + _bloccoCantiere(ctx) + '\n\n# NOTA DEL COLLEGA\n' + giudizio.istruzione,
+              systemPrompt + _bloccoCantiere(ctx) + _bloccoRicerca(ctx) + '\n\n# NOTA DEL COLLEGA\n' + giudizio.istruzione,
               [...msgs, { role: 'assistant', content: result.content },
                { role: 'user', content: giudizio.istruzione }],
               useTools, { ...ctx, modelTier: modelSelection.tier }

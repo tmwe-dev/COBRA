@@ -139,8 +139,15 @@ sezione('E il cantiere e agganciato al lavoro vero');
   ok('prende le misure dai criteri dell incarico', /new Cantiere\(\{[\s\S]{0,120}campiAttesi: campi/.test(chat));
   ok('i soggetti da coprire ci entrano subito', /for \(const nome of soggetti\)/.test(chat));
   ok('e torna al modello a ogni ripresa', (chat.match(/_bloccoCantiere\(ctx\)/g) || []).length >= 3);
+  // Si controlla l'INTENZIONE — il cantiere arriva al modello gia' alla prima
+  // chiamata — non la forma esatta dell'espressione. La versione precedente
+  // pretendeva `systemPrompt + _bloccoCantiere(ctx), msgs` alla lettera, ed e'
+  // diventata rossa il 9 agosto perche' in mezzo si e' aggiunto
+  // `_bloccoRicerca(ctx)`: il comportamento era identico, cambiava solo la
+  // punteggiatura. Un test che si rompe quando il codice migliora insegna a
+  // ignorare i test.
   ok('compreso il PRIMO giro, non solo le insistenze',
-     /callAI\(systemPrompt \+ _bloccoCantiere\(ctx\), msgs, useTools/.test(chat));
+     /callAI\(systemPrompt(?:\s*\+\s*_blocco\w+\(ctx\))*\s*\+\s*_bloccoCantiere\(ctx\)(?:\s*\+\s*_blocco\w+\(ctx\))*\s*,\s*msgs/.test(chat));
 
   const { COBRA_TOOLS } = require('../modules/tools/schemas');
   const h = require('../modules/tools/handlers');

@@ -7,6 +7,7 @@ const { isDomainWhitelisted } = require('../config/whitelist');
 const { auditToolCall, auditSecurityEvent } = require('../security/audit-log');
 const { classifica: classificaEsito } = require('../diario/tassonomia');
 const { daRisultato, posaNelCantiere } = require('../cantiere/raccolta');
+const { Indagine } = require('../ricerca/indagine');
 
 /**
  * Quante volte questa stessa chiamata e' gia' stata tentata in questo turno.
@@ -225,6 +226,24 @@ async function executeTool(name, args, ctx) {
         const raccolto = daRisultato(name, args, _toolResult, ctx.session.lastPage && ctx.session.lastPage.url);
         const c = posaNelCantiere(ctx.session.cantiere, raccolto);
         if (c.annotate) ctx.log(`[Cantiere] ${c.annotate} voci raccolte da ${name}, senza chiederlo a nessuno`);
+
+        // ── La contabilita' della ricerca ──
+        //
+        // Cosa ho gia' chiesto, dove sono gia' stato, cosa non ha reso. E' la
+        // parte che un modello perde per strada quando il contesto si riempie,
+        // ed e' il motivo per cui trentuno ricerche di voli hanno ripetuto le
+        // stesse domande per cinque giorni.
+        if (!ctx.session.indagine) ctx.session.indagine = new Indagine();
+        const ind = ctx.session.indagine;
+        if (name === 'google_search' && args && args.query) {
+          const r = ind.cercato(args.query);
+          if (!r.nuova) ctx.log(`[Ricerca] gia' chiesto lo stesso: "${r.gemella}"`);
+        }
+        const url = (args && args.url) || (ctx.session.lastPage && ctx.session.lastPage.url);
+        if (url && ['scrape_url', 'read_page', 'navigate', 'read_table', 'extract_data'].includes(name)) {
+          ind.letta(url, c.annotate > 0);
+        }
+        if (!esito.ok && esito.famiglia === 'STRATEGY') ind.fallita(name, url || '', esito.code);
       }
     } catch (_) { /* raccogliere e' un servizio, non una condizione per lavorare */ }
 
