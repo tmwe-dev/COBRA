@@ -170,6 +170,22 @@ prova('il confronto col ponte gira all\'aggancio dell\'estensione', () => {
   assert.ok(/verificaPonte/.test(t), 'ws/server.js non confronta le capacità dichiarate dall\'estensione');
 });
 
+prova('l\'estensione dichiara davvero cosa sa fare', () => {
+  // Il campo `capabilities` esisteva da SEMPRE lato server — letto, conservato,
+  // esposto su /api/bridge-status, mandato alla webapp — ed era sempre vuoto,
+  // perche' l'estensione non lo riempiva. Un campo che esiste da una parte sola
+  // e' peggio di un campo che non c'e': sembra un controllo, e non controlla.
+  const fs = require('fs');
+  const path = require('path');
+  const t = fs.readFileSync(path.join(__dirname, '../cobra-extension/background.js'), 'utf8');
+  const invii = [...t.matchAll(/type:\s*'bridge_connect'[^}]*}/g)].map((m) => m[0]);
+  assert.ok(invii.length >= 1, 'nessun bridge_connect trovato');
+  for (const i of invii) {
+    assert.ok(/capabilities:/.test(i),
+      'un bridge_connect non dichiara le capacità: il confronto col ponte resterebbe muto');
+  }
+});
+
 prova('c\'è un solo lettore dei registri', () => {
   // Se l'attrezzo si rileggesse i sorgenti per conto suo, un giorno direbbe
   // "tutto a posto" mentre l'avvio dice il contrario. E' successo con

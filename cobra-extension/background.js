@@ -26,6 +26,26 @@
 try { importScripts('esterni/ponte.js'); }
 catch (e) { console.error('[COBRA] ponte.js non caricato:', e.message); }
 
+
+// ── Cosa so fare, dichiarato al server ──
+//
+// Il server ha SEMPRE letto `msg.capabilities` all'aggancio, l'ha conservato in
+// _bridgeCapabilities, l'ha esposto su /api/bridge-status e l'ha mandato alla
+// webapp. Ed e' sempre stato vuoto, perche' nessuno lo riempiva: il campo
+// esisteva da una parte sola.
+//
+// Costa questa funzione, e in cambio il server puo' accorgersi da solo che il
+// service worker in esecuzione non ha caricato un file. E' il caso di
+// guarda_pagina il 9 agosto: il file c'era sul disco, i sorgenti erano giusti,
+// e nessuna lettura del codice poteva saperlo — solo chiedere a chi gira.
+function _cosaSoFare() {
+  const nomi = new Set();
+  try { for (const n of (globalThis.Registro?.elenco()?.nomi || [])) nomi.add(n); } catch (_) { /* registro non caricato */ }
+  // I superstiti dello switch, che nel registro non ci sono.
+  for (const n of ['wait_for', 'verify_action', 'retry']) nomi.add(n);
+  return [...nomi].sort();
+}
+
 const COBRA_WS_URL = 'ws://127.0.0.1:3000';
 const COBRA_API_URL = 'http://127.0.0.1:3000';
 const VERSION = chrome.runtime.getManifest().version;
@@ -127,7 +147,7 @@ async function connect() {
         updateBadge('ERR', '#ef4444');
         return;
       }
-      ws.send(JSON.stringify({ type: 'bridge_connect', token: _bridgeToken, userAgent: navigator.userAgent, version: VERSION }));
+      ws.send(JSON.stringify({ type: 'bridge_connect', token: _bridgeToken, userAgent: navigator.userAgent, version: VERSION, capabilities: _cosaSoFare() }));
       // Badge e counter reset avvengono su bridge_auth_ok dal server
       // Registra il tab COBRA (localhost:3000) per non sovrascriverlo mai
       try {
@@ -165,7 +185,7 @@ async function connect() {
           await new Promise(r => setTimeout(r, 1000 * _authRetryCount)); // backoff
           await fetchBridgeToken();
           if (_bridgeToken && ws.readyState === 1) {
-            ws.send(JSON.stringify({ type: 'bridge_connect', token: _bridgeToken, userAgent: navigator.userAgent, version: VERSION }));
+            ws.send(JSON.stringify({ type: 'bridge_connect', token: _bridgeToken, userAgent: navigator.userAgent, version: VERSION, capabilities: _cosaSoFare() }));
           }
           return;
         }
