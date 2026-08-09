@@ -163,7 +163,7 @@ sezione('E il cantiere e agganciato al lavoro vero');
   // punteggiatura. Un test che si rompe quando il codice migliora insegna a
   // ignorare i test.
   ok('compreso il PRIMO giro, non solo le insistenze',
-     /callAI\(systemPrompt(?:\s*\+\s*_blocco\w+\(ctx\))*\s*\+\s*_bloccoCantiere\(ctx\)(?:\s*\+\s*_blocco\w+\(ctx\))*\s*,\s*msgs/.test(chat));
+     /callAI\(systemPrompt(?:\s*\+\s*_blocco\w+\([^)]*\))*\s*\+\s*_bloccoCantiere\(ctx\)(?:\s*\+\s*_blocco\w+\([^)]*\))*\s*,\s*msgs/.test(chat));
 
   const { COBRA_TOOLS } = require('../modules/tools/schemas');
   const h = require('../modules/tools/handlers');
