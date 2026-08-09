@@ -41,6 +41,22 @@ function _bloccoCantiere(ctx) {
 //
 // Sta accanto al Cantiere e non altrove perche' sono la stessa cosa vista da
 // due lati: il Cantiere dice cosa HAI, questo dice cosa MANCA e dove cercarlo.
+// ── Da dove conviene cominciare ──
+//
+// Il 9 agosto COBRA ha aperto ITA Airways, Expedia e TripAdvisor prima di
+// arrivare a Google Voli, che e' quello che ha funzionato: due minuti per
+// trovare la porta giusta, e il giro dopo avrebbe ricominciato uguale.
+//
+// Il seme e' la conoscenza di Luca; l'ordine se lo guadagna il campo.
+function _bloccoFonti(ctx, richiesta) {
+  try {
+    const { FontiPreferite } = require('../ricerca/fonti-preferite');
+    if (!ctx._fontiPreferite) ctx._fontiPreferite = new FontiPreferite(ctx.dataDir);
+    const b = ctx._fontiPreferite.perIlPrompt(richiesta);
+    return b ? '\n\n' + b : '';
+  } catch (_) { return ''; }
+}
+
 function _bloccoRicerca(ctx) {
   const i = ctx.session && ctx.session.indagine;
   const c = ctx.session && ctx.session.cantiere;
@@ -725,7 +741,7 @@ function register(router, ctx) {
       // Il cantiere va davanti al modello dal PRIMO giro, non solo quando si
       // insiste: altrimenti la prima passata — quella che apre dieci pagine —
       // la fa senza sapere che deve posare quello che trova.
-      let result = await ctx.callAI(systemPrompt + _bloccoCantiere(ctx) + _bloccoRicerca(ctx), msgs, useTools,
+      let result = await ctx.callAI(systemPrompt + _bloccoCantiere(ctx) + _bloccoRicerca(ctx) + _bloccoFonti(ctx, message), msgs, useTools,
         { ...ctx, modelTier: modelSelection.tier });
 
       // ── 8a. IL COLLEGA GIUDICA ──
@@ -886,7 +902,7 @@ function register(router, ctx) {
           });
           try {
             const ripresa = await ctx.callAI(
-              systemPrompt + _bloccoCantiere(ctx) + _bloccoRicerca(ctx) + '\n\n# NOTA DEL COLLEGA\n' + giudizio.istruzione,
+              systemPrompt + _bloccoCantiere(ctx) + _bloccoRicerca(ctx) + _bloccoFonti(ctx, message) + '\n\n# NOTA DEL COLLEGA\n' + giudizio.istruzione,
               [...msgs, { role: 'assistant', content: result.content },
                { role: 'user', content: giudizio.istruzione }],
               useTools, { ...ctx, modelTier: modelSelection.tier }

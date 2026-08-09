@@ -8,6 +8,7 @@ const { auditToolCall, auditSecurityEvent } = require('../security/audit-log');
 const { classifica: classificaEsito } = require('../diario/tassonomia');
 const { daRisultato, posaNelCantiere } = require('../cantiere/raccolta');
 const { Indagine } = require('../ricerca/indagine');
+const { FontiPreferite, tipoDiLavoro } = require('../ricerca/fonti-preferite');
 
 /**
  * Quante volte questa stessa chiamata e' gia' stata tentata in questo turno.
@@ -244,6 +245,20 @@ async function executeTool(name, args, ctx) {
           ind.letta(url, c.annotate > 0);
         }
         if (!esito.ok && esito.famiglia === 'STRATEGY') ind.fallita(name, url || '', esito.code);
+
+        // ── Quale sito rende, per quale tipo di lavoro ──
+        //
+        // Il seme e' la conoscenza di Luca — "google voli e' molto efficiente,
+        // poi booking, expedia" — ma l'ordine vero se lo guadagna il campo. Qui
+        // si registra solo cio' che gia' sappiamo: la fonte ha prodotto voci
+        // oppure no, e quanto ci ha messo.
+        if (url && ['scrape_url', 'read_page', 'read_table', 'extract_data'].includes(name)) {
+          if (!ctx._fontiPreferite) ctx._fontiPreferite = new FontiPreferite(ctx.dataDir);
+          const tipi = tipoDiLavoro((ctx.session.cantiere && ctx.session.cantiere.obiettivo) || '');
+          for (const t of (tipi.length ? tipi : ['generico'])) {
+            ctx._fontiPreferite.comeEAndata(t, url, c.annotate > 0, _toolLatency);
+          }
+        }
       }
     } catch (_) { /* raccogliere e' un servizio, non una condizione per lavorare */ }
 
