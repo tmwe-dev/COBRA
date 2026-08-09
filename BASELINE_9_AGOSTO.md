@@ -27,17 +27,25 @@ indipendenti, aggiornati a mano.
 | Schemi dichiarati | 83 | = capacità complete |
 | Handler registrati | 91 | = 83 |
 | Comandi estensione | 115 | = quelli dichiarati |
-| **Handler senza schema — esistono, il modello non li vede** | **8** | 0 |
+| **Handler senza schema, non voluti** | **0** |
+| Handler chiusi apposta e documentati | 7 | 0 |
 | **Capacità fuori da ogni ambito — mai consegnate** | **4** | 0 |
 | **Comandi estensione che nessun handler chiama** | **76 su 115** | 0 |
 | Comandi chiesti al ponte e non esposti | 0 | 0 |
 
-Gli 8 handler irraggiungibili: `A_SESSIONE` `web_search` `execute_js` `read_inbox`
-`send_whatsapp` `send_linkedin` `linkedin_send_message` `whatsapp_send`.
+**Correzione del 9 agosto, sera.** La prima misura diceva 8 handler senza schema. Era
+sbagliata in due modi, e li scrivo perche' un attrezzo di misura che esagera perde
+credito esattamente come uno che tace:
 
-Due di questi — `whatsapp_send` e `linkedin_send_message` — sono i gemelli senza regole
-d'invio che il 7 agosto hanno fatto uscire sette messaggi scavalcando i limiti. Oggi
-sono fuori dagli ambiti ma **vivi nel codice**: sono `DELETE`, non `LEGACY`.
+- `A_SESSIONE` non e' un handler, e' una costante esportata. Contata per errore.
+- Gli altri 7 sono **chiusi apposta**, ed erano gia' documentati in
+  `tests/test-strumenti-raggiungibili.js`, un test che pero' non veniva mai eseguito.
+  Fra questi `whatsapp_send` e `linkedin_send_message`: i gemelli senza regole d'invio
+  da cui il 7 agosto uscirono sette messaggi fuori conteggio. Sono porte chiuse
+  volutamente, non dimenticanze — e adesso la matrice lo dice, cosi' nessuno le
+  "aggiusta" riaprendole.
+
+Il numero onesto e' **0 handler senza schema non voluti**.
 
 Le 4 fuori ambito: `open_whatsapp` `prepare_whatsapp_message` `open_linkedin`
 `prepare_linkedin_message`.

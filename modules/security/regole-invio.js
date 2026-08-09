@@ -390,33 +390,21 @@ class RegoleInvio {
         'Aspetto che passi un po\' di tempo.');
     }
 
-    // ── 5. Ogni quanto ──
-    const ultimo = this.invii.length ? this.invii[this.invii.length - 1] : null;
-    if (ultimo) {
-      const passati = (ora_ - ultimo.quando) / 1000;
-      if (passati < r.pausaMinima) {
-        return no(
-          `dall'ultimo messaggio sono passati ${Math.round(passati)} secondi, il minimo è ${r.pausaMinima}`,
-          `Aspetto ancora ${Math.ceil(r.pausaMinima - passati)} secondi.`);
-      }
-    }
-
-    // ── 6. Non due volte alla stessa persona ──
-    const suo = this.invii.filter(i => i.a === a);
-    // Riscrivere alla stessa persona a poca distanza e' insistenza quando lo
-    // decide un programma. Quando lo decide Luca e' una conversazione.
-    if (suo.length && r.giorniFraStessoContatto > 0) {
-      const giorniDa = (ora_ - suo[suo.length - 1].quando) / 86400000;
-      if (giorniDa < r.giorniFraStessoContatto) {
-        return no(
-          `a ${a} ho scritto ${Math.round(giorniDa)} giorni fa, il minimo è ${r.giorniFraStessoContatto}`,
-          'Scrivere due volte a poca distanza è insistenza, e viene segnalata. '
-          + 'Se è urgente scrivigli tu.');
-      }
-    }
-
-    // ── 6-bis. LA STESSA COSA ALLA STESSA PERSONA, DUE VOLTE ──
+    // ── 4-bis. LA STESSA COSA ALLA STESSA PERSONA, DUE VOLTE ──
     //
+    // Sta PRIMA delle regole di ritmo, e non e' un dettaglio d'ordine.
+    //
+    // Quando stava dopo, il doppione entro il primo secondo veniva fermato
+    // dalla pausa minima, che risponde "aspetta ancora 1 secondo". Quella
+    // frase e' un invito a riprovare: il modello aspetta, ripete, e viene
+    // fermato una seconda volta per un motivo diverso. Due giri e una storia
+    // incomprensibile, per una cosa che era gia' decisa al primo colpo.
+    //
+    // Sono due verita' di natura diversa: "e' troppo presto" passa da solo,
+    // "questo messaggio e' gia' partito" non passa mai. Quando entrambe sono
+    // vere va detta quella definitiva, altrimenti si manda qualcuno ad
+    // aspettare per niente.
+
     // Il 7 agosto lo stesso messaggio è arrivato a Jose QUATTRO volte: non per
     // un difetto dell'invio, ma perché il turno veniva rifatto e ogni giro
     // rimandava. La difesa che esisteva era nell'estensione LinkedIn e durava
@@ -446,6 +434,31 @@ class RegoleInvio {
         'È già stato mandato: NON riprovare. Se serviva davvero mandarlo due '
         + 'volte, cambia il testo o aspetta un minuto. Un messaggio doppio '
         + 'dall\'altra parte si vede, e non si richiama.');
+    }
+
+    // ── 5. Ogni quanto ──
+    const ultimo = this.invii.length ? this.invii[this.invii.length - 1] : null;
+    if (ultimo) {
+      const passati = (ora_ - ultimo.quando) / 1000;
+      if (passati < r.pausaMinima) {
+        return no(
+          `dall'ultimo messaggio sono passati ${Math.round(passati)} secondi, il minimo è ${r.pausaMinima}`,
+          `Aspetto ancora ${Math.ceil(r.pausaMinima - passati)} secondi.`);
+      }
+    }
+
+    // ── 6. Non due volte alla stessa persona ──
+    const suo = this.invii.filter(i => i.a === a);
+    // Riscrivere alla stessa persona a poca distanza e' insistenza quando lo
+    // decide un programma. Quando lo decide Luca e' una conversazione.
+    if (suo.length && r.giorniFraStessoContatto > 0) {
+      const giorniDa = (ora_ - suo[suo.length - 1].quando) / 86400000;
+      if (giorniDa < r.giorniFraStessoContatto) {
+        return no(
+          `a ${a} ho scritto ${Math.round(giorniDa)} giorni fa, il minimo è ${r.giorniFraStessoContatto}`,
+          'Scrivere due volte a poca distanza è insistenza, e viene segnalata. '
+          + 'Se è urgente scrivigli tu.');
+      }
     }
 
     // ── 7. Non lo stesso testo a più persone ──

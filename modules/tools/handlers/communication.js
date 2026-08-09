@@ -473,7 +473,7 @@ async function _vuotoSospetto(ctx, quante, cosa) {
 function _annota(ctx, elenco, canale) {
   try {
     const { Rubrica } = require('../../security/rubrica');
-    const R = new Rubrica(ctx.DATA_DIR || ctx.dataDir || './data');
+    const R = new Rubrica(ctx.dataDir || './data');
     const n = R.daLettura(elenco, canale);
     if (n > 0) ctx.emitReasoning(`Segnati ${n} contatti in rubrica (${R.quante()} in tutto)`, '📇');
     return n;

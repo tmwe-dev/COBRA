@@ -1,17 +1,18 @@
 # Matrice delle capacita'
 
-*generata il 2026-08-09 02:18 da `attrezzi/matrice-capacita.js`*
+*generata il 2026-08-09 02:32 da `attrezzi/matrice-capacita.js`*
 
 ## Riepilogo
 
 | misura | valore |
 |---|---|
 | schemi dichiarati | 83 |
-| handler registrati | 91 |
+| handler registrati | 90 |
 | comandi estensione | 115 |
 | turni analizzati | 132 |
 | **capacita' con un anello rotto** | **4** |
-| **handler senza schema (irraggiungibili)** | **8** |
+| **handler senza schema, non voluti** | **0** |
+| handler chiusi apposta (documentati) | 7 |
 | **comandi estensione che nessuno chiama** | **76** |
 | **comandi chiesti che l'estensione non espone** | **0** |
 
@@ -23,16 +24,19 @@
 | LEGACY | 7 |
 | ROTTO-MAI-USATO | 4 |
 
-## Handler senza schema — esistono ma il modello non li vede
+## Handler senza schema — non voluti
 
-- `A_SESSIONE`
-- `web_search`
-- `execute_js`
-- `read_inbox`
-- `send_whatsapp`
-- `send_linkedin`
-- `linkedin_send_message`
-- `whatsapp_send`
+_nessuno_
+
+## Handler chiusi apposta — il modello non deve vederli
+
+- `web_search` — alias interno di google_search
+- `execute_js` — esecuzione arbitraria: resta per i flussi interni, mai in mano al modello
+- `read_inbox` — alias interno di check_emails
+- `send_whatsapp` — alias interno della vecchia strada
+- `send_linkedin` — alias interno della vecchia strada
+- `linkedin_send_message` — idem, lato LinkedIn
+- `whatsapp_send` — seconda strada senza regole d'invio: il 7 agosto ne uscirono sette fuori conteggio
 
 ## Comandi dell'estensione che nessun handler chiama
 

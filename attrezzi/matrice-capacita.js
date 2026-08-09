@@ -60,11 +60,37 @@ function conVoceDiRischio() {
   return new Set([...t.matchAll(/^\s{2}([a-z0-9_]+):\s*\{\s*level/gm)].map((m) => m[1]));
 }
 
-/** 4. Gli handler: chi esegue davvero. Si carica il modulo, non si indovina. */
+/**
+ * 4. Gli handler: chi esegue davvero. Si carica il modulo, non si indovina.
+ *
+ * Solo le FUNZIONI. La prima versione prendeva tutte le chiavi esportate e
+ * contava anche `A_SESSIONE`, che e' una costante: risultava un handler senza
+ * schema che non era ne' un handler ne' un problema. Un allarme falso su nove
+ * ne rende sospetti altri otto.
+ */
 function handlerRegistrati() {
-  try { return new Set(Object.keys(require(path.join(RADICE, 'modules/tools/handlers')))); }
-  catch (e) { console.error('[matrice] handlers non caricabili:', e.message); return new Set(); }
+  try {
+    const m = require(path.join(RADICE, 'modules/tools/handlers'));
+    return new Set(Object.entries(m).filter(([, v]) => typeof v === 'function').map(([k]) => k));
+  } catch (e) { console.error('[matrice] handlers non caricabili:', e.message); return new Set(); }
 }
+
+/**
+ * Gli handler che NON devono avere uno schema, e per quale ragione.
+ *
+ * Non e' una lista di perdoni: e' la differenza fra "manca" e "e' stato deciso
+ * cosi'". Senza, i due gemelli d'invio senza regole risultano una dimenticanza
+ * invece che una porta chiusa apposta — e prima o poi qualcuno la "aggiusta".
+ */
+const SENZA_SCHEMA_APPOSTA = {
+  whatsapp_send:         'seconda strada senza regole d\'invio: il 7 agosto ne uscirono sette fuori conteggio',
+  linkedin_send_message: 'idem, lato LinkedIn',
+  send_whatsapp:         'alias interno della vecchia strada',
+  send_linkedin:         'alias interno della vecchia strada',
+  web_search:            'alias interno di google_search',
+  execute_js:            'esecuzione arbitraria: resta per i flussi interni, mai in mano al modello',
+  read_inbox:            'alias interno di check_emails',
+};
 
 /**
  * 5. I comandi dell'estensione: chi tocca la pagina.
@@ -167,11 +193,12 @@ function costruisci() {
   for (const r of righe) r.classe = classifica(r);
 
   // Gli orfani: esistono da una parte sola.
-  const handlerSenzaSchema = [...handler].filter((h) => !schemi.includes(h));
+  const handlerSenzaSchema = [...handler].filter((h) => !schemi.includes(h) && !SENZA_SCHEMA_APPOSTA[h]);
+  const chiusiApposta = [...handler].filter((h) => !schemi.includes(h) && SENZA_SCHEMA_APPOSTA[h]);
   const extSenzaChiamante = [...ext].filter((c) => !chiesti.has(c));
   const chiestiSenzaExt = [...chiesti].filter((c) => !ext.has(c));
 
-  return { righe, turni, schemi, handler, ext, handlerSenzaSchema, extSenzaChiamante, chiestiSenzaExt };
+  return { righe, turni, schemi, handler, ext, handlerSenzaSchema, chiusiApposta, extSenzaChiamante, chiestiSenzaExt };
 }
 
 // ── Stampa ─────────────────────────────────────────────────────────────
@@ -187,7 +214,8 @@ function riepilogo(m) {
   L.push(`| comandi estensione | ${m.ext.size} |`);
   L.push(`| turni analizzati | ${m.turni} |`);
   L.push(`| **capacita' con un anello rotto** | **${m.righe.filter((r) => r.rotture.length).length}** |`);
-  L.push(`| **handler senza schema (irraggiungibili)** | **${m.handlerSenzaSchema.length}** |`);
+  L.push(`| **handler senza schema, non voluti** | **${m.handlerSenzaSchema.length}** |`);
+  L.push(`| handler chiusi apposta (documentati) | ${m.chiusiApposta.length} |`);
   L.push(`| **comandi estensione che nessuno chiama** | **${m.extSenzaChiamante.length}** |`);
   L.push(`| **comandi chiesti che l'estensione non espone** | **${m.chiestiSenzaExt.length}** |`);
   L.push('');
@@ -212,8 +240,10 @@ if (process.argv.includes('--md')) {
   const doc = ['# Matrice delle capacita\'', '',
     `*generata il ${new Date().toISOString().slice(0, 16).replace('T', ' ')} da \`attrezzi/matrice-capacita.js\`*`, '',
     '## Riepilogo', '', riepilogo(m), '',
-    '## Handler senza schema — esistono ma il modello non li vede', '',
+    '## Handler senza schema — non voluti', '',
     m.handlerSenzaSchema.map((x) => `- \`${x}\``).join('\n') || '_nessuno_', '',
+    '## Handler chiusi apposta — il modello non deve vederli', '',
+    m.chiusiApposta.map((x) => `- \`${x}\` — ${SENZA_SCHEMA_APPOSTA[x]}`).join('\n') || '_nessuno_', '',
     '## Comandi dell\'estensione che nessun handler chiama', '',
     m.extSenzaChiamante.map((x) => `- \`${x}\``).join('\n') || '_nessuno_', '',
     '## Comandi chiesti al ponte che l\'estensione non espone', '',
@@ -223,7 +253,8 @@ if (process.argv.includes('--md')) {
   console.log('scritto MATRICE_CAPACITA.md');
 } else {
   console.log(riepilogo(m));
-  console.log('\nhandler senza schema:', m.handlerSenzaSchema.join(' ') || '—');
+  console.log('\nhandler senza schema NON voluti:', m.handlerSenzaSchema.join(' ') || '—');
+  console.log('chiusi apposta:', m.chiusiApposta.length);
   console.log('comandi ext mai chiamati:', m.extSenzaChiamante.length);
   console.log('comandi chiesti e non esposti:', m.chiestiSenzaExt.join(' ') || '—');
 }

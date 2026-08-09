@@ -65,6 +65,9 @@ const allHandlers = require('./tools/handlers');
 // ── 11. Supervisor ──
 const { CobraSupervisor } = require('./supervisor/cobra');
 
+// ── 10b. Diario delle esecuzioni ──
+const { Giornale } = require('./diario/giornale');
+
 // ── 12. Utils ──
 const { estimateTokens } = require('./utils/tokens');
 const { detectRepetition } = require('./utils/repetition');
@@ -172,6 +175,9 @@ function _saveMemories() { writeJsonAtomicSync(_memoriesFile, memories); }
 const conversationEngine = new ConversationEngine();
 // Memoria a tre livelli: azioni di sessione, fatti operativi, fatti permanenti
 const learningStore = new LearningStore(dataDir);
+// Il diario: una riga per ogni esecuzione, col motivo quando va storta.
+// Prima di questo, di 880 chiamate e 67 fallimenti restava solo `ok:false`.
+const giornale = new Giornale(dataDir);
 // Dove cercare, imparato dalle letture fatte davvero: Kayak vuoto, Google
 // Voli pieno — scoperto una volta, scritto per sempre.
 const registroFonti = new RegistroFonti(dataDir);
@@ -477,7 +483,7 @@ const ctx = {
   // AI + Tools — executeTool wrapped with ctx self-reference
   executeTool: null, // set below after ctx is created
   callAI, digestToolResult,
-  conversationEngine, learningStore, registroFonti, SuperMario, CobraSupervisor,
+  conversationEngine, learningStore, giornale, registroFonti, SuperMario, CobraSupervisor,
   // Il Collega si puo' spegnere senza toccare il codice: se un giorno dovesse
   // dare problemi, COLLEGA=off riporta il sistema al comportamento diretto.
   CollegaAttivo: String(process.env.COLLEGA || '').toLowerCase() !== 'off',

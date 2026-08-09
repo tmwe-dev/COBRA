@@ -192,7 +192,7 @@ async function whatsapp_scrivi(args, ctx) {
   if (!args.confermato && !eUnNumero(a)) {
     try {
       const { Rubrica } = require('../../security/rubrica');
-      _rubrica = new Rubrica(ctx.DATA_DIR || ctx.dataDir || './data');
+      _rubrica = new Rubrica(ctx.dataDir || './data');
       const d = _rubrica.destinatario(a, 'whatsapp');
       if (d.trovato) {
         destinatario = d.voce.numero || d.voce.nome;
@@ -225,7 +225,7 @@ async function whatsapp_scrivi(args, ctx) {
           // dopo per non dover rileggere duecento righe.
           try {
             const { Rubrica } = require('../../security/rubrica');
-            const R = _rubrica || new Rubrica(ctx.DATA_DIR || ctx.dataDir || './data');
+            const R = _rubrica || new Rubrica(ctx.dataDir || './data');
             const n = R.daLettura(dati.chat.map(c => ({ ...c, haScritto: true })), 'whatsapp');
             if (n) ctx.emitReasoning(`Segnati ${n} contatti WhatsApp in rubrica`, '📇');
           } catch (_) { /* la rubrica e' una comodita', non una condizione */ }
@@ -418,7 +418,7 @@ async function linkedin_scrivi(args, ctx) {
     let risolto = null;
     try {
       const { Rubrica } = require('../../security/rubrica');
-      const R = new Rubrica(ctx.DATA_DIR || ctx.dataDir || './data');
+      const R = new Rubrica(ctx.dataDir || './data');
       const d = R.destinatario(url, 'linkedin');
       if (d.trovato) { risolto = d.voce.url || d.voce.nome; ctx.emitReasoning(`"${url}" e' ${d.voce.nome} — ${d.come}`, '📇'); }
     } catch (_) { /* si prosegue leggendo la pagina */ }

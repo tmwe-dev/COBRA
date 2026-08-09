@@ -5,6 +5,19 @@ const { COBRA_DEFAULTS } = require('../config');
 const { spiega } = require('../security/spiegazioni');
 const { isDomainWhitelisted } = require('../config/whitelist');
 const { auditToolCall, auditSecurityEvent } = require('../security/audit-log');
+const { classifica: classificaEsito } = require('../diario/tassonomia');
+
+/**
+ * Quante volte questa stessa chiamata e' gia' stata tentata in questo turno.
+ *
+ * Serve al diario per distinguere "e' fallito" da "e' fallito la terza volta
+ * di fila uguale", che sono due malattie diverse: la seconda dice che la
+ * strategia non cambia mai, ed e' quella che ci ha fatto perdere i minuti.
+ */
+function _quantiTentativi(ctx, descrizione) {
+  try { return (ctx.toolHistory || []).filter((x) => x === descrizione).length || 1; }
+  catch (_) { return 1; }
+}
 
 const INTERACT_TOOLS = ['click_element', 'fill_form', 'type_human', 'select_option', 'press_key',
   'key_combo', 'select_dropdown', 'set_datepicker', 'drag_drop', 'upload_file', 'clipboard_write',
@@ -147,12 +160,17 @@ async function executeTool(name, args, ctx) {
 
   const _toolExecStart = Date.now();
   let _toolResult;
+  let _toolErrore = null;
   try {
     const handler = _handlers[name];
     if (!handler) return JSON.stringify({ error: `Tool "${name}" non implementato` });
     _toolResult = await handler(args, ctx);
     return _toolResult;
   } catch (e) {
+    // L'eccezione va conservata: il messaggio che finisce nel risultato e'
+    // gia' impastato con le alternative, e classificarlo su quello significa
+    // leggere il suggerimento invece della causa.
+    _toolErrore = e;
     // Adaptive retry: suggerisci alternative in base al tool fallito
     const alternatives = _getAlternativeTools(name);
     const altText = alternatives.length > 0 ? ` Alternative: prova ${alternatives.join(' o ')}.` : '';
@@ -160,6 +178,38 @@ async function executeTool(name, args, ctx) {
     return _toolResult;
   } finally {
     const _toolLatency = Date.now() - _toolExecStart;
+
+    // ── Il diario ──
+    //
+    // Qui, e non dentro i singoli handler, per una ragione sola: questo e'
+    // l'unico punto da cui passano TUTTE le esecuzioni. Metterlo negli handler
+    // avrebbe significato novantuno posti da ricordarsi, che e' esattamente il
+    // difetto che stiamo togliendo.
+    //
+    // Non lancia mai: un registro che ferma il paziente non e' un registro.
+    try {
+      if (ctx.giornale) {
+        const esito = classificaEsito(_toolResult, _toolErrore);
+        ctx.giornale.registra({
+          capacita: name,
+          argomenti: args,
+          esito,
+          durataMs: _toolLatency,
+          tentativo: _quantiTentativi(ctx, desc),
+          rischio: guard.effective_risk,
+          pagina: ctx.session?.lastPage?.url,
+          lavoro: ctx.session?.lavoroCorrente?.id || null,
+          passo: ctx.session?.lavoroCorrente?.passoCorrente ?? null,
+        });
+        // Un fallimento che nessuno sa spiegare e' un handler da sistemare:
+        // si dice subito, invece di scoprirlo leggendo il diario fra una
+        // settimana.
+        if (!esito.ok && esito.code === 'SCONOSCIUTO') {
+          ctx.log(`[Diario] ${name} fallito senza un motivo riconoscibile: "${String(esito.reason).slice(0, 120)}"`);
+        }
+      }
+    } catch (_) { /* il diario non deve mai bloccare uno strumento */ }
+
     try { ctx.SuperMario.logToolExecution(name, args, (_toolResult || '').substring(0, 500), guard.effective_risk, guard.kind, _toolLatency); } catch (_) { /* best-effort */ }
     // P0.2: Persistent audit log
     auditToolCall(name, args, guard.effective_risk, guard.kind, _toolResult, ctx.session?.id);

@@ -48,3 +48,7 @@ conversations.json
 *.textClipping
 *.backup-*
 *.orig
+
+# Il diario delle esecuzioni: si rigenera, non si versiona.
+data/diario.jsonl
+data/diario.jsonl.1

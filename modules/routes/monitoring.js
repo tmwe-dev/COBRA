@@ -452,6 +452,34 @@ function register(router, ctx) {
 
   // ── Bridge Status ──
   router.get('/api/bridge-status', (b, res) => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ connected: ctx.isBridgeReady(), capabilities: ctx.getBridgeCapabilities() })); });
+
+  // ── Il diario ──
+  //
+  // Due indirizzi, perche' servono a due domande diverse: "come sta andando"
+  // si guarda di continuo, "cosa e' successo esattamente" si guarda quando
+  // qualcosa e' andato storto. Sono in sola lettura come tutto quello che sta
+  // qui dentro.
+  //
+  //   /api/diario            le ultime righe, per capire un caso
+  //   /api/diario/riepilogo  cosa fallisce e quanto costa, nelle ultime 24 ore
+  router.get('/api/diario/riepilogo', (b, res) => {
+    const ore = Number(new URL('http://x' + (b.url || '/')).searchParams.get('ore')) || 24;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(ctx.giornale ? ctx.giornale.riepilogo(ore) : { errore: 'diario non attivo' }, null, 2));
+  });
+
+  router.get('/api/diario', (b, res) => {
+    const p = new URL('http://x' + (b.url || '/')).searchParams;
+    const quante = Math.min(Number(p.get('quante')) || 100, 2000);
+    let righe = ctx.giornale ? ctx.giornale.leggi(quante) : [];
+    // Filtri: servono a rispondere "fammi vedere solo quello che non ha
+    // funzionato", che e' la domanda che si fa il 90% delle volte.
+    if (p.get('solo') === 'falliti') righe = righe.filter((r) => !r.ok);
+    if (p.get('capacita')) righe = righe.filter((r) => r.capacita === p.get('capacita'));
+    if (p.get('code')) righe = righe.filter((r) => r.code === p.get('code'));
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ quante: righe.length, righe }, null, 2));
+  });
 }
 
 module.exports = { register };
