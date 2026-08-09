@@ -87,6 +87,23 @@ class Cantiere {
    * caso normale, perché il nome si trova sull'elenco e la email sul sito.
    */
   annota(nome, campi = {}, fonte = '') {
+    // ── Una stringa JSON non e' un oggetto di campi ──
+    //
+    // Prova voli del 9 agosto: il modello ha passato
+    // campi: "{\"prezzo\":\"48 €\"}" — una STRINGA. L'handler la parsava, ma
+    // chiunque altro chiami questa funzione no, e Object.values() di una
+    // stringa restituisce le sue LETTERE: la voce risultava piena di campi
+    // {0:"{", 1:"\"", 2:"p"...} e sembrava perfettamente valida.
+    //
+    // La difesa stava in un solo chiamante su due. Sta qui, dove ce n'e' una
+    // sola: e' la stessa ragione per cui il diario e la raccolta vivono
+    // nell'esecutore invece che in novanta handler.
+    if (typeof campi === 'string') {
+      try { const d = JSON.parse(campi); campi = (d && typeof d === 'object' && !Array.isArray(d)) ? d : {}; }
+      catch (_) { campi = {}; }
+    }
+    if (!campi || typeof campi !== 'object' || Array.isArray(campi)) campi = {};
+
     const chiave = normalizza(nome);
     if (!chiave) return { ok: false, motivo: 'serve un nome per posare qualcosa' };
     if (!haSostanza(campi) && !this.voci.has(chiave)) {

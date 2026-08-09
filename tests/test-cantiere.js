@@ -125,6 +125,22 @@ sezione('Non si posa aria');
      (() => { c.annota('Tal', { x: 'buono', y: '   ' }); return c.elenco()[0].campi.y === undefined; })());
 }
 
+sezione('Quello che arriva storto non entra storto');
+{
+  // Prova voli del 9 agosto: il modello ha passato campi come STRINGA JSON.
+  // Object.values() di una stringa restituisce le sue lettere, quindi la voce
+  // risultava piena di {0:"{", 1:'"', 2:"p"...} e sembrava valida.
+  const c = new Cantiere({ campiAttesi: ['prezzo'] });
+  c.annota('Ryanair', '{"prezzo":"48 €","orario":"07:20"}', 'https://x.it');
+  ok('una stringa JSON diventa campi veri',
+     c.elenco()[0] && c.elenco()[0].campi.prezzo === '48 €', JSON.stringify(c.elenco()[0]));
+  ok('e non le sue lettere', !c.elenco()[0].campi['0']);
+
+  const d = new Cantiere({ campiAttesi: ['prezzo'] });
+  ok('un array non e un oggetto di campi', d.annota('X', ['a', 'b']).ok === false);
+  ok('e nemmeno una stringa che non e JSON', d.annota('Y', 'ciao').ok === false);
+}
+
 sezione('E il cantiere e agganciato al lavoro vero');
 {
   const chat = fs.readFileSync('modules/routes/chat.js', 'utf8');
