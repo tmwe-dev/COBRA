@@ -10,6 +10,7 @@ const fs = require('fs');
 const path = require('path');
 
 const { riconosci, conferma } = require('../modules/config/scelta-agente');
+const { resolveAgent } = require('../modules/supermario');
 
 let passati = 0;
 const rotti = [];
@@ -100,6 +101,51 @@ prova('assemble dichiara quale prompt di lavoro ha usato', () => {
   const c = fs.readFileSync(path.join(__dirname, '../modules/routes/chat.js'), 'utf8');
   assert.ok(/agenteLavoro: marioResult\.agenteLavoro/.test(c),
     'il registro non conserva quale prompt e\' stato usato');
+});
+
+
+// ── Chi sceglie il prompt di lavoro ──────────────────────────────────────
+//
+// La catena di if prendeva il primo che corrisponde, con navigator in cima:
+// su 135 turni veri navigator vinceva il 77,8% e due prompt su sei non erano
+// MAI stati usati. Ventitre turni con `communicate` fra gli ambiti finivano a
+// navigator — il prompt per parlare con le persone scavalcato nell'88% dei
+// casi in cui doveva valere.
+
+prova('il fine batte il mezzo: scrivere a qualcuno non e\' navigare', () => {
+  // Il caso vero, 23 turni: si naviga PER scrivere, non si scrive per navigare.
+  assert.strictEqual(resolveAgent(['browse', 'communicate', 'search']), 'communicator');
+  assert.strictEqual(resolveAgent(['communicate']), 'communicator');
+});
+
+prova('estrarre dati non e\' navigare', () => {
+  assert.strictEqual(resolveAgent(['browse', 'data', 'file', 'interact', 'search']), 'scout');
+});
+
+prova('tre indizi deboli non fanno una prova', () => {
+  // Sommando i pesi, browse+interact+file faceva 5 e batteva data che fa 4:
+  // il lavoro di estrazione tornava al prompt di navigazione, cioe' il difetto
+  // di partenza travestito da aritmetica. Vince il segnale piu' forte.
+  assert.strictEqual(resolveAgent(['browse', 'interact', 'file', 'data']), 'scout');
+});
+
+prova('quando c\'e\' solo il mezzo, il mezzo va bene', () => {
+  assert.strictEqual(resolveAgent(['browse', 'interact']), 'navigator');
+});
+
+prova('nessun prompt resta irraggiungibile', () => {
+  const raggiunti = new Set();
+  for (const s of [['communicate'], ['data'], ['admin'], ['search'], ['interact'], ['chat']]) {
+    raggiunti.add(resolveAgent(s));
+  }
+  for (const a of ['communicator', 'scout', 'admin', 'searcher', 'navigator', 'full']) {
+    assert.ok(raggiunti.has(a), `${a} non e' raggiungibile da nessun ambito: e' codice morto`);
+  }
+});
+
+prova('senza ambiti si resta su full', () => {
+  assert.strictEqual(resolveAgent([]), 'full');
+  assert.strictEqual(resolveAgent(['chat']), 'full');
 });
 
 if (rotti.length) {

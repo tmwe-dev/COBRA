@@ -421,13 +421,65 @@ function selectTools(scopes, allTools) {
 // ══════════════════════════════════════════════════════════════
 // 4. RESOLVE AGENT — sceglie il prompt agent in base agli scope
 // ══════════════════════════════════════════════════════════════
+// ── Il FINE pesa piu' del MEZZO ──
+//
+// La versione precedente era una catena di if e prendeva il PRIMO che
+// corrispondeva, con navigator in cima. Misurato su 135 turni veri:
+//
+//     navigator     105   77,8%
+//     full           25   18,5%
+//     communicator    3    2,2%
+//     admin           2    1,5%
+//     searcher        0      0%   mai scelto
+//     scout           0      0%   mai scelto
+//
+// Due prompt su sei non erano mai stati usati in tutta la vita del programma.
+// E il dato peggiore: VENTITRE turni avevano `communicate` fra gli ambiti e
+// sono finiti a navigator lo stesso — il prompt per parlare con le persone
+// scavalcato nell'88% dei casi in cui doveva valere.
+//
+// Il motivo e' che la catena mescolava due cose diverse. `communicate` dice
+// COSA si vuole ottenere; `browse` e `interact` dicono COME ci si arriva.
+// Mandare un messaggio su LinkedIn ha sempre `browse` fra gli ambiti — non
+// perche' il lavoro sia navigare, ma perche' si naviga per scrivere.
+//
+// Qui ogni ambito vale in proporzione a quanto dice sull'OBIETTIVO. Vince chi
+// somma di piu'; a pari punteggio vince il piu' specifico, cioe' quello
+// dichiarato prima.
+const AFFINITA = [
+  // Il fine: dicono cosa si vuole ottenere.
+  ['communicator', { communicate: 5, email: 5, whatsapp: 5, linkedin: 5, sales: 3 }],
+  ['scout',        { data: 4, extract: 4 }],
+  ['admin',        { admin: 4, memory: 4 }],
+  ['searcher',     { search: 3, logistics: 2, tmwe: 2, findair: 2 }],
+  // Il mezzo: dicono come ci si arriva. Valgono meno, e non e' un giudizio
+  // sulla loro importanza — navigare e' spesso il grosso del lavoro. E' che
+  // sapere che si naviga non dice ancora COSA si sta cercando di ottenere.
+  ['navigator',    { interact: 2, browse: 2, navigate: 2, file: 1 }],
+];
+
 function resolveAgent(scopes) {
-  if (scopes.includes('navigate') || scopes.includes('interact') || scopes.includes('browse')) return 'navigator';
-  if (scopes.includes('search')) return 'searcher';
-  if (scopes.includes('communicate') || scopes.includes('email') || scopes.includes('whatsapp') || scopes.includes('linkedin')) return 'communicator';
-  if (scopes.includes('admin') || scopes.includes('memory')) return 'admin';
-  if (scopes.includes('data') || scopes.includes('extract')) return 'scout';
-  return 'full';
+  if (!Array.isArray(scopes) || !scopes.length) return 'full';
+  if (scopes.includes('chat') && scopes.length === 1) return 'full';
+
+  // Si prende il peso PIU' ALTO, non la somma.
+  //
+  // Sommando, i mezzi si accumulano e battono il fine: per
+  // [browse, data, file, interact, search] navigator faceva 2+1+2 = 5 e
+  // superava scout, che di data ne fa 4. Cioe' un lavoro di estrazione dati
+  // finiva di nuovo al prompt di navigazione, che e' il difetto da cui siamo
+  // partiti — solo travestito da aritmetica.
+  //
+  // Il segnale piu' forte vince, e basta: tre indizi deboli non fanno una
+  // prova.
+  let vincitore = null;
+  let massimo = 0;
+  for (const [nome, pesi] of AFFINITA) {
+    let punti = 0;
+    for (const s of scopes) punti = Math.max(punti, pesi[s] || 0);
+    if (punti > massimo) { massimo = punti; vincitore = nome; }
+  }
+  return vincitore || 'full';
 }
 
 // ══════════════════════════════════════════════════════════════
