@@ -145,6 +145,55 @@
       display: flex; gap: 4px; align-items: flex-start;
     }
 
+    /* ══ Il pannello del lavoro ══
+       Sta fra i messaggi e la casella di scrittura, cioe' nel punto dove gli
+       occhi tornano fra una frase e l'altra. Sopra la casella e non sotto:
+       sotto ci si scrive, e quello che si legge non deve stare dove si digita. */
+    .lavoro {
+      border-top: 1px solid var(--glass-border);
+      padding: 8px 14px 6px; display: none; flex-direction: column; gap: 7px;
+      background: rgba(0,0,0,.16);
+    }
+    .lavoro.attivo { display: flex; }
+
+    /* La riga di adesso: una sola, grande abbastanza da leggersi di sfuggita. */
+    .lavoro-ora { display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--text); }
+    .lo-punto {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--accent, #a78bfa);
+      flex-shrink: 0; animation: loBattito 1.1s ease-in-out infinite;
+    }
+    @keyframes loBattito { 0%,100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.75); } }
+    .lavoro.fermo .lo-punto { animation: none; background: var(--text2); opacity: .5; }
+    .lo-testo { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lo-tempo { font-size: 11px; color: var(--text2); font-variant-numeric: tabular-nums; }
+
+    /* Quello che ha in mano: badge, uno per cosa raccolta. */
+    .lavoro-raccolto { display: flex; flex-wrap: wrap; gap: 5px; }
+    .rac {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 8px; border-radius: 999px; font-size: 11px;
+      border: 1px solid transparent; max-width: 260px;
+    }
+    .rac .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* Verde: ha prodotto qualcosa. Ambra: c'e' ma incompleto. Rosso: fallito.
+       Tre stati e non due, perche' "raccolto a meta" e' la situazione piu'
+       frequente e confonderla con "fatto" e' come dichiarare finito un lavoro
+       che non lo e'. */
+    .rac.reso   { background: rgba(34,197,94,.13);  border-color: rgba(34,197,94,.30);  color: #86efac; }
+    .rac.mezzo  { background: rgba(245,158,11,.13); border-color: rgba(245,158,11,.30); color: #fcd34d; }
+    .rac.vuoto  { background: rgba(239,68,68,.11);  border-color: rgba(239,68,68,.26);  color: #fca5a5; }
+    .rac.file   { background: rgba(167,139,250,.14);border-color: rgba(167,139,250,.32);color: #c4b5fd; cursor: pointer; }
+    .rac.file:hover { background: rgba(167,139,250,.24); }
+
+    /* Le ultime cose fatte: piccole, in fila, senza rubare spazio. */
+    .lavoro-fatte { display: flex; flex-wrap: wrap; gap: 4px; max-height: 44px; overflow: hidden; }
+    .fatta {
+      font-size: 10.5px; padding: 2px 7px; border-radius: 6px;
+      background: rgba(255,255,255,.05); color: var(--text2);
+      max-width: 230px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .fatta.ko { background: rgba(239,68,68,.12); color: #fca5a5; }
+
     .canali { display: flex; gap: 6px; align-items: center; margin-left: 4px; }
     .canale {
       width: 26px; height: 26px; border-radius: 7px;
@@ -1207,6 +1256,21 @@
         <div class="vt-info"><div class="vt-seconds" id="vtSeconds">7</div><div class="vt-label" id="vtLabel">secondi al silenzio</div></div>
         <button class="vt-add-btn" id="vtAddBtn">+15s</button>
       </div>
+      <!-- ── Cosa sta facendo, e cosa ha raccolto ──
+           Prima la chat mostrava i nomi delle funzioni ("google_search
+           navigate leggi_modulo") e quello che veniva raccolto non si vedeva
+           da nessuna parte: si scopriva solo alla fine, dalla risposta.
+           Qui sopra: la cosa che sta facendo adesso, in italiano.
+           Qui sotto: quello che ha in mano, con l'esito di ogni operazione. -->
+      <div class="lavoro" id="lavoro">
+        <div class="lavoro-ora" id="lavoroOra">
+          <span class="lo-punto"></span>
+          <span class="lo-testo" id="lavoroOraTesto">In attesa</span>
+          <span class="lo-tempo" id="lavoroOraTempo"></span>
+        </div>
+        <div class="lavoro-raccolto" id="lavoroRaccolto"></div>
+        <div class="lavoro-fatte" id="lavoroFatte"></div>
+      </div>
       <div class="chat-input-area">
         <button class="newchat-btn" id="newChatBtn" title="Nuova conversazione" onclick="clearChat()" style="background:var(--glass);border:1px solid var(--glass-border);color:var(--text2);font-size:18px;width:44px;height:44px;border-radius:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:all 0.2s;flex-shrink:0;">&#x271A;</button>
         <button class="mic-btn" id="micBtn" title="Tieni premuto per parlare">&#x1f3a4;</button>
@@ -1995,6 +2059,119 @@
       // scavalcare l'agente a ogni riavvio del browser.
       if (localStorage.getItem('cobra_voce')) localStorage.removeItem('cobra_voce');
     } catch (_) { /* senza localStorage non c'e' niente da ripulire */ }
+
+    // ══ Il pannello del lavoro ══
+    //
+    // Tre cose, e nient'altro: cosa sta facendo ADESSO, cosa ha in mano, cosa
+    // ha appena finito. Prima la chat mostrava i nomi delle funzioni e quello
+    // che veniva raccolto non compariva da nessuna parte fino alla risposta
+    // finale — quindi per tre minuti non si poteva sapere se stesse lavorando
+    // o girando a vuoto.
+    const _lav = {
+      box: null, ora: null, tempo: null, raccolto: null, fatte: null,
+      inizio: 0, tic: null, voci: new Map(), file: new Set(),
+    };
+
+    function _lavPrendi() {
+      if (!_lav.box) {
+        _lav.box = document.getElementById('lavoro');
+        _lav.ora = document.getElementById('lavoroOraTesto');
+        _lav.tempo = document.getElementById('lavoroOraTempo');
+        _lav.raccolto = document.getElementById('lavoroRaccolto');
+        _lav.fatte = document.getElementById('lavoroFatte');
+      }
+      return _lav.box;
+    }
+
+    function lavoroInizia(dice) {
+      const box = _lavPrendi(); if (!box) return;
+      box.classList.add('attivo');
+      box.classList.remove('fermo');
+      _lav.ora.textContent = dice || 'Sto lavorando';
+      _lav.inizio = Date.now();
+      clearInterval(_lav.tic);
+      // Il tempo che passa: su un'attesa lunga e' l'unica cosa che distingue
+      // "ci sta mettendo" da "si e' piantato".
+      _lav.tic = setInterval(() => {
+        const s = Math.round((Date.now() - _lav.inizio) / 1000);
+        _lav.tempo.textContent = s > 2 ? s + 's' : '';
+      }, 500);
+    }
+
+    function lavoroFinisce(msg) {
+      const box = _lavPrendi(); if (!box) return;
+      clearInterval(_lav.tic);
+      _lav.tempo.textContent = '';
+      box.classList.add('fermo');
+      _lav.ora.textContent = 'In attesa';
+
+      const el = document.createElement('span');
+      el.className = 'fatta' + (msg.ok ? '' : ' ko');
+      const sec = msg.durataMs > 1500 ? ' · ' + Math.round(msg.durataMs / 1000) + 's' : '';
+      // Quando fallisce si mostra il PERCHE', non "errore": adesso il motivo
+      // ce l'abbiamo, e nasconderlo sarebbe sprecare il diario.
+      el.textContent = (msg.ok ? '✓ ' : '✗ ') + (msg.dice || msg.strumento) + sec;
+      if (!msg.ok && msg.perche) el.title = msg.perche;
+      _lav.fatte.appendChild(el);
+      while (_lav.fatte.children.length > 14) _lav.fatte.removeChild(_lav.fatte.firstChild);
+    }
+
+    // ── Quello che ha in mano ──
+    //
+    // Verde se quella voce ha davvero dei dati, ambra se e' solo un nome
+    // ancora da riempire. Tre stati e non due: "raccolto a meta" e' la
+    // situazione piu frequente, e confonderla con "fatto" e' come dichiarare
+    // finito un lavoro che non lo e'.
+    function lavoroRaccolto(msg) {
+      const box = _lavPrendi(); if (!box) return;
+      box.classList.add('attivo');
+      for (const v of (msg.elenco || [])) {
+        const nome = typeof v === 'string' ? v : (v && v.nome);
+        if (nome) _lav.voci.set(nome, (typeof v === 'object' && v.campi && Object.keys(v.campi).length) ? 'reso' : 'mezzo');
+      }
+      if (typeof msg.complete === 'number' && typeof msg.voci === 'number') {
+        // Il riepilogo sa quante sono complete: se il dettaglio non arriva,
+        // si usa quello invece di indovinare.
+        let i = 0;
+        for (const k of _lav.voci.keys()) _lav.voci.set(k, i++ < msg.complete ? 'reso' : 'mezzo');
+      }
+      lavoroDisegna();
+    }
+
+    function lavoroFile(nome) {
+      const box = _lavPrendi(); if (!box) return;
+      box.classList.add('attivo');
+      _lav.file.add(nome);
+      lavoroDisegna();
+    }
+
+    function lavoroDisegna() {
+      if (!_lav.raccolto) return;
+      const pezzi = [];
+      for (const [nome, stato] of _lav.voci) {
+        pezzi.push(`<span class="rac ${stato}" title="${escapeHtml(nome)}">`
+          + `${stato === 'reso' ? '●' : '○'} <span class="n">${escapeHtml(nome)}</span></span>`);
+      }
+      for (const f of _lav.file) {
+        pezzi.push(`<span class="rac file" title="Apri ${escapeHtml(f)}" data-file="${escapeHtml(f)}">`
+          + `📄 <span class="n">${escapeHtml(f)}</span></span>`);
+      }
+      _lav.raccolto.innerHTML = pezzi.join('');
+      _lav.raccolto.querySelectorAll('[data-file]').forEach(el => {
+        // Si riusa apriFile(), che c'e' gia': un secondo modo di aprire un
+        // file sarebbe la solita strada parallela che un giorno diverge da
+        // quella buona.
+        el.onclick = () => apriFile(el.dataset.file);
+      });
+    }
+
+    function lavoroAzzera() {
+      _lav.voci.clear(); _lav.file.clear();
+      if (_lav.raccolto) _lav.raccolto.innerHTML = '';
+      if (_lav.fatte) _lav.fatte.innerHTML = '';
+      if (_lav.box) _lav.box.classList.remove('attivo');
+      clearInterval(_lav.tic);
+    }
 
     function setMonitorIdle() {
       monStatus.className = 'mon-status';
@@ -2878,6 +3055,10 @@
       history = [];
       _clearSavedChat();
       chatMessages.innerHTML = '';
+      // Anche il pannello: mostrare le voci del lavoro precedente sotto una
+      // conversazione nuova e' peggio che non mostrarle — sembrano raccolte
+      // adesso.
+      lavoroAzzera();
       // Reset anche lato server
       fetch('/api/chat/clear', { method: 'POST' }).catch(() => {});
       addBubble('system', 'Nuova conversazione iniziata.');
@@ -2986,14 +3167,19 @@
             addSiteVisit(msg.url, msg.title, msg.favicon, msg.status || 'active');
             setMonitorBusy('Navigando su ' + (msg.url || '').replace(/^https?:\/\/(www\.)?/, '').split('/')[0] + '...');
             break;
-          case 'tool_start':
-            addToolBadge(msg.tool, 'running');
-            addLogEntry('Tool: ' + msg.tool, '&#x2699;', 'tool');
-            setMonitorBusy('Eseguo ' + msg.tool + '...');
+          // I nomi delle funzioni restano nel registro tecnico; nella chat
+          // si legge cosa sta facendo, in italiano.
+          case 'attivita_inizio':
+            lavoroInizia(msg.dice);
+            addToolBadge(msg.strumento, 'running');
+            addLogEntry('Tool: ' + msg.strumento, '&#x2699;', 'tool');
+            setMonitorBusy(msg.dice || msg.strumento);
             break;
-          case 'tool_done':
-            updateToolBadge(msg.tool, msg.ok ? 'ok' : 'err');
-            addLogEntry(msg.tool + (msg.ok ? ' OK' : ' ERRORE'), msg.ok ? '&#x2705;' : '&#x274c;', msg.ok ? 'tool' : 'error');
+          case 'attivita_fine':
+            lavoroFinisce(msg);
+            updateToolBadge(msg.strumento, msg.ok ? 'ok' : 'err');
+            addLogEntry(msg.strumento + (msg.ok ? ' OK' : ' — ' + (msg.perche || 'non riuscito')),
+              msg.ok ? '&#x2705;' : '&#x274c;', msg.ok ? 'tool' : 'error');
             break;
           case 'bridge_activity':
             if (msg.direction === 'to_extension') {
@@ -3035,6 +3221,10 @@
             break;
           case 'file_created':
             mostraFileScaricabile(msg.filename);
+            lavoroFile(msg.filename);
+            break;
+          case 'cantiere':
+            lavoroRaccolto(msg);
             break;
           case 'processo':
             mostraProcesso(msg);

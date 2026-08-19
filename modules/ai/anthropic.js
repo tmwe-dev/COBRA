@@ -42,11 +42,9 @@ async function callAnthropic(key, model, systemPrompt, messages, tools, ctx) {
       for (const tu of toolUseBlocks) {
         totalToolCalls++;
         if (totalToolCalls > COBRA_DEFAULTS.MAX_TOTAL_TOOL_CALLS) return { text: 'Limite operazioni raggiunto.', toolsUsed: _toolsUsed };
-        wsBroadcast({ type: 'tool_start', tool: tu.name });
         const rawResult = await executeTool(tu.name, tu.input || {});
         const ok = esitoRiuscito(rawResult);
         const result = digestToolResult(tu.name, rawResult);
-        wsBroadcast({ type: 'tool_done', tool: tu.name, ok });
         _toolsUsed.push({ name: tu.name, args: tu.input || {}, ok });
         toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: result });
         if (!ok) CobraSupervisor._failedToolCount++; else CobraSupervisor._failedToolCount = 0;

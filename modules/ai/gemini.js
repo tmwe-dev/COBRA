@@ -44,11 +44,9 @@ async function callGemini(key, model, systemPrompt, messages, tools, ctx) {
       for (const fc of funcCalls) {
         totalToolCalls++;
         if (totalToolCalls > COBRA_DEFAULTS.MAX_TOTAL_TOOL_CALLS) return { text: 'Limite operazioni raggiunto.', toolsUsed: _toolsUsed };
-        wsBroadcast({ type: 'tool_start', tool: fc.functionCall.name });
         const rawResult = await executeTool(fc.functionCall.name, fc.functionCall.args || {});
         const ok = esitoRiuscito(rawResult);
         const result = digestToolResult(fc.functionCall.name, rawResult);
-        wsBroadcast({ type: 'tool_done', tool: fc.functionCall.name, ok });
         _toolsUsed.push({ name: fc.functionCall.name, args: fc.functionCall.args || {}, ok });
         if (!ok) CobraSupervisor._failedToolCount++; else CobraSupervisor._failedToolCount = 0;
         let parsed = {}; try { parsed = JSON.parse(result); } catch { parsed = { result }; }

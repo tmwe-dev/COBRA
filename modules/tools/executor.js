@@ -9,6 +9,7 @@ const { classifica: classificaEsito } = require('../diario/tassonomia');
 const { daRisultato, posaNelCantiere } = require('../cantiere/raccolta');
 const { Indagine } = require('../ricerca/indagine');
 const { FontiPreferite, tipoDiLavoro } = require('../ricerca/fonti-preferite');
+const { descrivi, comeEAndata } = require('./descrizioni');
 
 /**
  * Quante volte questa stessa chiamata e' gia' stata tentata in questo turno.
@@ -161,6 +162,22 @@ async function executeTool(name, args, ctx) {
     ctx.log(`[Security] ALLOW ${name} (risk=${guard.effective_risk}) ${guard.reasons.join(' | ')}`);
   }
 
+  // ── Cosa sto facendo, detto a chi guarda ──
+  //
+  // Prima la chat mostrava i nomi delle funzioni: "google_search navigate
+  // leggi_modulo". Dicono tutto a chi ha scritto il codice e niente a chi
+  // aspetta — e quando una cosa dura tre minuti, non capire cosa stia
+  // succedendo e' la differenza fra aspettare e pensare che si sia piantato.
+  //
+  // Parte da QUI e non dai tre provider AI: li' erano tre punti da tenere
+  // allineati, e il messaggio non poteva portare ne' il motivo ne' la durata,
+  // che si sanno solo dopo l'esecuzione.
+  const _attivitaId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  try {
+    ctx.wsBroadcast({ type: 'attivita_inizio', id: _attivitaId, strumento: name,
+      dice: descrivi(name, args), rischio: guard.effective_risk });
+  } catch (_) { /* la chat non deve poter fermare il lavoro */ }
+
   const _toolExecStart = Date.now();
   let _toolResult;
   let _toolErrore = null;
@@ -212,6 +229,14 @@ async function executeTool(name, args, ctx) {
         }
       }
     } catch (_) { /* il diario non deve mai bloccare uno strumento */ }
+
+    // Com'e' andata, con il motivo quando serve.
+    try {
+      const e = classificaEsito(_toolResult, _toolErrore);
+      ctx.wsBroadcast({ type: 'attivita_fine', id: _attivitaId, strumento: name,
+        dice: descrivi(name, args), ok: e.ok, code: e.code || null,
+        perche: comeEAndata(e), durataMs: _toolLatency });
+    } catch (_) { /* best-effort */ }
 
     // ── La raccolta ──
     //

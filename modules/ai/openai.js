@@ -43,11 +43,9 @@ async function callOpenAI(provider, key, model, systemPrompt, messages, tools, c
         if (totalToolCalls > COBRA_DEFAULTS.MAX_TOTAL_TOOL_CALLS) return { text: 'Limite operazioni raggiunto.', toolsUsed: _toolsUsed };
         let args = {};
         try { args = JSON.parse(tc.function.arguments); } catch { /* malformed JSON from AI */ }
-        wsBroadcast({ type: 'tool_start', tool: tc.function.name });
         const rawResult = await executeTool(tc.function.name, args);
         const ok = esitoRiuscito(rawResult);
         const result = digestToolResult(tc.function.name, rawResult);
-        wsBroadcast({ type: 'tool_done', tool: tc.function.name, ok });
         _toolsUsed.push({ name: tc.function.name, args, ok });
         if (!ok) CobraSupervisor._failedToolCount++; else CobraSupervisor._failedToolCount = 0;
         apiMessages.push({ role: 'tool', tool_call_id: tc.id, content: result });
